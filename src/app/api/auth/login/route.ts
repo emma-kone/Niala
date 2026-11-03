@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { ensureDefaultAccount, getCurrentUser, setSessionCookie, verifyPassword } from "@/lib/auth";
+import { getCurrentUser, setSessionCookie, verifyPassword } from "@/lib/auth";
 import { handle, jsonError, limit, readJson } from "@/lib/api-helpers";
 
 const loginSchema = z.object({
@@ -12,7 +12,6 @@ const loginSchema = z.object({
 export async function POST(req: Request) {
   return handle(async () => {
     limit("login", 10, 60_000);
-    await ensureDefaultAccount();
     const body = await readJson<unknown>(req);
     const { email, password } = loginSchema.parse(body);
     const user = await db.user.findUnique({ where: { email: email.toLowerCase().trim() } });

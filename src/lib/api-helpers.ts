@@ -36,9 +36,11 @@ export async function handle<T>(fn: () => Promise<T>): Promise<NextResponse> {
     if (err instanceof ZodError) {
       return jsonError("Données invalides : " + err.issues.map((i) => `${i.path.join(".")} — ${i.message}`).join("; "), 422);
     }
-    const message = err instanceof Error ? err.message : "Erreur interne";
-    console.error("[API]", message);
-    return jsonError(message, 500);
+    // Le détail reste dans les logs serveur ; le client reçoit un message générique
+    // et un identifiant de corrélation pour retrouver l'erreur.
+    const ref = Math.random().toString(36).slice(2, 10);
+    console.error(`[API ${ref}]`, err);
+    return jsonError(`Une erreur interne est survenue (réf. ${ref}).`, 500);
   }
 }
 

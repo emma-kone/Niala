@@ -1,0 +1,146 @@
+# StudyForge V2 — Audit de la V1 et plan de migration
+
+Statut : **étapes 1 (audit) et 2 (conception) terminées, étape 3 (validation) en attente.** Aucun code applicatif n'a été modifié.
+
+## 1. Audit de la V1
+
+Pile : Next 16 (webpack), React 19, Prisma 6 sur Postgres (Supabase), auth maison (cookie HMAC), Anthropic via `fetch`, zustand, CodeMirror, `unpdf`/`mammoth`/`jszip`, `better-sqlite3` pour le labo SQL. ~13 000 lignes, aucune suite de tests.
+
+### 1.1 Ce qui correspond déjà à la vision (à conserver)
+| Élément | Fichiers | Remarque |
+|---|---|---|
+| Garde `requireUser` + filtre `userId` sur la plupart des routes | `lib/auth.ts`, `api/*` | Bon réflexe, à systématiser |
+| Enveloppe d'API `handle` + zod | `lib/api-helpers.ts` | À conserver, durcir (voir 1.5) |
+| Couche IA unique + journal `AIUsageLog` + réparation JSON | `lib/ai.ts` | Base des futurs services |
+| Index de recherche TF-IDF avec provenance (document + page) | `lib/rag.ts` | Réutilisable pour citations, à enrichir (offsets) |
+| Moteur SQL en mémoire jetable, instructions dangereuses bloquées | `lib/sql-engine.ts` | Conservé, à borner (voir 1.5) |
+| Éditeur CodeMirror, laboratoires code et SQL | `features/code-lab`, `sql-lab` | UI conservée, branchée sur le modèle V2 |
+| Correction règle + IA, indices, session figée | `lib/grading.ts`, `api/sessions/*` | Réutilisé comme moteur de correction |
+| Types de questions riches (20 types) | `lib/types.ts` | Base ; ajouter `matching`/`definition` si absents du mapping demandé |
+| Réglages, thème, shell, composants shadcn | `components/ui`, `layout` | Conservés |
+
+### 1.2 À modifier en profondeur
+- **Chapitres obligatoires** : `Chapter` + `chapterId` imposé à l'import (`api/documents` POST refuse sans chapitre), routes `chapters/*`, page `bibliotheque/[chapterId]`, `library-view.tsx` (2 856 lignes, monolithique), `MoveChapterDialog`, etc. → remplacés par `Folder` récursif.
+- **Document = texte extrait** : le fichier original n'est **jamais stocké** (seul `extractedText`, tronqué à 500 000 car.). Le lecteur (`chapter-reader-view.tsx`) affiche du texte brut. → stockage objet + lecteur PDF fidèle.
+- **Analyse 1-1 et à plat** : `DocumentAnalysis.documentId @unique`, listes de chaînes sans hiérarchie ni références de page, tronquée à 40 000 car. et écrasée par `upsert` à chaque relance. → analyse versionnée, arbre `CourseSection`, `Concept` avec provenance.
+- **Exercices** : généré à partir de plusieurs documents, `GenerateConfig.documentIds[]`, barème = « points par question » sans total contraint, difficulté à 5 niveaux fixes, pas de couverture par section/notion. `Exercise` et `Session` dupliquent les questions en JSON.
+- **Progression** : `ConceptStat(userId, notion)` clé = **texte libre**. Moyenne mobile exponentielle (0,6/0,4) et seuil fixe `< 0.65` pour recommander. Pas d'ancienneté, pas de prérequis, pas de diagnostic d'erreur, pas de niveau de confiance.
+- **Labos code/SQL** : indépendants du système pédagogique (`sessionId` optionnel), pas de mode exercice avec import de consigne, pas de jeux de tests cachés ni de cas limites.
+- **Tableau de bord** : accumulation de statistiques (`api/stats` ramène 60 sessions + 200 logs IA), pas de « reprendre ».
+
+### 1.3 Devenu inutile ou à fusionner
+- `Chapter`, `/api/chapters/*`, `chapter-reader-view` : retirés **après** migration des données (1.7).
+- `ChatMessage` / `api/chat` : le chat par document est utile, mais conservé comme panneau du lecteur (réutilise l'index de passages). Clé de conversation `a|b|c` bricolée → rattachée à `Document`.
+- `Exercise` + `Session` + `SessionItem` : fusion en `Exercise` (définition immuable versionnée) + `ExerciseAttempt` + `Answer`.
+- `StudyRecommendation` : remplacé par `LearningActivity` / `LearningPlan` calculés.
+- `lib/subjects.ts` (6 lignes), `api/route.ts` : à vérifier/supprimer.
+
+### 1.4 Fonctionnalités incomplètes ou absentes
+Notes (aucun modèle), annotations, cartes mentales/conceptuelles, dossiers, versions de documents, lecteur PDF, analyse hiérarchique, prérequis, diagnostic d'erreurs, reprise d'activité, `LabWorkspace`, tests automatisés.
+
+### 1.5 Problèmes de sécurité (constatés dans le code)
+| # | Gravité | Constat | Correctif V2 |
+|---|---|---|---|
+| S1 | **Critique** | `executor.ts` lance Node/Python avec `env: { ...process.env }` : le code étudiant voit `DATABASE_URL`, `ANTHROPIC_API_KEY`, `AUTH_SECRET`. Python n'a aucune restriction fichiers/réseau. | Environnement vide, cwd jetable ; exécution via sandbox réelle (voir D3) |
+| S2 | **Critique** | `vm.runInNewContext` n'est pas une barrière de sécurité (échappement connu via `constructor.constructor`). | Isolation processus/WASM/conteneur, pas `vm` seul |
+| S3 | Haute | `db/custom.db` et `db/.auth-secret` sont **suivis par git** malgré le `.gitignore` (confirmé par `git ls-files`). Le secret de signature des sessions est donc dans l'historique. | `git rm --cached`, **rotation de `AUTH_SECRET`**, exigence de la variable d'env en production |
+| S4 | Haute | Compte par défaut `etudiante@studyforge.local` / `studyforge2025` créé au premier lancement. | Supprimé ; inscription ou seed explicite hors production |
+| S5 | Haute | Cookie `secure: false` codé en dur. | `secure` en production |
+| S6 | Haute | `better-sqlite3` est synchrone : un `WITH RECURSIVE` infini ou une requête lourde **bloque tout le serveur Node**, sans timeout. | Exécution en worker avec timeout/kill, `progress_handler`/limite de pages, base lecture seule pour SELECT |
+| S7 | Moyenne | Injection de prompt : le texte du document est inséré tel quel entre `<<<` `>>>`, sans neutralisation ni validation de sortie. La seule défense est une phrase dans le prompt système. | Délimiteurs étanches, schéma strict de sortie (zod), citations vérifiées côté serveur |
+| S8 | Moyenne | `handle` renvoie `err.message` brut en 500 (fuite d'internes). | Messages génériques + identifiant de corrélation |
+| S9 | Moyenne | Limitation de débit en mémoire (`Map`) : sans effet sur Vercel (instances multiples). | Table/Redis ou limite par utilisateur en base |
+| S10 | Moyenne | `chapter.findFirst({ where: { id } })` sans filtre `userId` (import, PATCH document) : atténué par la comparaison avec la matière mais fragile. | Helper unique `ownedBy(userId)` pour toute lecture par id |
+| S11 | Moyenne | Aucun `middleware`/`proxy` : la protection repose sur chaque route + `auth-guard` côté client. RLS activé mais sans politiques (Prisma s'y connecte via un rôle qui les contourne). | Garde centrale + tests d'isolation inter-utilisateurs |
+| S12 | Basse | `typescript.ignoreBuildErrors: true` masque les erreurs de type. `prisma db push --accept-data-loss` dans les scripts. | Retirer ; migrations versionnées uniquement |
+| S13 | Basse | Validation de format uniquement par extension. | Contrôle des signatures magiques (`%PDF-`, PK…) |
+
+### 1.6 Problèmes de logique, de données et de performance
+- `ConceptStat` fusionne les notions de **matières différentes** portant le même nom (viole la règle 8).
+- Recherche de documents : quatre variantes de casse dans un `OR` au lieu de `mode: "insensitive"` (Postgres).
+- `Document.extractedText` (jusqu'à 500 Ko) chargé dans les `findFirst` sans `select` ; `Document` ramène `chunks`.
+- Import : doublon détecté par « nom + taille » (faux positifs/négatifs), extraction synchrone dans la requête (limites de durée serverless), boucle séquentielle de 12 fichiers.
+- `buildIndex` reconstruit l'index entier à chaque requête de chat/correction ; `search` recalcule `df` à chaque appel.
+- Pas de transactions autour de la correction d'une session (état incohérent possible si une étape échoue), pas de contrôle de concurrence.
+- `Exercise.config`/`questions`, `DocumentAnalysis.*`, `Session.summary` : JSON stocké en `String` alors que la base est Postgres (`Json`/`jsonb` possible, intégrité nulle aujourd'hui).
+- `PRAGMA` exécuté depuis une entrée utilisateur dans `runSqlScript` (par `db.pragma` sur le nom seul) : comportement tronqué (`PRAGMA x = y` perd la valeur).
+
+### 1.7 Dépendances entre modules (V1)
+`Subject → Chapter → Document → (Chunk, Analysis)` ; `Exercise/Session ← generateExercises ← RAG(Chunk)` ; `Session/Answer → ConceptStat → StudyRecommendation` ; `Code/SQL labs → ProgramRun/SqlQueryLog` (isolés). La suppression d'une matière/document passe par `onDelete` (SetNull sur `Exercise.subjectId`, Cascade sur chunks/analyses).
+
+---
+
+## 2. Conception V2
+
+### 2.1 Navigation
+`Tableau de bord` · `Mes matières` (→ matière : onglets **Fichiers / Notes / Analyses / Cartes / Exercices / Progression**) · `Lecteur` (route `/matieres/[id]/documents/[docId]`, espace de travail : document au centre, panneau latéral Notes · Analyse · Chat · Exercice) · `Laboratoire code` · `Laboratoire SQL` · `Progression` · `Réglages`.
+Parcours : importer → lire (annoter) → analyser → cartographier → « Créer un exercice » → faire l'exercice → diagnostic → recommandation → reprise depuis le tableau de bord.
+
+### 2.2 Modèle de données (Prisma, entités regroupées)
+Principe : chaque table appartient à un `userId` (colonne dénormalisée sur les tables enfants fréquemment lues, pour filtrer sans jointure et pour la RLS). JSON typé (`Json`) uniquement pour ce qui est validé par zod.
+
+- **Organisation** : `Subject` ; `Folder(subjectId, parentId?, name, @@unique[subjectId,parentId,name])` ; `Document(subjectId, folderId?, currentVersionId, name, kind)` ; `DocumentVersion(documentId, number, storageKey, mime, size, sha256, pageCount, extractStatus, extractError, createdAt)` ; `DocumentChunk(versionId, idx, page, charStart, charEnd, content)` — **l'extraction est liée à la version, le fichier original reste dans le stockage objet**.
+- **Analyse pédagogique** : `DocumentAnalysis(versionId, status, model, promptVersion, createdAt)` (plusieurs par version) ; `CourseSection(analysisId, parentId?, label, numbering, level, position, pageStart, pageEnd, origin: DOCUMENT|AI_INFERRED|USER)` ; `Concept(subjectId, name, kind: NOTION|DEFINITION|RULE|EXAMPLE|PROPERTY, importance, origin, sectionId?, sourceRef)` — **unicité par matière** ; `ConceptRelation(fromId, toId, type, origin)` ; `SourceRef(chunkId|page, charStart, charEnd, quote)`.
+- **Notes unifiées** : `Note(subjectId, kind: PERSONAL|DOCUMENT|ANNOTATION|SUMMARY, title, content Json (éditeur riche), updatedAt)` ; `NoteLink(noteId, documentId, versionId?, page?, anchor Json?)` (N:N, une note peut référencer plusieurs documents, une annotation porte son ancrage) ; pas de table de notes parallèle.
+- **Cartes** : `MindMap(subjectId, analysisId?, kind: STRUCTURE|CONCEPT)`, `MindMapNode(mapId, label, x, y, origin, conceptId?|sectionId?)`, `MindMapEdge(mapId, from, to, type, origin)`, `MindMapRevision(mapId, snapshot Json)`.
+- **Exercices** : `Exercise(subjectId, documentId, versionId, config Json, totalPoints, status)` ; `Question(exerciseId, position, type, points, difficulty, payload Json, answerKey Json, sourceRef)` ; `QuestionConcept(questionId, conceptId)` ; `ExerciseAttempt(exerciseId, snapshot Json, status, startedAt, finishedAt, score)` ; `Answer(attemptId, questionId, value Json, feedback Json, gradedBy)`. Un `ExerciseAttempt` fige la version exacte des questions.
+- **Apprentissage** : `ErrorDiagnosis(answerId|labRunId, category: SYNTAX|LOGIC|CONCEPT|METHOD|INSTRUCTION|FORGETTING|CARELESS, confidence, evidence Json, conceptId?)` ; `ConceptMastery(userId, conceptId, level, confidence, lastEvidenceAt)` (recalculé à partir des preuves, pas stocké comme vérité absolue) ; `LearningActivity(userId, type, refId, status, lastPosition Json)` ; `LearningPlan/Recommendation(userId, conceptId, reason Json, createdFrom)`.
+- **Labos** : `LabWorkspace(userId, subjectId?, kind: CODE|SQL, mode: FREE|EXERCISE, brief Json?, files Json, schemaSql?)` ; `LabRun(workspaceId, input, output, tests Json, evaluation Json)`.
+- **Journal** : `AIUsageLog` conservé (ajout `promptVersion`, `cacheHit`).
+
+### 2.3 Services métier (`src/server/services/*`)
+Chacun : entrée structurée → schéma zod de sortie → erreurs typées. Un seul client IA (`lib/ai.ts` refondu) gère timeouts, quotas par utilisateur, journal, cache (hash du contexte + version de prompt), isolation du contenu documentaire (délimiteurs, jamais dans le prompt système).
+`DocumentStructureService` · `ConceptExtractionService` · `DocumentAnalysisService` (orchestre les deux, par section pour contourner la limite de 40 000 car.) · `MindMapGenerationService` · `ExerciseGenerationService` (barème contraint côté serveur : la somme est recalculée, jamais confiée à l'IA) · `AnswerEvaluationService` · `CodeEvaluationService` / `SQLEvaluationService` (tests objectifs d'abord, IA ensuite pour l'explication) · `LearningDiagnosisService` · `LearningRecommendationService`.
+Règle : l'IA propose, le serveur valide (citations retrouvées dans les chunks, totaux, droits, verdicts de tests).
+
+### 2.4 Dépendances techniques à ajouter
+`@xyflow/react` (cartes) · lecteur PDF : `pdfjs-dist` via `react-pdf` · éditeur de notes : **Tiptap** (le projet embarque déjà `@mdxeditor/editor`, mais le besoin de tableaux/ancrages/stockage JSON favorise Tiptap ; décision D5) · stockage objet : Supabase Storage (déjà `@supabase/supabase-js`) · `vitest` pour les tests.
+
+### 2.5 Plan de migration des données
+1. Migration Prisma **additive** (nouvelles tables, aucune suppression), générée avec `prisma migrate` (fin de `db push --accept-data-loss`).
+2. Script de reprise idempotent : chaque `Chapter` → `Folder` (même nom, sans parent) ; `Document.chapterId` → `folderId` ; chaque `Document` → `DocumentVersion` n°1 (le fichier original n'ayant jamais été conservé, la version est marquée `originalMissing = true` et l'interface propose de réimporter le fichier pour activer le lecteur fidèle) ; `extractedText` + chunks → chunks de la version ; `DocumentAnalysis` V1 → archivée en lecture seule (`legacy`) ; `Session*/Answer` → `ExerciseAttempt/Answer` ; `ConceptStat` → `Concept` par matière (notions homonymes d'une même matière fusionnées, pas entre matières) + `ConceptMastery`.
+3. Vérifications automatisées : comptes avant/après, orphelins, isolation par `userId`.
+4. Bascule du code, puis **seulement ensuite** migration destructive retirant `Chapter`, `Session*`, `ConceptStat`, `StudyRecommendation`, avec sauvegarde (snapshot Neon/Supabase) préalable.
+
+### 2.6 Phasage de l'implémentation
+| Phase | Contenu | Critère de sortie |
+|---|---|---|
+| 0 | Hygiène : `git rm --cached db/*`, rotation du secret, retrait compte par défaut, cookie `secure`, retrait `ignoreBuildErrors`, `vitest`, helper `ownedBy` | build typé vert, tests d'isolation verts |
+| 1 | Schéma V2 + migrations + script de reprise | migration jouée sur copie de la base |
+| 2 | Matières, dossiers, import avec stockage objet, versions, états de traitement | dossiers libres, déplacements, recherche/tri |
+| 3 | Lecteur PDF fidèle + panneau latéral | PDF affiché, page mémorisée |
+| 4 | Notes unifiées + annotations | note libre et annotation visibles dans la même liste |
+| 5 | Services IA + analyse hiérarchique + édition | arbre fidèle sur un cours réel |
+| 6 | Cartes de structure et conceptuelle (React Flow) | édition, relations, révisions |
+| 7 | Génération d'exercices configurable + passage + correction | barème exact, un seul document source |
+| 8 | Labos code/SQL en mode exercice avec tests objectifs et sandbox | pas d'accès env/réseau/fichiers depuis le code étudiant |
+| 9 | Progression adaptative, diagnostics, recommandations, tableau de bord, reprise | parcours complet bout en bout |
+| 10 | Documentation, tests de parcours, limites restantes | `docs/` complet |
+
+### 2.7 Décisions que je prends par défaut (modifiables)
+- **D1 Stockage des fichiers** : Supabase Storage, bucket privé, URLs signées courtes générées après contrôle de propriété.
+- **D2 Formats** : PDF (lecteur fidèle), images, TXT/MD (rendu natif) ; DOCX/PPTX conservés en original et téléchargeables, aperçu via conversion PDF **non disponible** dans cet environnement → affichage du texte extrait **étiqueté comme tel** à côté du bouton de téléchargement de l'original (limite documentée).
+- **D3 Sandbox du code** : le conteneur n'est pas garanti sur Vercel ; par défaut JavaScript/TypeScript dans un worker WASM isolé (QuickJS) et Python via Pyodide en WASM dans un worker avec délai ; langages sans runtime sûr : correction par IA signalée comme telle. Un connecteur vers un service d'exécution externe est préparé (interface `CodeRunner`) mais non branché.
+- **D4 IA** : Anthropic uniquement (déjà en place), derrière une interface de fournisseur pour en brancher d'autres.
+- **D5 Éditeur de notes** : Tiptap, contenu JSON.
+- **D6 Compte par défaut** : supprimé ; création de compte via un écran d'inscription (local/dev seulement) ou variable de seed.
+
+## 3. Points qui demandent votre arbitrage
+1. **Sauvegarde et base cible** : la migration doit-elle être jouée sur une branche/copie (Neon/Supabase) avant la base actuelle ? Je recommande une copie, puis bascule.
+2. **Documents existants sans original** : acceptez-vous de ne pas pouvoir afficher fidèlement ces documents tant qu'ils ne sont pas réimportés ?
+3. **Sandbox de code** : D3 (WASM) vous convient-il, ou disposez-vous d'un service d'exécution/d'un hébergement avec conteneurs ?
+4. **Secret exposé** : `db/.auth-secret` figure dans l'historique git ; si le dépôt a été poussé ailleurs, le secret doit être considéré comme compromis (rotation de `AUTH_SECRET`).
+
+
+## 4. Avancement
+
+**Phase 0 — terminée** (vérifiée : `tsc --noEmit` sans erreur, `npx vitest run` vert)
+- `db/custom.db` et `db/.auth-secret` retirés de l'index git (S3). **Reste à faire par vous : changer `AUTH_SECRET`** si le dépôt a été partagé, et purger l'historique si nécessaire.
+- `AUTH_SECRET` (≥ 32 car.) obligatoire en production ; cookie `secure` en production (S5) ; compte par défaut et son affichage sur la page de connexion supprimés (S4) → `scripts/create-user.mjs`.
+- Le code étudiant ne reçoit plus l'environnement du serveur (S1, correction partielle : le vrai bac à sable reste à faire en phase 8 ; S2 et S6 restent ouverts).
+- Erreurs 500 génériques avec référence (S8) ; erreurs métier converties en `ApiHttpError` (404/409/502) pour conserver leurs messages.
+- `ignoreBuildErrors` retiré, `db:push` sans `--accept-data-loss`, `vitest` en place, helpers `ownedBy` / `assertFound`.
+
+**Phase 1 — terminée** : schéma V2 (25 modèles, 14 enums), 4 migrations testées sur PGlite (voir `docs/MIGRATION.md`). **Aucune migration n'a été appliquée à votre base Supabase.** Les modèles V1 en collision de nom sont `Legacy*` ; le code V1 pointe dessus (`db.legacyExercise`…) et fonctionne comme avant.
+
+**Fonctionnalités V2 utilisateur** : aucune pour l'instant (phases 2 à 10).

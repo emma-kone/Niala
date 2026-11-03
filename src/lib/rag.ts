@@ -30,7 +30,7 @@ export interface SearchIndexEntry {
 }
 
 export async function buildIndex(documentIds: string[], userId: string): Promise<SearchIndexEntry[]> {
-  const chunks = await db.documentChunk.findMany({
+  const chunks = await db.legacyDocumentChunk.findMany({
     where: { documentId: { in: documentIds }, document: { userId } },
     include: { document: { select: { name: true } } },
     orderBy: [{ documentId: "asc" }, { idx: "asc" }],

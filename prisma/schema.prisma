@@ -21,23 +21,49 @@ model User {
   settings        UserSettings?
   subjects        Subject[]
   documents       Document[]
-  exercises       Exercise[]
+  exercises       LegacyExercise[]
   sessions        Session[]
   conceptStats    ConceptStat[]
   recommendations StudyRecommendation[]
   aiLogs          AIUsageLog[]
+
+  // ── V2 ──
+  folders          Folder[]
+  docVersions      DocumentVersion[]
+  docChunks        DocumentChunk[]
+  docAnalyses      DocumentAnalysis[]
+  courseSections   CourseSection[]
+  concepts         Concept[]
+  conceptSources   ConceptSource[]
+  conceptRelations ConceptRelation[]
+  notes            Note[]
+  noteLinks        NoteLink[]
+  mindMaps         MindMap[]
+  mindMapNodes     MindMapNode[]
+  mindMapEdges     MindMapEdge[]
+  mindMapRevisions MindMapRevision[]
+  studyExercises   Exercise[]
+  questions        Question[]
+  attempts         ExerciseAttempt[]
+  answers          Answer[]
+  diagnoses        ErrorDiagnosis[]
+  masteries        ConceptMastery[]
+  activities       LearningActivity[]
+  learningRecs     LearningRecommendation[]
+  labWorkspaces    LabWorkspace[]
+  labRuns          LabRun[]
 }
 
 model UserSettings {
-  id             String  @id @default(cuid())
-  userId         String  @unique
-  theme          String  @default("system") // light | dark | system
-  defaultMode    String  @default("apprentissage")
-  maxUploadMB    Int     @default(20)
-  hintsEnabled   Boolean @default(true)
-  aiModel        String  @default("claude-sonnet-5-5")
-  exerciseLang   String  @default("fr")
-  retentionDays  Int     @default(0) // 0 = conservation illimitée
+  id            String  @id @default(cuid())
+  userId        String  @unique
+  theme         String  @default("system") // light | dark | system
+  defaultMode   String  @default("apprentissage")
+  maxUploadMB   Int     @default(20)
+  hintsEnabled  Boolean @default(true)
+  aiModel       String  @default("claude-sonnet-5-5")
+  exerciseLang  String  @default("fr")
+  retentionDays Int     @default(0) // 0 = conservation illimitée
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
@@ -52,11 +78,21 @@ model Subject {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   chapters  Chapter[]
   documents Document[]
-  exercises Exercise[]
+  exercises LegacyExercise[]
   sessions  Session[]
+
+  // ── V2 ──
+  folders        Folder[]
+  concepts       Concept[]
+  notes          Note[]
+  mindMaps       MindMap[]
+  studyExercises Exercise[]
+  activities     LearningActivity[]
+  learningRecs   LearningRecommendation[]
+  labWorkspaces  LabWorkspace[]
 
   @@index([userId])
 }
@@ -92,55 +128,70 @@ model Document {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  subject   Subject?         @relation(fields: [subjectId], references: [id], onDelete: SetNull)
-  chapter   Chapter?         @relation(fields: [chapterId], references: [id], onDelete: SetNull)
-  chunks    DocumentChunk[]
-  analyses  DocumentAnalysis[]
+  user     User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject  Subject?                 @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+  chapter  Chapter?                 @relation(fields: [chapterId], references: [id], onDelete: SetNull)
+  chunks   LegacyDocumentChunk[]
+  analyses LegacyDocumentAnalysis[]
+
+  // ── V2 ──
+  folderId         String?
+  currentVersionId String?           @unique
+  lastOpenedAt     DateTime?
+  lastPage         Int?
+  folder           Folder?           @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  currentVersion   DocumentVersion?  @relation("CurrentVersion", fields: [currentVersionId], references: [id], onDelete: SetNull)
+  versions         DocumentVersion[] @relation("DocumentVersions")
+  noteLinks        NoteLink[]
+  studyExercises   Exercise[]
 
   @@index([userId])
   @@index([subjectId])
   @@index([status])
+  @@index([folderId])
 }
 
-model DocumentChunk {
-  id         String @id @default(cuid())
+model LegacyDocumentChunk {
+  id         String  @id @default(cuid())
   documentId String
   idx        Int
   section    String? // titre de section / page d'origine
   content    String
-  words      Int    @default(0)
+  words      Int     @default(0)
 
   document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
   @@index([documentId])
+  @@map("LegacyDocumentChunk")
 }
 
-model DocumentAnalysis {
-  id           String   @id @default(cuid())
-  documentId   String   @unique
-  summary      String?
-  subjectGuess String?
-  chapters     String? // JSON
-  notions      String? // JSON
-  definitions  String? // JSON
-  methods      String? // JSON
-  formulas     String? // JSON
-  codeExcerpts String? // JSON
-  pitfalls     String? // JSON
+model LegacyDocumentAnalysis {
+  id            String   @id @default(cuid())
+  documentId    String   @unique
+  summary       String?
+  subjectGuess  String?
+  chapters      String? // JSON
+  notions       String? // JSON
+  definitions   String? // JSON
+  methods       String? // JSON
+  formulas      String? // JSON
+  codeExcerpts  String? // JSON
+  pitfalls      String? // JSON
   prerequisites String? // JSON
-  evaluable    String? // JSON
-  relations    String? // JSON
-  raw          String? // JSON brut de l'IA
-  model        String?
-  createdAt    DateTime @default(now())
+  evaluable     String? // JSON
+  relations     String? // JSON
+  raw           String? // JSON brut de l'IA
+  model         String?
+  createdAt     DateTime @default(now())
 
   document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@map("LegacyDocumentAnalysis")
 }
 
 // ─────────────────────────── Exercices & sessions ───────────────────────────
 
-model Exercise {
+model LegacyExercise {
   id        String   @id @default(cuid())
   userId    String
   subjectId String?
@@ -150,12 +201,13 @@ model Exercise {
   status    String   @default("READY") // READY | USED | ARCHIVED
   createdAt DateTime @default(now())
 
-  user    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  subject Subject?  @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+  user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject Subject?      @relation(fields: [subjectId], references: [id], onDelete: SetNull)
   items   SessionItem[]
 
   @@index([userId])
   @@index([subjectId])
+  @@map("LegacyExercise")
 }
 
 model Session {
@@ -176,9 +228,9 @@ model Session {
   percentage  Float?
   summary     String? // JSON : compte rendu final
 
-  user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  subject  Subject?      @relation(fields: [subjectId], references: [id], onDelete: SetNull)
-  items    SessionItem[]
+  user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject Subject?      @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+  items   SessionItem[]
 
   @@index([userId])
   @@index([subjectId])
@@ -186,48 +238,49 @@ model Session {
 }
 
 model SessionItem {
-  id           String  @id @default(cuid())
-  sessionId    String
-  exerciseId   String?
-  questionIdx  Int
-  maxPoints    Float   @default(1)
-  points       Float?
-  status       String  @default("PENDING") // PENDING | CORRECT | PARTIAL | INCORRECT | SKIPPED
-  graded       Boolean @default(false)
-  hintsUsed    Int     @default(0) // indices révélés pour CETTE question
+  id          String  @id @default(cuid())
+  sessionId   String
+  exerciseId  String?
+  questionIdx Int
+  maxPoints   Float   @default(1)
+  points      Float?
+  status      String  @default("PENDING") // PENDING | CORRECT | PARTIAL | INCORRECT | SKIPPED
+  graded      Boolean @default(false)
+  hintsUsed   Int     @default(0) // indices révélés pour CETTE question
 
-  session   Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  exercise  Exercise? @relation(fields: [exerciseId], references: [id], onDelete: SetNull)
-  answers   Answer[]
+  session  Session         @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  exercise LegacyExercise? @relation(fields: [exerciseId], references: [id], onDelete: SetNull)
+  answers  LegacyAnswer[]
 
   @@index([sessionId])
 }
 
-model Answer {
-  id          String   @id @default(cuid())
-  itemId      String
-  value       String // JSON : réponse de l'utilisateur
-  feedback    String? // JSON : correction détaillée (critères, explication, sources)
-  gradedBy    String? // rule | ai | mixed
-  attempts    Int      @default(1)
-  createdAt   DateTime @default(now())
+model LegacyAnswer {
+  id        String   @id @default(cuid())
+  itemId    String
+  value     String // JSON : réponse de l'utilisateur
+  feedback  String? // JSON : correction détaillée (critères, explication, sources)
+  gradedBy  String? // rule | ai | mixed
+  attempts  Int      @default(1)
+  createdAt DateTime @default(now())
 
   item SessionItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
 
   @@index([itemId])
+  @@map("LegacyAnswer")
 }
 
 // ─────────────────────────── Suivi des notions & révision ───────────────────────────
 
 model ConceptStat {
-  id        String   @id @default(cuid())
-  userId    String
-  notion    String
-  attempts  Int      @default(0)
-  correct   Int      @default(0)
-  partial   Int      @default(0)
-  mastery   Float    @default(0) // 0..1
-  lastSeen  DateTime @default(now())
+  id       String   @id @default(cuid())
+  userId   String
+  notion   String
+  attempts Int      @default(0)
+  correct  Int      @default(0)
+  partial  Int      @default(0)
+  mastery  Float    @default(0) // 0..1
+  lastSeen DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -299,19 +352,656 @@ model ChatMessage {
 // ─────────────────────────── Journalisation IA ───────────────────────────
 
 model AIUsageLog {
-  id           String   @id @default(cuid())
-  userId       String?
-  op           String // analysis | rag | generation | grading | explain | revision
-  model        String?
-  promptChars  Int?
-  respChars    Int?
-  ok           Boolean  @default(true)
-  error        String?
-  durationMs   Int?
-  createdAt    DateTime @default(now())
+  id          String   @id @default(cuid())
+  userId      String?
+  op          String // analysis | rag | generation | grading | explain | revision
+  model       String?
+  promptChars Int?
+  respChars   Int?
+  ok          Boolean  @default(true)
+  error       String?
+  durationMs  Int?
+  createdAt   DateTime @default(now())
 
   user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([userId])
   @@index([op])
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//                              STUDYFORGE V2
+// Principes : chaque table porte un userId (isolation + RLS) ; le JSON n'est
+// utilisé que pour des contenus validés par zod côté serveur ; les fichiers
+// originaux vivent dans le stockage objet (DocumentVersion.storageKey), le texte
+// extrait n'est qu'un index dérivé.
+// ═════════════════════════════════════════════════════════════════════════════
+
+enum ExtractStatus {
+  PENDING
+  PROCESSING
+  READY
+  PARTIAL // texte extrait avec avertissements (pages scannées…)
+  FAILED
+  UNSUPPORTED // pas d'extraction possible, le fichier reste consultable/téléchargeable
+}
+
+enum AnalysisStatus {
+  PENDING
+  RUNNING
+  READY
+  FAILED
+}
+
+enum Origin {
+  DOCUMENT // explicitement présent dans le document
+  AI_INFERRED // déduit par l'IA
+  USER // ajouté ou corrigé par l'étudiant
+}
+
+enum ConceptKind {
+  NOTION
+  DEFINITION
+  PROPERTY
+  RULE
+  EXAMPLE
+}
+
+enum RelationType {
+  PREREQUISITE
+  PART_OF
+  EXAMPLE_OF
+  DEFINES
+  CONTRASTS
+  RELATED
+}
+
+enum NoteKind {
+  PERSONAL
+  DOCUMENT
+  ANNOTATION
+  SUMMARY
+}
+
+enum MapKind {
+  STRUCTURE
+  CONCEPT
+}
+
+enum ExerciseStatus {
+  READY
+  ARCHIVED
+}
+
+enum AttemptStatus {
+  IN_PROGRESS
+  SUBMITTED
+  GRADED
+}
+
+enum GradedBy {
+  RULE
+  TEST
+  AI
+  MIXED
+}
+
+enum ErrorCategory {
+  SYNTAX
+  LOGIC
+  CONCEPT
+  METHOD
+  INSTRUCTION
+  FORGETTING
+  CARELESS
+}
+
+enum ActivityStatus {
+  SUGGESTED
+  IN_PROGRESS
+  DONE
+  DISMISSED
+}
+
+enum LabKind {
+  CODE
+  SQL
+}
+
+enum LabMode {
+  FREE
+  EXERCISE
+}
+
+// ─────────────────────────── Dossiers & versions ───────────────────────────
+
+/// Dossier libre de l'étudiant (récursif). Distinct de la structure pédagogique détectée par l'IA.
+/// NB : @@unique ne protège pas les noms à la racine (parentId NULL en SQL) → contrôlé en transaction par le service.
+model Folder {
+  id        String   @id @default(cuid())
+  userId    String
+  subjectId String
+  parentId  String?
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject   Subject    @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  parent    Folder?    @relation("FolderTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children  Folder[]   @relation("FolderTree")
+  documents Document[]
+
+  @@unique([subjectId, parentId, name])
+  @@index([userId])
+  @@index([subjectId, parentId])
+}
+
+/// Version immuable d'un fichier : le fichier original (stockage objet) + son extraction.
+model DocumentVersion {
+  id              String        @id @default(cuid())
+  userId          String
+  documentId      String
+  number          Int
+  storageKey      String? // null tant que l'original n'est pas (ré)importé
+  originalMissing Boolean       @default(false) // données migrées de la V1 : original jamais conservé
+  mime            String
+  size            Int
+  sha256          String?
+  pageCount       Int?
+  extractStatus   ExtractStatus @default(PENDING)
+  extractError    String?
+  extractWarnings Json? // string[]
+  createdAt       DateTime      @default(now())
+
+  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  document  Document           @relation("DocumentVersions", fields: [documentId], references: [id], onDelete: Cascade)
+  currentOf Document?          @relation("CurrentVersion")
+  chunks    DocumentChunk[]
+  analyses  DocumentAnalysis[]
+  noteLinks NoteLink[]
+  exercises Exercise[]
+
+  @@unique([documentId, number])
+  @@index([userId])
+  @@index([sha256])
+}
+
+/// Texte extrait et indexé (jamais affiché à la place du document). Conserve page et offsets pour citer.
+model DocumentChunk {
+  id        String @id @default(cuid())
+  userId    String
+  versionId String
+  idx       Int
+  page      Int?
+  charStart Int    @default(0)
+  charEnd   Int    @default(0)
+  content   String
+  words     Int    @default(0)
+
+  user    User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  version DocumentVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+
+  @@unique([versionId, idx])
+  @@index([userId])
+}
+
+// ─────────────────────────── Analyse pédagogique ───────────────────────────
+
+/// Une analyse est liée à UNE version ; relancer crée une nouvelle ligne (historique conservé).
+model DocumentAnalysis {
+  id            String         @id @default(cuid())
+  userId        String
+  versionId     String
+  status        AnalysisStatus @default(PENDING)
+  model         String?
+  promptVersion String?
+  summary       String?
+  error         String?
+  createdAt     DateTime       @default(now())
+  finishedAt    DateTime?
+
+  user     User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  version  DocumentVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  sections CourseSection[]
+  sources  ConceptSource[]
+  maps     MindMap[]
+
+  @@index([userId])
+  @@index([versionId, createdAt])
+}
+
+/// Plan hiérarchique du document (CHAPITRE II > I > A > 1 > a …), fidèle à la numérotation d'origine.
+model CourseSection {
+  id         String  @id @default(cuid())
+  userId     String
+  analysisId String
+  parentId   String?
+  label      String // titre, éditable
+  numbering  String? // "II", "A", "3", "b"… tel qu'écrit dans le document
+  level      Int     @default(0)
+  position   Int     @default(0)
+  pageStart  Int?
+  pageEnd    Int?
+  origin     Origin  @default(DOCUMENT)
+  edited     Boolean @default(false)
+  refs       Json? // SourceRef[] : [{ chunkId, page, quote }]
+
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  analysis DocumentAnalysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  parent   CourseSection?   @relation("SectionTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children CourseSection[]  @relation("SectionTree")
+  sources  ConceptSource[]
+  nodes    MindMapNode[]
+
+  @@index([userId])
+  @@index([analysisId, parentId, position])
+}
+
+/// Identité d'une notion DANS UNE MATIÈRE (jamais fusionnée entre matières).
+model Concept {
+  id             String      @id @default(cuid())
+  userId         String
+  subjectId      String
+  name           String
+  normalizedName String
+  kind           ConceptKind @default(NOTION)
+  importance     Int         @default(2) // 1 secondaire · 2 normale · 3 principale
+  createdAt      DateTime    @default(now())
+
+  user      User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject   Subject                  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  sources   ConceptSource[]
+  outgoing  ConceptRelation[]        @relation("RelationFrom")
+  incoming  ConceptRelation[]        @relation("RelationTo")
+  questions QuestionConcept[]
+  mastery   ConceptMastery?
+  diagnoses ErrorDiagnosis[]
+  nodes     MindMapNode[]
+  recs      LearningRecommendation[]
+
+  @@unique([subjectId, normalizedName, kind])
+  @@index([userId])
+}
+
+/// Provenance d'une notion : où, dans quelle analyse, et si elle est écrite ou déduite.
+model ConceptSource {
+  id         String  @id @default(cuid())
+  userId     String
+  conceptId  String
+  analysisId String
+  sectionId  String?
+  origin     Origin  @default(DOCUMENT)
+  definition String?
+  refs       Json? // SourceRef[]
+
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  concept  Concept          @relation(fields: [conceptId], references: [id], onDelete: Cascade)
+  analysis DocumentAnalysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  section  CourseSection?   @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+
+  @@unique([conceptId, analysisId, sectionId])
+  @@index([userId])
+}
+
+model ConceptRelation {
+  id        String       @id @default(cuid())
+  userId    String
+  subjectId String
+  fromId    String
+  toId      String
+  type      RelationType @default(RELATED)
+  origin    Origin       @default(AI_INFERRED)
+  refs      Json?
+
+  user User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  from Concept @relation("RelationFrom", fields: [fromId], references: [id], onDelete: Cascade)
+  to   Concept @relation("RelationTo", fields: [toId], references: [id], onDelete: Cascade)
+
+  @@unique([fromId, toId, type])
+  @@index([userId])
+  @@index([subjectId])
+}
+
+// ─────────────────────────── Notes unifiées ───────────────────────────
+
+/// Un seul système : personnelle, liée à un document, annotation de passage ou fiche de synthèse.
+model Note {
+  id        String   @id @default(cuid())
+  userId    String
+  subjectId String
+  kind      NoteKind @default(PERSONAL)
+  title     String   @default("")
+  content   Json // document de l'éditeur riche
+  revision  Int      @default(1) // contrôle de concurrence optimiste
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user    User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject Subject    @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  links   NoteLink[]
+
+  @@index([userId])
+  @@index([subjectId, kind, updatedAt])
+}
+
+/// Référence N:N d'une note vers des documents ; porte l'ancrage précis d'une annotation.
+model NoteLink {
+  id         String  @id @default(cuid())
+  userId     String
+  noteId     String
+  documentId String
+  versionId  String?
+  page       Int?
+  anchor     Json? // { quote, charStart, charEnd, rects[] }
+
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  note     Note             @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  document Document         @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  version  DocumentVersion? @relation(fields: [versionId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([noteId])
+  @@index([documentId, page])
+}
+
+// ─────────────────────────── Cartes (graphes éditables) ───────────────────────────
+
+model MindMap {
+  id         String   @id @default(cuid())
+  userId     String
+  subjectId  String
+  analysisId String?
+  kind       MapKind
+  title      String
+  revision   Int      @default(1)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject   Subject           @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  analysis  DocumentAnalysis? @relation(fields: [analysisId], references: [id], onDelete: SetNull)
+  nodes     MindMapNode[]
+  edges     MindMapEdge[]
+  revisions MindMapRevision[]
+
+  @@index([userId])
+  @@index([subjectId])
+}
+
+model MindMapNode {
+  id        String  @id @default(cuid())
+  userId    String
+  mapId     String
+  label     String
+  x         Float   @default(0)
+  y         Float   @default(0)
+  origin    Origin  @default(AI_INFERRED)
+  conceptId String?
+  sectionId String?
+  data      Json?
+
+  user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  map     MindMap        @relation(fields: [mapId], references: [id], onDelete: Cascade)
+  concept Concept?       @relation(fields: [conceptId], references: [id], onDelete: SetNull)
+  section CourseSection? @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+  out     MindMapEdge[]  @relation("EdgeSource")
+  in      MindMapEdge[]  @relation("EdgeTarget")
+
+  @@index([userId])
+  @@index([mapId])
+}
+
+model MindMapEdge {
+  id       String       @id @default(cuid())
+  userId   String
+  mapId    String
+  sourceId String
+  targetId String
+  type     RelationType @default(RELATED)
+  label    String?
+  origin   Origin       @default(AI_INFERRED)
+
+  user   User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  map    MindMap     @relation(fields: [mapId], references: [id], onDelete: Cascade)
+  source MindMapNode @relation("EdgeSource", fields: [sourceId], references: [id], onDelete: Cascade)
+  target MindMapNode @relation("EdgeTarget", fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([mapId])
+}
+
+model MindMapRevision {
+  id        String   @id @default(cuid())
+  userId    String
+  mapId     String
+  number    Int
+  snapshot  Json
+  createdAt DateTime @default(now())
+
+  user User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  map  MindMap @relation(fields: [mapId], references: [id], onDelete: Cascade)
+
+  @@unique([mapId, number])
+  @@index([userId])
+}
+
+// ─────────────────────────── Exercices & tentatives ───────────────────────────
+
+/// Exercice indépendant du document source (référence conservée, SetNull si supprimé).
+model Exercise {
+  id          String         @id @default(cuid())
+  userId      String
+  subjectId   String
+  documentId  String?
+  versionId   String?
+  title       String
+  config      Json // nombre, barème, types, couverture, difficulté (validé par zod)
+  totalPoints Float
+  status      ExerciseStatus @default(READY)
+  createdAt   DateTime       @default(now())
+
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject   Subject           @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  document  Document?         @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  version   DocumentVersion?  @relation(fields: [versionId], references: [id], onDelete: SetNull)
+  questions Question[]
+  attempts  ExerciseAttempt[]
+  labs      LabWorkspace[]
+
+  @@index([userId])
+  @@index([subjectId, createdAt])
+}
+
+model Question {
+  id          String  @id @default(cuid())
+  userId      String
+  exerciseId  String
+  position    Int
+  type        String // QuestionType (voir lib/types.ts), évolutif
+  points      Float
+  difficulty  String
+  payload     Json // énoncé, options, trous, tests…
+  answerKey   Json // jamais renvoyé au client avant correction
+  explanation String?
+  sourceRefs  Json? // SourceRef[]
+
+  user     User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  exercise Exercise          @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  concepts QuestionConcept[]
+
+  @@unique([exerciseId, position])
+  @@index([userId])
+}
+
+model QuestionConcept {
+  questionId String
+  conceptId  String
+
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  concept  Concept  @relation(fields: [conceptId], references: [id], onDelete: Cascade)
+
+  @@id([questionId, conceptId])
+  @@index([conceptId])
+}
+
+model ExerciseAttempt {
+  id           String        @id @default(cuid())
+  userId       String
+  exerciseId   String?
+  snapshot     Json // copie figée des questions au démarrage
+  status       AttemptStatus @default(IN_PROGRESS)
+  startedAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  finishedAt   DateTime?
+  lastPosition Int           @default(0) // reprise
+  durationSec  Int?
+  score        Float?
+  maxScore     Float?
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  exercise Exercise? @relation(fields: [exerciseId], references: [id], onDelete: SetNull)
+  answers  Answer[]
+
+  @@index([userId, status])
+  @@index([exerciseId])
+}
+
+model Answer {
+  id        String    @id @default(cuid())
+  userId    String
+  attemptId String
+  position  Int
+  value     Json
+  feedback  Json?
+  verdict   String? // correct | partial | incorrect | skipped
+  points    Float?
+  gradedBy  GradedBy?
+  tries     Int       @default(1)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  attempt   ExerciseAttempt  @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  diagnoses ErrorDiagnosis[]
+
+  @@unique([attemptId, position])
+  @@index([userId])
+}
+
+// ─────────────────────────── Apprentissage adaptatif ───────────────────────────
+
+/// Diagnostic justifié : la catégorie ET les preuves qui l'appuient.
+model ErrorDiagnosis {
+  id         String        @id @default(cuid())
+  userId     String
+  answerId   String?
+  labRunId   String?
+  conceptId  String?
+  category   ErrorCategory
+  confidence Float // 0..1
+  evidence   Json // éléments de justification
+  createdAt  DateTime      @default(now())
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  answer  Answer?  @relation(fields: [answerId], references: [id], onDelete: SetNull)
+  labRun  LabRun?  @relation(fields: [labRunId], references: [id], onDelete: SetNull)
+  concept Concept? @relation(fields: [conceptId], references: [id], onDelete: SetNull)
+
+  @@index([userId, conceptId])
+}
+
+/// Estimation de maîtrise recalculable à partir des preuves (réponses, diagnostics), avec niveau de confiance.
+model ConceptMastery {
+  conceptId      String    @id
+  userId         String
+  level          Float     @default(0) // 0..1
+  confidence     Float     @default(0) // 0..1 : fiabilité de l'estimation
+  evidenceCount  Int       @default(0)
+  lastEvidenceAt DateTime?
+  updatedAt      DateTime  @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  concept Concept @relation(fields: [conceptId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+/// Dernière activité / activités en cours : sert à la reprise et au tableau de bord.
+model LearningActivity {
+  id           String         @id @default(cuid())
+  userId       String
+  subjectId    String?
+  type         String // READING | EXERCISE | LAB_CODE | LAB_SQL | REVISION
+  refType      String?
+  refId        String?
+  title        String
+  status       ActivityStatus @default(IN_PROGRESS)
+  lastPosition Json?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject Subject? @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+
+  @@index([userId, status, updatedAt])
+}
+
+model LearningRecommendation {
+  id           String         @id @default(cuid())
+  userId       String
+  subjectId    String?
+  conceptId    String?
+  activityType String
+  reason       Json // explication lisible + preuves
+  status       ActivityStatus @default(SUGGESTED)
+  createdAt    DateTime       @default(now())
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject Subject? @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+  concept Concept? @relation(fields: [conceptId], references: [id], onDelete: SetNull)
+
+  @@index([userId, status])
+}
+
+// ─────────────────────────── Laboratoires ───────────────────────────
+
+model LabWorkspace {
+  id         String   @id @default(cuid())
+  userId     String
+  subjectId  String?
+  exerciseId String?
+  kind       LabKind
+  mode       LabMode  @default(FREE)
+  title      String
+  files      Json // { name, language, content }[]
+  brief      Json? // consignes extraites d'un document importé
+  schemaSql  String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject  Subject?  @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+  exercise Exercise? @relation(fields: [exerciseId], references: [id], onDelete: SetNull)
+  runs     LabRun[]
+
+  @@index([userId, kind, updatedAt])
+}
+
+model LabRun {
+  id          String   @id @default(cuid())
+  userId      String
+  workspaceId String
+  input       Json
+  output      Json
+  tests       Json? // résultats des tests objectifs
+  evaluation  Json? // évaluation IA (après les tests)
+  createdAt   DateTime @default(now())
+
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace LabWorkspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  diagnoses ErrorDiagnosis[]
+
+  @@index([userId])
+  @@index([workspaceId, createdAt])
 }

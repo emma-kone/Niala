@@ -8,7 +8,7 @@ import { QUESTION_TYPES } from "@/lib/types";
 export async function GET() {
   return handle(async () => {
     const user = await requireUser();
-    const exercises = await db.exercise.findMany({
+    const exercises = await db.legacyExercise.findMany({
       where: { userId: user.id },
       include: { subject: { select: { name: true, color: true } } },
       orderBy: { createdAt: "desc" },
@@ -69,10 +69,10 @@ export async function POST(req: Request) {
     const commonChapterId = chapterIds.size === 1 ? [...chapterIds][0] : undefined;
 
     const result = await generateExercises(config, user.id);
-    if (!result.ok) throw new Error(result.error);
+    if (!result.ok) throw new ApiHttpError(result.error, 502);
 
     const title = `${docs[0].name} — ${new Date().toLocaleDateString("fr-FR")}`;
-    const exercise = await db.exercise.create({
+    const exercise = await db.legacyExercise.create({
       data: {
         userId: user.id,
         subjectId: config.subjectId ?? null,

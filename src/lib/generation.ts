@@ -72,7 +72,7 @@ ${content}
     raw: res.raw ?? null,
     model: res.model ?? "anthropic",
   };
-  await db.documentAnalysis.upsert({
+  await db.legacyDocumentAnalysis.upsert({
     where: { documentId },
     create: { documentId, ...data },
     update: data,

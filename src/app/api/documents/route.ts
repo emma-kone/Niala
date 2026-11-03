@@ -131,7 +131,7 @@ export async function POST(req: Request) {
         // Découpage en morceaux pour la recherche documentaire
         const chunks = chunkText(extracted.text);
         if (chunks.length > 0) {
-          await db.documentChunk.createMany({
+          await db.legacyDocumentChunk.createMany({
             data: chunks.map((c, i) => ({
               documentId: doc.id,
               idx: i,

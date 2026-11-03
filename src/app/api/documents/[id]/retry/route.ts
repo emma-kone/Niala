@@ -18,16 +18,15 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
 
     try {
       if (!doc.extractedText || doc.extractedText.trim().length < 20) {
-        throw new Error(
-          "Le contenu source n'est pas conservé après la première extraction ; réimportez le fichier depuis la Bibliothèque.",
-        );
+        throw new ApiHttpError(
+          "Le contenu source n'est pas conservé après la première extraction ; réimportez le fichier depuis la Bibliothèque.", 409);
       }
 
       // Reconstruction de l'index à partir du texte déjà extrait (aucune perte).
-      await db.documentChunk.deleteMany({ where: { documentId: id } });
+      await db.legacyDocumentChunk.deleteMany({ where: { documentId: id } });
       const chunks = chunkText(doc.extractedText);
       if (chunks.length > 0) {
-        await db.documentChunk.createMany({
+        await db.legacyDocumentChunk.createMany({
           data: chunks.map((c, i) => ({
             documentId: id,
             idx: i,

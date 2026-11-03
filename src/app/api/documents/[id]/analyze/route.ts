@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
-import { handle } from "@/lib/api-helpers";
+import { handle, ApiHttpError } from "@/lib/api-helpers";
 import { analyzeDocument } from "@/lib/generation";
 import { limit } from "@/lib/api-helpers";
 
@@ -11,12 +11,12 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
     const { id } = await ctx.params;
     limit(`analyze:${user.id}`, 12, 5 * 60_000);
     const doc = await db.document.findFirst({ where: { id, userId: user.id } });
-    if (!doc) throw new Error("Document introuvable.");
+    if (!doc) throw new ApiHttpError("Document introuvable.", 404);
     if (doc.status !== "READY" || !doc.extractedText) {
-      throw new Error("Le document doit être extrait avec succès avant l'analyse IA.");
+      throw new ApiHttpError("Le document doit être extrait avec succès avant l'analyse IA.", 409);
     }
     const result = await analyzeDocument(id, user.id);
-    if (!result.ok) throw new Error(result.error);
+    if (!result.ok) throw new ApiHttpError(result.error, 502);
     return { ok: true, analysis: result.analysis };
   });
 }

@@ -7,10 +7,13 @@
     "build": "prisma generate && next build --webpack",
     "start": "next start -p 3000",
     "lint": "eslint .",
-    "db:push": "prisma db push --accept-data-loss",
+    "db:push": "prisma db push",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
-    "db:reset": "prisma migrate reset"
+    "db:reset": "prisma migrate reset",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "db:deploy": "prisma migrate deploy"
   },
   "dependencies": {
     "@codemirror/lang-cpp": "^6.0.3",
@@ -95,6 +98,7 @@
     "zustand": "^5.0.6"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.15",
     "@tailwindcss/postcss": "^4",
     "@types/react": "^19",
     "@types/react-dom": "^19",
@@ -103,6 +107,7 @@
     "eslint-config-next": "^16.1.1",
     "tailwindcss": "^4",
     "tw-animate-css": "^1.3.5",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.2.7"
   }
 }

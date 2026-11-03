@@ -13,7 +13,7 @@ import { GraduationCap, Loader2, ShieldCheck, Sparkles } from "lucide-react";
 export default function LoginView() {
   const router = useRouter();
   const { authenticated, setAuthenticated } = useAuth();
-  const [email, setEmail] = useState("etudiante@studyforge.local");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -103,14 +103,6 @@ export default function LoginView() {
               {loading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <ShieldCheck className="h-4 w-4" aria-hidden />}
               Se connecter
             </Button>
-            <div className="rounded-lg bg-muted px-3 py-2.5">
-              <p className="typo-meta leading-relaxed">
-                <strong className="font-semibold">Compte personnel fourni :</strong> {`etudiante@studyforge.local`} · mot de passe{" "}
-                <code className="font-code rounded bg-background px-1 py-0.5 text-[11px]">studyforge2025</code>
-                <br />
-                Modifiable dans les réglages une fois connectée.
-              </p>
-            </div>
           </form>
 
           <div className="mt-6 flex items-center justify-center gap-2 text-muted-foreground">

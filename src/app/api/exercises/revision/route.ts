@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
-import { handle, readJson } from "@/lib/api-helpers";
+import { handle, readJson, ApiHttpError } from "@/lib/api-helpers";
 import { generateTargetedRevision } from "@/lib/generation";
 
 const revisionSchema = z.object({
@@ -15,8 +15,8 @@ export async function POST(req: Request) {
     const user = await requireUser();
     const { notion, difficulty } = revisionSchema.parse(await readJson<unknown>(req));
     const result = await generateTargetedRevision(notion, user.id, difficulty);
-    if (!result.ok) throw new Error(result.error);
-    const exercise = await db.exercise.create({
+    if (!result.ok) throw new ApiHttpError(result.error, 502);
+    const exercise = await db.legacyExercise.create({
       data: {
         userId: user.id,
         title: `Révision ciblée — ${notion}`,

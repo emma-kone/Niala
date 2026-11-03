@@ -56,7 +56,14 @@ function runProcess(cmd: string, args: string[], code: string, timeoutMs = TIMEO
     const started = Date.now();
     const child = spawn(cmd, args, {
       cwd: mkdtempSync(path.join(tmpdir(), "sfs-")),
-      env: { ...process.env, PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: tmpdir() },
+      // Environnement minimal : le code étudiant ne doit JAMAIS voir les secrets
+      // du serveur (DATABASE_URL, ANTHROPIC_API_KEY, AUTH_SECRET…).
+      env: {
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        HOME: tmpdir(),
+        LANG: "C.UTF-8",
+        ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+      } as unknown as NodeJS.ProcessEnv,
       stdio: "pipe",
     });
     let stdout = "";

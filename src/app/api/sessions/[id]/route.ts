@@ -1,13 +1,13 @@
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
-import { handle } from "@/lib/api-helpers";
+import { handle, ApiHttpError } from "@/lib/api-helpers";
 
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   return handle(async () => {
     const user = await requireUser();
     const { id } = await ctx.params;
     const session = await db.session.findFirst({ where: { id, userId: user.id } });
-    if (!session) throw new Error("Session introuvable.");
+    if (!session) throw new ApiHttpError("Session introuvable.", 404);
 
     const items = await db.sessionItem.findMany({
       where: { sessionId: id },
@@ -76,7 +76,7 @@ export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string 
     const user = await requireUser();
     const { id } = await ctx.params;
     const session = await db.session.findFirst({ where: { id, userId: user.id } });
-    if (!session) throw new Error("Session introuvable.");
+    if (!session) throw new ApiHttpError("Session introuvable.", 404);
     await db.session.delete({ where: { id } });
     return { ok: true };
   });

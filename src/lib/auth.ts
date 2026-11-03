@@ -10,7 +10,12 @@ const SECRET_FILE = path.join(process.cwd(), "db", ".auth-secret");
 
 // ── Secret de signature (persisté localement, surchargeable par AUTH_SECRET) ──
 function getSecret(): string {
-  if (process.env.AUTH_SECRET) return process.env.AUTH_SECRET;
+  const fromEnv = process.env.AUTH_SECRET?.trim();
+  if (fromEnv && fromEnv.length >= 32) return fromEnv;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("AUTH_SECRET (32 caractères minimum) est obligatoire en production.");
+  }
+  // Développement uniquement : secret local non versionné (db/ est ignoré par git).
   if (existsSync(SECRET_FILE)) return readFileSync(SECRET_FILE, "utf8").trim();
   const secret = randomBytes(32).toString("hex");
   mkdirSync(path.dirname(SECRET_FILE), { recursive: true });
@@ -67,7 +72,7 @@ export async function setSessionCookie(userId: string) {
   jar.set(COOKIE_NAME, createToken(userId), {
     httpOnly: true,
     sameSite: "lax",
-    secure: false, // le proxy du bac à sable gère le TLS
+    secure: process.env.NODE_ENV === "production",
     path: "/",
     maxAge: SESSION_TTL_MS / 1000,
   });
@@ -103,38 +108,6 @@ export class AuthError extends Error {
   status = 401;
   constructor() {
     super("Authentification requise");
-  }
-}
-
-// ── Compte personnel par défaut (créé au premier lancement) ──────────────────
-export const DEFAULT_ACCOUNT = {
-  email: "etudiante@studyforge.local",
-  password: "studyforge2025",
-  name: "Étudiante",
-};
-
-export async function ensureDefaultAccount() {
-  const count = await db.user.count();
-  if (count === 0) {
-    await db.user.create({
-      data: {
-        email: DEFAULT_ACCOUNT.email,
-        passwordHash: hashPassword(DEFAULT_ACCOUNT.password),
-        name: DEFAULT_ACCOUNT.name,
-        settings: { create: {} },
-      },
-    });
-    // Matières d'exemple vides pour aider à démarrer
-    const user = await db.user.findFirst({ where: { email: DEFAULT_ACCOUNT.email } });
-    if (user) {
-      await db.subject.createMany({
-        data: [
-          { userId: user.id, name: "Bases de données & SQL", color: "#8b5cf6" },
-          { userId: user.id, name: "Algorithmique & programmation", color: "#059669" },
-          { userId: user.id, name: "Systèmes & réseaux", color: "#d97706" },
-        ],
-      });
-    }
   }
 }
 

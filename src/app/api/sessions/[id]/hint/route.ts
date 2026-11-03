@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
-import { handle, readJson } from "@/lib/api-helpers";
+import { handle, readJson, ApiHttpError } from "@/lib/api-helpers";
 
 const hintSchema = z.object({ questionIdx: z.number().int().min(0) });
 
@@ -15,12 +15,12 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     const { id } = await ctx.params;
     const { questionIdx } = hintSchema.parse(await readJson<unknown>(req));
     const session = await db.session.findFirst({ where: { id, userId: user.id } });
-    if (!session) throw new Error("Session introuvable.");
-    if (session.status !== "IN_PROGRESS") throw new Error("Session déjà soumise.");
+    if (!session) throw new ApiHttpError("Session introuvable.", 404);
+    if (session.status !== "IN_PROGRESS") throw new ApiHttpError("Session déjà soumise.", 409);
 
     const config = session.config ? (JSON.parse(session.config) as { hintsEnabled?: boolean }) : {};
     if (session.mode === "examen" || config.hintsEnabled === false) {
-      throw new Error("Les indices ne sont pas disponibles pour cette session.");
+      throw new ApiHttpError("Les indices ne sont pas disponibles pour cette session.", 409);
     }
 
     const questions: Question[] = JSON.parse(session.questions);
@@ -28,7 +28,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     if (hints.length === 0) return { hint: null, remaining: 0, message: "Aucun indice disponible pour cette question." };
 
     const item = await db.sessionItem.findFirst({ where: { sessionId: id, questionIdx } });
-    if (!item) throw new Error("Item de session introuvable.");
+    if (!item) throw new ApiHttpError("Item de session introuvable.", 404);
 
     const used = Math.min(item.hintsUsed, hints.length - 1);
     await db.$transaction([

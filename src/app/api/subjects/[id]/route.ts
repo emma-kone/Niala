@@ -24,7 +24,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
     const [chapterCount, docCount, exerciseCount, sessionCount] = await Promise.all([
       db.chapter.count({ where: { subjectId: id } }),
       db.document.count({ where: { subjectId: id } }),
-      db.exercise.count({ where: { subjectId: id } }),
+      db.legacyExercise.count({ where: { subjectId: id } }),
       db.session.count({ where: { subjectId: id } }),
     ]);
     return {
@@ -62,7 +62,7 @@ export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string 
     const [chapterCount, docCount, exerciseCount, sessionCount] = await Promise.all([
       db.chapter.count({ where: { subjectId: id } }),
       db.document.count({ where: { subjectId: id } }),
-      db.exercise.count({ where: { subjectId: id } }),
+      db.legacyExercise.count({ where: { subjectId: id } }),
       db.session.count({ where: { subjectId: id } }),
     ]);
 

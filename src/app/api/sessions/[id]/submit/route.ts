@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
-import { handle } from "@/lib/api-helpers";
+import { handle, ApiHttpError } from "@/lib/api-helpers";
 import { gradeAnswer, updateConceptStats } from "@/lib/grading";
 import { computeRecommendations } from "@/lib/generation";
 import { buildIndex, search } from "@/lib/rag";
@@ -13,8 +13,8 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
     const user = await requireUser();
     const { id } = await ctx.params;
     const session = await db.session.findFirst({ where: { id, userId: user.id } });
-    if (!session) throw new Error("Session introuvable.");
-    if (session.status !== "IN_PROGRESS") throw new Error("Session déjà corrigée.");
+    if (!session) throw new ApiHttpError("Session introuvable.", 404);
+    if (session.status !== "IN_PROGRESS") throw new ApiHttpError("Session déjà corrigée.", 409);
 
     const questions: Question[] = JSON.parse(session.questions);
     const items = await db.sessionItem.findMany({
@@ -68,7 +68,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
       score += points;
       const status = feedback.verdict === "correct" ? "CORRECT" : feedback.verdict === "partial" ? "PARTIAL" : feedback.verdict === "skipped" ? "SKIPPED" : "INCORRECT";
 
-      await db.answer.create({
+      await db.legacyAnswer.create({
         data: {
           itemId: item.id,
           value: JSON.stringify(rawValue),

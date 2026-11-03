@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
-import { handle, readJson } from "@/lib/api-helpers";
+import { handle, readJson, ApiHttpError } from "@/lib/api-helpers";
 import type { Question, SessionMode } from "@/lib/types";
 
 const startSchema = z.object({
@@ -27,11 +27,11 @@ export async function POST(req: Request) {
   return handle(async () => {
     const user = await requireUser();
     const { exerciseId, mode } = startSchema.parse(await readJson<unknown>(req));
-    const exercise = await db.exercise.findFirst({ where: { id: exerciseId, userId: user.id } });
-    if (!exercise) throw new Error("Exercice introuvable.");
+    const exercise = await db.legacyExercise.findFirst({ where: { id: exerciseId, userId: user.id } });
+    if (!exercise) throw new ApiHttpError("Exercice introuvable.", 404);
 
     const questions: Question[] = JSON.parse(exercise.questions);
-    if (questions.length === 0) throw new Error("Cet exercice ne contient aucune question.");
+    if (questions.length === 0) throw new ApiHttpError("Cet exercice ne contient aucune question.", 409);
 
     const session = await db.session.create({
       data: {

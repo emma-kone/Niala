@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
-import { handle, readJson } from "@/lib/api-helpers";
+import { handle, readJson, ApiHttpError } from "@/lib/api-helpers";
 
 export async function GET() {
   return handle(async () => {
@@ -26,7 +26,7 @@ export async function PATCH(req: Request) {
     const user = await requireUser();
     const { id, status } = patchSchema.parse(await readJson<unknown>(req));
     const rec = await db.studyRecommendation.findFirst({ where: { id, userId: user.id } });
-    if (!rec) throw new Error("Recommandation introuvable.");
+    if (!rec) throw new ApiHttpError("Recommandation introuvable.", 404);
     return { recommendation: await db.studyRecommendation.update({ where: { id }, data: { status } }) };
   });
 }
