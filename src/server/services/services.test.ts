@@ -192,6 +192,24 @@ describe("import et documents", () => {
     await expect(s.folders.moveItems(A, { subjectId: subjA, folderIds: [], documentIds: ["inconnu"], targetFolderId: null })).rejects.toMatchObject({ status: 404 });
   });
 
+  it("mémorise la page lue, crée l'activité de lecture et borne la page", async () => {
+    const { fin } = await importFile(A, subjA, null, "lecture.txt", "Contenu à lire suffisamment long pour être indexé correctement.");
+    const id = fin!.documentId;
+    expect((await s.docs.recordReading(A, id, 7)).page).toBeGreaterThanOrEqual(1);
+    await s.docs.recordReading(A, id, 1);
+    await s.docs.recordReading(A, id, 1);
+    expect(await s.db.learningActivity.count({ where: { userId: A, refId: id } })).toBe(1);
+    const act = await s.db.learningActivity.findFirstOrThrow({ where: { userId: A, refId: id } });
+    expect(act).toMatchObject({ type: "READING", status: "IN_PROGRESS" });
+    expect((await s.docs.getDocumentProperties(A, id)).lastPage).toBe(1);
+    await expect(s.docs.recordReading(B, id, 1)).rejects.toMatchObject({ status: 404 });
+    await expect(s.docs.readingText(B, id)).rejects.toMatchObject({ status: 404 });
+    const text = await s.docs.readingText(A, id);
+    expect(text.pages[0].text).toContain("Contenu à lire");
+    await s.docs.deleteDocuments(A, [id]);
+    expect(await s.db.learningActivity.count({ where: { refId: id } })).toBe(0); // plus d'activité orpheline
+  });
+
   it("supprime un dossier récursivement avec ses fichiers", async () => {
     const sub = (await s.folders.createFolder(A, { subjectId: subjA, parentId: folder, name: "Sous" })).id;
     await importFile(A, subjA, folder, "a.txt", "Contenu suffisamment long pour être indexé correctement ici.");

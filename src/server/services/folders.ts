@@ -116,6 +116,7 @@ export async function deleteFolder(userId: string, id: string) {
       where: { userId, folderId: { in: ids } },
       select: { id: true, versions: { select: { storageKey: true } } },
     });
+    await tx.learningActivity.deleteMany({ where: { userId, refType: "document", refId: { in: docs.map((d) => d.id) } } });
     await tx.document.deleteMany({ where: { id: { in: docs.map((d) => d.id) }, userId } });
     // Plus profond d'abord : la relation parent est en Restrict
     const order = [...ids].reverse();

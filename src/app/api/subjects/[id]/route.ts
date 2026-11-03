@@ -89,6 +89,7 @@ export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string 
       select: { id: true, versions: { select: { storageKey: true } } },
     });
     await db.$transaction([
+      db.learningActivity.deleteMany({ where: { userId: user.id, refType: "document", refId: { in: docs.map((d) => d.id) } } }),
       db.document.deleteMany({ where: { id: { in: docs.map((d) => d.id) }, userId: user.id } }),
       db.subject.delete({ where: { id } }),
     ]);

@@ -47,6 +47,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { MoveDialog, NameDialog } from "./dialogs";
 import { uploadFiles, type UploadItem } from "./upload";
 import { formatDate, formatSize, STATUS_LABEL, type DocumentDetails, type DocumentDto, type ExplorerResponse, type FolderDto } from "./types";
+import { Properties } from "./properties";
 
 type Sort = "name" | "date" | "size" | "type";
 type Entry = { kind: "folder"; item: FolderDto } | { kind: "doc"; item: DocumentDto };
@@ -472,13 +473,13 @@ export default function SubjectFilesView({ subjectId }: { subjectId: string }) {
                         </span>
                       </button>
                     ) : (
-                      <button onClick={() => void openDetails(d!.id)} className="flex w-full min-w-0 items-center gap-2.5 text-left">
+                      <Link href={`${routes.subject(subjectId)}/documents/${d!.id}`} className="flex w-full min-w-0 items-center gap-2.5 text-left">
                         <FileText className="h-5 w-5 shrink-0 text-muted-foreground" aria-hidden />
                         <span className="min-w-0">
                           <span className="block truncate font-medium">{d!.name}</span>
                           {data.searching && d!.folderPath && <span className="typo-meta block truncate">{d!.folderPath}</span>}
                         </span>
-                      </button>
+                      </Link>
                     )}
                     {isFolder && data.searching && f!.path && <span className="typo-meta block pl-7 truncate">{f!.path}</span>}
                   </div>
@@ -509,6 +510,11 @@ export default function SubjectFilesView({ subjectId }: { subjectId: string }) {
                     <DropdownMenuContent align="end">
                       {d && (
                         <>
+                          <DropdownMenuItem asChild>
+                            <Link href={`${routes.subject(subjectId)}/documents/${d.id}`}>
+                              <FileText className="mr-2 h-4 w-4" aria-hidden /> Lire
+                            </Link>
+                          </DropdownMenuItem>
                           <DropdownMenuItem disabled={d.originalMissing} asChild={!d.originalMissing}>
                             {d.originalMissing ? (
                               <span><ExternalLink className="mr-2 h-4 w-4" aria-hidden /> Original indisponible</span>
@@ -597,64 +603,6 @@ export default function SubjectFilesView({ subjectId }: { subjectId: string }) {
           </div>
         </SheetContent>
       </Sheet>
-    </div>
-  );
-}
-
-function Properties({ doc }: { doc: DocumentDetails }) {
-  const status = STATUS_LABEL[doc.status];
-  const rows: [string, React.ReactNode][] = [
-    ["Type", `${doc.kind.toUpperCase()} · ${doc.mime}`],
-    ["Taille", formatSize(doc.size)],
-    ["Pages", doc.pageCount ?? "—"],
-    ["Emplacement", doc.folderPath || "Racine de la matière"],
-    ["Ajouté le", formatDate(doc.createdAt)],
-    ["Dernière ouverture", doc.lastOpenedAt ? formatDate(doc.lastOpenedAt) : "Jamais"],
-    ["État du traitement", status.label],
-    ["Passages indexés", doc.indexedPassages],
-    ["Version", `n° ${doc.versionNumber} (${doc.versions.length} au total)`],
-    ["Empreinte SHA-256", doc.sha256 ? <code className="break-all text-[11px]">{doc.sha256}</code> : "—"],
-  ];
-  return (
-    <div className="space-y-4">
-      <dl className="divide-y rounded-lg border text-sm">
-        {rows.map(([k, v]) => (
-          <div key={k} className="flex justify-between gap-4 px-3 py-2">
-            <dt className="text-muted-foreground">{k}</dt>
-            <dd className="text-right font-medium">{v}</dd>
-          </div>
-        ))}
-      </dl>
-      {doc.originalMissing && (
-        <p className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
-          Le fichier original de ce document n&apos;a pas été conservé par l&apos;ancienne version. Réimportez-le pour pouvoir l&apos;ouvrir et le télécharger.
-        </p>
-      )}
-      {doc.extractError && <p role="alert" className="text-sm text-destructive">{doc.extractError}</p>}
-      {doc.warnings.length > 0 && (
-        <div>
-          <h3 className="mb-1 text-sm font-semibold">Avertissements d&apos;extraction</h3>
-          <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
-            {doc.warnings.slice(0, 8).map((w, i) => (
-              <li key={i}>{w}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {!doc.originalMissing && (
-        <div className="flex gap-2">
-          <Button asChild variant="outline" className="gap-2">
-            <a href={`/api/files/${doc.id}/content`} target="_blank" rel="noopener noreferrer">
-              <ExternalLink className="h-4 w-4" aria-hidden /> Ouvrir
-            </a>
-          </Button>
-          <Button asChild variant="outline" className="gap-2">
-            <a href={`/api/files/${doc.id}/content?download=1`}>
-              <Download className="h-4 w-4" aria-hidden /> Télécharger
-            </a>
-          </Button>
-        </div>
-      )}
     </div>
   );
 }

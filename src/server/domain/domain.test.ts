@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { canMoveFolder, descendantIds, nameKey, pathTo, uniqueName, validateFolderName, MAX_FOLDER_DEPTH } from "./folder-tree";
 import { detectKind, matchesSignature, sanitizeName } from "./file-validation";
-import { chunkPages, splitPages } from "./chunking";
+import { chunkPages, splitPages, stitchChunks } from "./chunking";
 
 const tree = [
   { id: "a", parentId: null, name: "A" },
@@ -78,5 +78,21 @@ describe("découpage", () => {
   });
   it("gère un texte sans pages", () => {
     expect(splitPages("juste du texte")[0].page).toBeNull();
+  });
+  it("reconstitue exactement le texte d'une page à partir des passages qui se chevauchent", () => {
+    const pageText = "Une phrase assez longue pour le test. ".repeat(120);
+    const passages = chunkPages([{ page: 3, text: pageText }]);
+    expect(passages.length).toBeGreaterThan(2);
+    const stored = passages.map((p, idx) => ({ idx, ...p }));
+    const [page] = stitchChunks(stored);
+    expect(page.page).toBe(3);
+    expect(page.text).toBe(pageText.slice(0, passages.at(-1)!.charEnd));
+  });
+  it("concatène sans dédoublonner quand les décalages sont inconnus (reprise V1)", () => {
+    const out = stitchChunks([
+      { idx: 0, page: 1, charStart: 0, charEnd: 0, content: "A" },
+      { idx: 1, page: 1, charStart: 0, charEnd: 0, content: "B" },
+    ]);
+    expect(out).toEqual([{ page: 1, text: "A\n\nB" }]);
   });
 });

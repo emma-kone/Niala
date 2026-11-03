@@ -159,3 +159,18 @@ Limites connues de la phase 2 :
 - Le contrôle de doublon est un avertissement (même empreinte dans la matière), jamais un blocage.
 
 Développement local sans Supabase : `node scripts/dev-db.mjs` (PGlite, port 5433) puis `node scripts/dev-local.mjs` (port 3100).
+
+**Phase 3 — terminée** (lecteur de documents). Vérifiée : 40 tests verts, `tsc` et `next build --webpack` OK, et parcours réel dans le navigateur sur un PDF de 12 pages (rendu fidèle, texte sélectionnable, miniatures, recherche avec surlignage et navigation entre résultats, saut de page, mémorisation puis reprise de la page 4 après rechargement).
+- Route `/matieres/[id]/documents/[docId]` : espace de travail avec le document au centre et un panneau « Document » à droite (propriétés, état d'extraction, avertissements, dernière page lue).
+- **PDF** : lecteur pdf.js (lecture seule) avec défilement continu, navigation, zoom et ajustement à la largeur, recherche, miniatures, plein écran, téléchargement ; pages rendues à l'approche de la zone visible et libérées ensuite.
+- **TXT / Markdown** : original affiché tel quel (Markdown sans HTML brut).
+- **DOCX / PPTX / original non conservé** : repli sur le **texte extrait**, avec un bandeau explicite « texte extrait, pas le document original » et le lien de téléchargement de l'original s'il existe.
+- Reprise : la page lue est enregistrée (différée, et à la fermeture de l'onglet) dans `Document.lastPage` et dans une `LearningActivity` de type READING (supprimée avec le document). `?page=N` permet un lien direct (utilisé plus tard pour les citations).
+- Le fichier original est servi avec une CSP `sandbox` et `nosniff`.
+
+Limites de la phase 3 :
+- Pas d'aperçu fidèle pour DOCX/PPTX (aucune conversion fiable disponible dans cet environnement) : repli texte extrait.
+- Les onglets Notes, Analyse et Chat du panneau latéral n'existent pas encore : ils seront ajoutés avec les phases 4 et 5 (aucun bouton factice n'est affiché).
+- La recherche PDF surligne les fragments de texte contenant le terme (pas le mot exact) et navigue de page en page ; les PDF scannés sans texte ne sont pas cherchables.
+- Les PDF protégés par mot de passe affichent un message et proposent le téléchargement.
+- Non vérifié visuellement : rendu mobile et plein écran réel (le panneau du navigateur de test ne dessinait pas toujours) ; panneau latéral masqué sous 1024 px.

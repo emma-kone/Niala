@@ -40,6 +40,7 @@ export interface ExplorerResponse {
 
 export interface DocumentDetails extends DocumentDto {
   subjectId: string | null;
+  lastPage: number | null;
   sha256: string | null;
   extractError: string | null;
   indexedPassages: number;

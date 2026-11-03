@@ -49,3 +49,42 @@ export function chunkPages(pages: PageText[], maxChars = 1200, overlap = 150, ma
   }
   return out;
 }
+
+export interface StoredChunk {
+  idx: number;
+  page: number | null;
+  charStart: number;
+  charEnd: number;
+  content: string;
+}
+
+/**
+ * Reconstitue le texte des pages à partir des passages indexés (qui se chevauchent).
+ * Utilisé UNIQUEMENT comme repli d'affichage quand l'original n'est pas consultable,
+ * et toujours présenté comme « texte extrait ».
+ * Les passages sans décalages connus (reprise V1 : 0/0) sont simplement concaténés.
+ */
+export function stitchChunks(chunks: StoredChunk[]): PageText[] {
+  const pages = new Map<number | null, StoredChunk[]>();
+  for (const c of [...chunks].sort((a, b) => a.idx - b.idx)) {
+    const list = pages.get(c.page) ?? [];
+    list.push(c);
+    pages.set(c.page, list);
+  }
+  const out: PageText[] = [];
+  for (const [page, list] of pages) {
+    let text = "";
+    let covered = 0; // fin du texte déjà reconstitué, en décalage de page
+    let hasOffsets = list.every((c) => c.charEnd > c.charStart);
+    for (const c of list) {
+      if (hasOffsets && c.charStart < covered) {
+        text += c.content.slice(Math.min(covered - c.charStart, c.content.length));
+      } else {
+        text += (text && !hasOffsets ? "\n\n" : "") + c.content;
+      }
+      covered = Math.max(covered, c.charEnd);
+    }
+    out.push({ page, text });
+  }
+  return out.sort((a, b) => (a.page ?? 0) - (b.page ?? 0));
+}

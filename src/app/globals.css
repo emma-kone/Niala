@@ -237,3 +237,10 @@ samp,
     outline: none !important;
   }
 }
+
+/* ── Lecteur PDF : surlignage des résultats de recherche (couche de texte pdf.js) ── */
+.textLayer span.sf-hit {
+  background-color: rgba(250, 204, 21, 0.55);
+  color: transparent;
+  border-radius: 2px;
+}

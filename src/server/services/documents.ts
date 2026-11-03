@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { ApiHttpError } from "@/lib/api-helpers";
 import { chunkText, extractContent } from "@/lib/extraction";
 import { getStorage, newStorageKey } from "@/server/storage";
-import { chunkPages, splitPages } from "@/server/domain/chunking";
+import { chunkPages, splitPages, stitchChunks, type PageText } from "@/server/domain/chunking";
 import {
   detectKind,
   matchesSignature,
@@ -393,6 +393,7 @@ export async function getDocumentProperties(userId: string, id: string) {
   return {
     ...toDto({ ...doc, currentVersion: doc.currentVersion }, () => path),
     subjectId: doc.subjectId,
+    lastPage: doc.lastPage,
     sha256: doc.currentVersion?.sha256 ?? null,
     extractError: doc.currentVersion?.extractError ?? null,
     indexedPassages: chunkCount,
@@ -421,7 +422,10 @@ export async function deleteDocuments(userId: string, ids: string[]) {
     select: { id: true, versions: { select: { storageKey: true } } },
   });
   if (docs.length !== new Set(ids).size) throw new ApiHttpError("Document introuvable.", 404);
-  await db.document.deleteMany({ where: { id: { in: docs.map((d) => d.id) }, userId } });
+  await db.$transaction([
+    db.learningActivity.deleteMany({ where: { userId, refType: "document", refId: { in: docs.map((d) => d.id) } } }),
+    db.document.deleteMany({ where: { id: { in: docs.map((d) => d.id) }, userId } }),
+  ]);
   const keys = docs.flatMap((d) => d.versions.map((v) => v.storageKey).filter((k): k is string => !!k));
   await getStorage().remove(keys).catch((e) => console.error("[storage] suppression partielle", e));
   return { deleted: docs.length };
@@ -440,4 +444,35 @@ export async function openOriginal(userId: string, id: string, versionNumber?: n
   }
   db.document.update({ where: { id }, data: { lastOpenedAt: new Date() } }).catch(() => undefined);
   return { doc, version, key: version.storageKey };
+}
+
+// ── Lecture : texte de repli et reprise ──────────────────────────────────────
+
+/** Texte extrait page par page (repli d'affichage ; l'original reste la référence). */
+export async function readingText(userId: string, id: string) {
+  const doc = await db.document.findFirst({ where: { id, userId }, select: { id: true, currentVersionId: true } });
+  if (!doc) throw new ApiHttpError("Document introuvable.", 404);
+  if (!doc.currentVersionId) return { pages: [] as PageText[] };
+  const chunks = await db.documentChunk.findMany({
+    where: { versionId: doc.currentVersionId, userId },
+    orderBy: { idx: "asc" },
+    select: { idx: true, page: true, charStart: true, charEnd: true, content: true },
+  });
+  return { pages: stitchChunks(chunks) };
+}
+
+/** Mémorise la page lue et crée/met à jour l'activité « lecture » (reprise depuis le tableau de bord). */
+export async function recordReading(userId: string, id: string, page: number) {
+  const doc = await db.document.findFirst({ where: { id, userId }, select: { id: true, name: true, subjectId: true, pageCount: true } });
+  if (!doc) throw new ApiHttpError("Document introuvable.", 404);
+  const max = doc.pageCount ?? Number.MAX_SAFE_INTEGER;
+  const safePage = Math.min(Math.max(1, Math.floor(page)), max);
+  await db.$transaction(async (tx) => {
+    await tx.document.update({ where: { id }, data: { lastPage: safePage, lastOpenedAt: new Date() } });
+    const existing = await tx.learningActivity.findFirst({ where: { userId, type: "READING", refType: "document", refId: id } });
+    const data = { title: doc.name, subjectId: doc.subjectId, status: "IN_PROGRESS" as const, lastPosition: { page: safePage } };
+    if (existing) await tx.learningActivity.update({ where: { id: existing.id }, data });
+    else await tx.learningActivity.create({ data: { userId, type: "READING", refType: "document", refId: id, ...data } });
+  });
+  return { page: safePage };
 }
