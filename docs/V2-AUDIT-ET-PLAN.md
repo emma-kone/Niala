@@ -174,3 +174,18 @@ Limites de la phase 3 :
 - La recherche PDF surligne les fragments de texte contenant le terme (pas le mot exact) et navigue de page en page ; les PDF scannés sans texte ne sont pas cherchables.
 - Les PDF protégés par mot de passe affichent un message et proposent le téléchargement.
 - Non vérifié visuellement : rendu mobile et plein écran réel (le panneau du navigateur de test ne dessinait pas toujours) ; panneau latéral masqué sous 1024 px.
+
+**Phase 4 — terminée** (notes unifiées et annotations). Vérifiée : 56 tests verts (dont 10 d'intégration notes sur Prisma + PGlite et 6 de validation de contenu), `tsc` et `next build --webpack` OK, et parcours réel dans le navigateur (création d'une note, mise en forme riche, sauvegarde automatique, conflit de révision et « conserver ma version », lien vers un document, création d'une annotation depuis une sélection dans le PDF, surlignage et marqueur sur la page, liste des notes du document).
+- **Un seul système** : `Note` + `NoteLink`. La nature (note personnelle, note de document, annotation de passage, fiche de synthèse) est **déduite des liens** (ancrage précis → annotation) : impossible qu'une note soit incohérente avec ses références. Une note peut référencer plusieurs documents de sa matière.
+- **Éditeur riche Tiptap** : titres, gras/italique/souligné/barré, code en ligne et blocs de code, listes, citations, liens, tableaux (lignes/colonnes), annuler/rétablir. Sauvegarde automatique (800 ms), état visible (Enregistré / en attente / erreur avec « Réessayer » / conflit), envoi à la fermeture de l'onglet. Contrôle de concurrence optimiste (`revision`) : une modification faite ailleurs n'est jamais écrasée silencieusement.
+- **Sécurité du contenu** : le JSON de l'éditeur est validé côté serveur (liste blanche de nœuds, marques et attributs ; liens `http(s)`/`mailto` uniquement ; taille et profondeur bornées).
+- **Matière → onglet Notes** (`/matieres/[id]/notes`) : liste avec recherche (titre et contenu), filtres par nature et par document, création de notes personnelles et de fiches de synthèse.
+- **Lecteur** : onglet Notes du panneau (notes du document, triées par page), « Nouvelle note (page N) », sélection d'un passage du PDF → « Annoter ce passage » : l'annotation conserve la citation, la page, la version du document et les rectangles (surlignage et marqueur sur la page, clic pour l'ouvrir). Sous 1024 px le panneau s'ouvre en feuille.
+- Supprimer un document retire ses liens mais **conserve les notes et leurs citations**.
+
+Limites de la phase 4 :
+- Les annotations ancrées (surlignage) existent pour les **PDF**. Pour TXT/Markdown/texte extrait, on peut créer des notes liées au document mais pas annoter un passage.
+- Les rectangles sont stockés pour la version courante du PDF ; une nouvelle version du document ne les reprojette pas.
+- Pas d'images dans l'éditeur ni de pièces jointes (`NoteAttachment` non implémenté) ; pas de liste de tâches.
+- Recherche de notes en mémoire (jusqu'à 500 notes par matière) : suffisant pour un usage étudiant, à indexer si le volume grossit.
+- Non vérifié visuellement : feuille mobile du panneau, et sélection à la souris réelle (la sélection a été simulée par script, le panneau de test étant masqué).

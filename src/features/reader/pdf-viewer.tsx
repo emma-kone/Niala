@@ -40,6 +40,18 @@ const MIN_SCALE = 0.4;
 const MAX_SCALE = 4;
 const fold = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
+export interface PdfAnnotation {
+  id: string;
+  page: number;
+  rects: { x: number; y: number; w: number; h: number }[];
+}
+
+export interface PdfSelection {
+  page: number;
+  quote: string;
+  rects: { x: number; y: number; w: number; h: number }[];
+}
+
 interface Props {
   src: string;
   downloadUrl: string;
@@ -47,9 +59,17 @@ interface Props {
   initialPage?: number;
   onPageChange?: (page: number) => void;
   onLoaded?: (numPages: number) => void;
+  /** Annotations à surligner (coordonnées en unités PDF, échelle 1). */
+  annotations?: PdfAnnotation[];
+  activeAnnotationId?: string | null;
+  onAnnotationClick?: (id: string) => void;
+  /** Appelé quand l'étudiant choisit « Annoter » sur un passage sélectionné. */
+  onAnnotate?: (selection: PdfSelection) => void;
+  /** Demande de navigation externe (le nonce force le saut même vers la même page). */
+  navigate?: { page: number; nonce: number } | null;
 }
 
-export default function PdfViewer({ src, downloadUrl, fileName, initialPage = 1, onPageChange, onLoaded }: Props) {
+export default function PdfViewer({ src, downloadUrl, fileName, initialPage = 1, onPageChange, onLoaded, annotations = [], activeAnnotationId = null, onAnnotationClick, onAnnotate, navigate = null }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const pageEls = useRef<Map<number, HTMLDivElement>>(new Map());
@@ -203,6 +223,53 @@ export default function PdfViewer({ src, downloadUrl, fileName, initialPage = 1,
     setTimeout(() => goToPage(current), 60);
   };
   const step = (f: number) => zoomTo(Math.min(MAX_SCALE, Math.max(MIN_SCALE, +(scale * f).toFixed(3))));
+
+  // ── Navigation demandée depuis l'extérieur (panneau de notes) ──
+  useEffect(() => {
+    if (navigate && doc) goToPage(navigate.page, "smooth");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navigate?.nonce, doc]);
+
+  // ── Sélection de texte → bouton « Annoter » ──
+  const [sel, setSel] = useState<(PdfSelection & { x: number; y: number }) | null>(null);
+  useEffect(() => {
+    const host = scrollRef.current;
+    if (!host || !onAnnotate) return;
+    const read = () => {
+      const selection = window.getSelection();
+      if (!selection || selection.isCollapsed || selection.rangeCount === 0) return setSel(null);
+      const range = selection.getRangeAt(0);
+      const startEl = range.startContainer instanceof Element ? range.startContainer : range.startContainer.parentElement;
+      const holder = startEl?.closest<HTMLElement>("[data-page]");
+      if (!holder || !host.contains(holder)) return setSel(null);
+      const pageNo = Number(holder.dataset.page);
+      const quote = selection.toString().replace(/\s+/g, " ").trim().slice(0, 1000);
+      if (!quote) return setSel(null);
+      const box = holder.getBoundingClientRect();
+      // Rectangles de la sélection, rognés à la page (un fragment de texte peut déborder de la page)
+      const rects = Array.from(range.getClientRects())
+        .map((r) => ({ l: Math.max(r.left, box.left), t: Math.max(r.top, box.top), r: Math.min(r.right, box.right), b: Math.min(r.bottom, box.bottom) }))
+        .filter((r) => r.r - r.l > 1 && r.b - r.t > 1)
+        .slice(0, 60)
+        .map((r) => ({ x: (r.l - box.left) / scale, y: (r.t - box.top) / scale, w: (r.r - r.l) / scale, h: (r.b - r.t) / scale }));
+      if (rects.length === 0) return setSel(null);
+      const last = range.getBoundingClientRect();
+      setSel({ page: pageNo, quote, rects, x: Math.min(last.right, window.innerWidth - 120), y: last.bottom + 6 });
+    };
+    const onUp = () => setTimeout(read, 0);
+    const onDown = (e: MouseEvent) => {
+      if (!(e.target as Element)?.closest?.("[data-annotate-button]")) setSel(null);
+    };
+    host.addEventListener("mouseup", onUp);
+    host.addEventListener("keyup", onUp);
+    host.addEventListener("mousedown", onDown);
+    host.addEventListener("scroll", () => setSel(null), { passive: true });
+    return () => {
+      host.removeEventListener("mouseup", onUp);
+      host.removeEventListener("keyup", onUp);
+      host.removeEventListener("mousedown", onDown);
+    };
+  }, [doc, scale, onAnnotate]);
 
   // ── Plein écran ──
   useEffect(() => {
@@ -365,6 +432,23 @@ export default function PdfViewer({ src, downloadUrl, fileName, initialPage = 1,
         </form>
       )}
 
+      {sel && onAnnotate && (
+        <button
+          type="button"
+          data-annotate-button
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => {
+            onAnnotate({ page: sel.page, quote: sel.quote, rects: sel.rects });
+            window.getSelection()?.removeAllRanges();
+            setSel(null);
+          }}
+          style={{ position: "fixed", left: sel.x, top: sel.y, zIndex: 50 }}
+          className="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground shadow-lg"
+        >
+          Annoter ce passage
+        </button>
+      )}
+
       {/* ── Zone de lecture ── */}
       <div className="flex min-h-0 flex-1">
         {thumbs && doc && pdfjs && (
@@ -390,6 +474,9 @@ export default function PdfViewer({ src, downloadUrl, fileName, initialPage = 1,
                   scale={scale}
                   base={baseSize}
                   query={activeQuery}
+                  marks={annotations.filter((a) => a.page === i + 1)}
+                  activeId={activeAnnotationId}
+                  onMarkClick={onAnnotationClick}
                   register={(el) => (el ? pageEls.current.set(i + 1, el) : pageEls.current.delete(i + 1))}
                 />
               ))}
@@ -408,6 +495,9 @@ function PageView({
   scale,
   base,
   query,
+  marks,
+  activeId,
+  onMarkClick,
   register,
 }: {
   doc: PDFDocumentProxy;
@@ -415,6 +505,9 @@ function PageView({
   scale: number;
   base: { w: number; h: number };
   query: string;
+  marks: PdfAnnotation[];
+  activeId: string | null;
+  onMarkClick?: (id: string) => void;
   register: (el: HTMLDivElement | null) => void;
 }) {
   const holder = useRef<HTMLDivElement>(null);
@@ -517,6 +610,29 @@ function PageView({
     >
       <canvas ref={canvas} className="block" />
       <div ref={textLayer} className="textLayer" style={{ width, height }} />
+      {marks.map((m) => (
+        <div key={m.id} aria-hidden className="pointer-events-none absolute inset-0">
+          {m.rects.map((r, i) => (
+            <div
+              key={i}
+              className={cn("absolute rounded-sm mix-blend-multiply", m.id === activeId ? "bg-amber-400/60 ring-1 ring-amber-500" : "bg-yellow-300/45")}
+              style={{ left: r.x * scale, top: r.y * scale, width: r.w * scale, height: r.h * scale }}
+            />
+          ))}
+        </div>
+      ))}
+      {marks.map((m) =>
+        m.rects[0] ? (
+          <button
+            key={"btn" + m.id}
+            type="button"
+            onClick={() => onMarkClick?.(m.id)}
+            aria-label="Ouvrir l'annotation"
+            className={cn("absolute z-10 h-4 w-4 rounded-full border-2 border-white shadow", m.id === activeId ? "bg-amber-500" : "bg-yellow-500")}
+            style={{ left: Math.max(2, m.rects[0].x * scale - 20), top: m.rects[0].y * scale + 2 }}
+          />
+        ) : null
+      )}
       {near && !canvasReady && (
         <div className="absolute inset-0 flex items-center justify-center text-xs text-neutral-400" aria-hidden>
           <Loader2 className="h-4 w-4 animate-spin" />

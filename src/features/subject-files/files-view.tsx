@@ -48,6 +48,7 @@ import { MoveDialog, NameDialog } from "./dialogs";
 import { uploadFiles, type UploadItem } from "./upload";
 import { formatDate, formatSize, STATUS_LABEL, type DocumentDetails, type DocumentDto, type ExplorerResponse, type FolderDto } from "./types";
 import { Properties } from "./properties";
+import { SubjectTabs } from "./tabs";
 
 type Sort = "name" | "date" | "size" | "type";
 type Entry = { kind: "folder"; item: FolderDto } | { kind: "doc"; item: DocumentDto };
@@ -291,6 +292,8 @@ export default function SubjectFilesView({ subjectId }: { subjectId: string }) {
           />
         </div>
       </div>
+
+      <SubjectTabs subjectId={subjectId} active="files" />
 
       {/* ── Imports en cours ── */}
       {uploads.length > 0 && (

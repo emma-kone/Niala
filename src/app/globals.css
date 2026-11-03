@@ -244,3 +244,23 @@ samp,
   color: transparent;
   border-radius: 2px;
 }
+
+/* ── Éditeur de notes (Tiptap) ── */
+.sf-prose { line-height: 1.65; font-size: 0.925rem; }
+.sf-prose > * + * { margin-top: 0.6rem; }
+.sf-prose h1 { font-size: 1.5rem; font-weight: 700; margin-top: 1.2rem; }
+.sf-prose h2 { font-size: 1.25rem; font-weight: 650; margin-top: 1rem; }
+.sf-prose h3 { font-size: 1.1rem; font-weight: 600; margin-top: 0.9rem; }
+.sf-prose ul { list-style: disc; padding-left: 1.4rem; }
+.sf-prose ol { list-style: decimal; padding-left: 1.4rem; }
+.sf-prose li > p { margin: 0; }
+.sf-prose blockquote { border-left: 3px solid var(--border); padding-left: 0.9rem; color: var(--muted-foreground); }
+.sf-prose code { background: var(--muted); border-radius: 4px; padding: 0.1rem 0.3rem; font-size: 0.85em; }
+.sf-prose pre { background: var(--muted); border-radius: 8px; padding: 0.75rem 1rem; overflow-x: auto; }
+.sf-prose pre code { background: none; padding: 0; }
+.sf-prose a { color: var(--primary); text-decoration: underline; cursor: pointer; }
+.sf-prose table { border-collapse: collapse; width: 100%; table-layout: fixed; margin: 0.8rem 0; }
+.sf-prose th, .sf-prose td { border: 1px solid var(--border); padding: 0.4rem 0.6rem; vertical-align: top; min-width: 3rem; }
+.sf-prose th { background: var(--muted); font-weight: 600; text-align: left; }
+.sf-prose p.is-editor-empty:first-child::before { content: attr(data-placeholder); color: var(--muted-foreground); float: left; height: 0; pointer-events: none; }
+.sf-prose .selectedCell { background: color-mix(in srgb, var(--primary) 12%, transparent); }

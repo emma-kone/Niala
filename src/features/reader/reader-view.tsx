@@ -4,15 +4,20 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, Info, Loader2, PanelRightClose, PanelRightOpen } from "lucide-react";
+import { ArrowLeft, Info, Loader2, PanelRightClose, PanelRightOpen, StickyNote } from "lucide-react";
 import { api } from "@/lib/client-api";
 import { routes } from "@/config/routes";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { cn } from "@/lib/utils";
 import { Properties } from "@/features/subject-files/properties";
 import { STATUS_LABEL, type DocumentDetails } from "@/features/subject-files/types";
 import { ExtractedTextViewer, OriginalTextViewer } from "./text-viewers";
+import { NotesPanel } from "./notes-panel";
+import type { NoteListItem } from "@/features/notes/types";
+import type { PdfAnnotation, PdfSelection } from "./pdf-viewer";
 
 // pdf.js dépend du navigateur : jamais rendu côté serveur
 const PdfViewer = dynamic(() => import("./pdf-viewer"), {
@@ -23,6 +28,19 @@ const PdfViewer = dynamic(() => import("./pdf-viewer"), {
     </div>
   ),
 });
+
+/** Une seule instance du panneau (aside OU feuille) : deux éditeurs sur la même note se concurrenceraient. */
+function useDesktop() {
+  const [desktop, setDesktop] = useState(true);
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const update = () => setDesktop(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+  return desktop;
+}
 
 /** Enregistre la page lue (différé), et l'envoie aussi à la fermeture de l'onglet. */
 function useReadingSaver(docId: string) {
@@ -68,7 +86,74 @@ export default function ReaderView({ subjectId, docId }: { subjectId: string; do
   const [error, setError] = useState<{ message: string; status?: number } | null>(null);
   const [panel, setPanel] = useState(true);
   const [pdfPages, setPdfPages] = useState<number | null>(null);
-  const savePage = useReadingSaver(docId);
+  const saveReading = useReadingSaver(docId);
+
+  // Notes du document + annotations affichées dans le PDF
+  const [tab, setTab] = useState<"doc" | "notes">("notes");
+  const [sheet, setSheet] = useState(false);
+  const desktop = useDesktop();
+  const [notes, setNotes] = useState<NoteListItem[] | null>(null);
+  const [notesError, setNotesError] = useState<string | null>(null);
+  const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [navigate, setNavigate] = useState<{ page: number; nonce: number } | null>(null);
+
+  const savePage = useCallback(
+    (p: number) => {
+      setCurrentPage(p);
+      saveReading(p);
+    },
+    [saveReading]
+  );
+
+  const reloadNotes = useCallback(async () => {
+    try {
+      const r = await api.get<{ notes: NoteListItem[] }>(`/api/subjects/${subjectId}/notes?documentId=${docId}`);
+      setNotes(r.notes);
+      setNotesError(null);
+    } catch (e) {
+      setNotesError(e instanceof Error ? e.message : "Notes indisponibles.");
+    }
+  }, [subjectId, docId]);
+
+  useEffect(() => {
+    void reloadNotes();
+  }, [reloadNotes]);
+
+  const goToPage = useCallback((page: number) => setNavigate((n) => ({ page, nonce: (n?.nonce ?? 0) + 1 })), []);
+
+  const activate = useCallback(
+    (note: NoteListItem | null) => {
+      setActiveNoteId(note?.id ?? null);
+      const page = note?.links.find((l) => l.documentId === docId)?.page;
+      if (page) goToPage(page);
+    },
+    [docId, goToPage]
+  );
+
+  const annotations: PdfAnnotation[] = (notes ?? []).flatMap((n) =>
+    n.links
+      .filter((l) => l.documentId === docId && l.page && l.anchor?.rects?.length)
+      .map((l) => ({ id: n.id, page: l.page as number, rects: l.anchor!.rects! }))
+  );
+
+  const annotate = useCallback(
+    async (sel: PdfSelection) => {
+      setTab("notes");
+      setSheet(true);
+      setPanel(true);
+      try {
+        const r = await api.post<{ note: NoteListItem }>(`/api/subjects/${subjectId}/notes`, {
+          links: [{ documentId: docId, page: sel.page, anchor: { quote: sel.quote, rects: sel.rects } }],
+        });
+        await reloadNotes();
+        setActiveNoteId(r.note.id);
+      } catch (e) {
+        setNotesError(e instanceof Error ? e.message : "Annotation impossible.");
+      }
+    },
+    [subjectId, docId, reloadNotes]
+  );
 
   const load = useCallback(async () => {
     try {
@@ -112,7 +197,24 @@ export default function ReaderView({ subjectId, docId }: { subjectId: string; do
   if (doc) {
     if (!doc.originalMissing && doc.kind === "pdf") {
       viewer = (
-        <PdfViewer src={contentUrl} downloadUrl={downloadUrl} fileName={doc.originalName} initialPage={startPage} onPageChange={savePage} onLoaded={setPdfPages} />
+        <PdfViewer
+          src={contentUrl}
+          downloadUrl={downloadUrl}
+          fileName={doc.originalName}
+          initialPage={startPage}
+          onPageChange={savePage}
+          onLoaded={setPdfPages}
+          annotations={annotations}
+          activeAnnotationId={activeNoteId}
+          onAnnotationClick={(id) => {
+            setTab("notes");
+            setSheet(true);
+            setPanel(true);
+            setActiveNoteId(id);
+          }}
+          onAnnotate={annotate}
+          navigate={navigate}
+        />
       );
     } else if (!doc.originalMissing && (doc.kind === "txt" || doc.kind === "md")) {
       viewer = <OriginalTextViewer src={contentUrl} markdown={doc.kind === "md"} downloadUrl={downloadUrl} />;
@@ -130,6 +232,42 @@ export default function ReaderView({ subjectId, docId }: { subjectId: string; do
       );
     }
   }
+
+  const panelBody = (
+    <div className="flex h-full min-h-0 flex-col">
+      <div role="tablist" aria-label="Panneau du document" className="flex border-b">
+        {([["notes", "Notes", StickyNote], ["doc", "Document", Info]] as const).map(([id, label, Icon]) => (
+          <button
+            key={id}
+            role="tab"
+            aria-selected={tab === id}
+            onClick={() => setTab(id)}
+            className={cn("-mb-px flex flex-1 items-center justify-center gap-2 border-b-2 px-3 py-2.5 text-sm font-semibold", tab === id ? "border-primary" : "border-transparent text-muted-foreground hover:text-foreground")}
+          >
+            <Icon className="h-4 w-4" aria-hidden /> {label}
+            {id === "notes" && notes && notes.length > 0 && <span className="rounded-full bg-muted px-1.5 text-[11px]">{notes.length}</span>}
+          </button>
+        ))}
+      </div>
+      <div role="tabpanel" className="min-h-0 flex-1 overflow-y-auto">
+        {tab === "notes" ? (
+          <NotesPanel
+            subjectId={subjectId}
+            docId={docId}
+            notes={notes}
+            error={notesError}
+            currentPage={currentPage}
+            activeId={activeNoteId}
+            onActivate={activate}
+            onReload={() => void reloadNotes()}
+            onGoToPage={goToPage}
+          />
+        ) : (
+          <div className="p-4">{doc ? <Properties doc={doc} /> : <Skeleton className="h-40 w-full" />}</div>
+        )}
+      </div>
+    </div>
+  );
 
   return (
     <div className="flex h-[calc(100dvh-4rem)] min-h-[28rem] flex-col md:h-[calc(100dvh-3.25rem)]">
@@ -154,8 +292,11 @@ export default function ReaderView({ subjectId, docId }: { subjectId: string; do
             {status.label}
           </Badge>
         )}
-        <Button variant={panel ? "secondary" : "ghost"} size="icon" className="h-8 w-8 shrink-0" onClick={() => setPanel((v) => !v)} aria-pressed={panel} aria-label={panel ? "Masquer le panneau" : "Afficher le panneau"}>
+        <Button variant={panel ? "secondary" : "ghost"} size="icon" className="hidden h-8 w-8 shrink-0 lg:inline-flex" onClick={() => setPanel((v) => !v)} aria-pressed={panel} aria-label={panel ? "Masquer le panneau" : "Afficher le panneau"}>
           {panel ? <PanelRightClose className="h-4 w-4" aria-hidden /> : <PanelRightOpen className="h-4 w-4" aria-hidden />}
+        </Button>
+        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 lg:hidden" onClick={() => setSheet(true)} aria-label="Ouvrir les notes et propriétés">
+          <StickyNote className="h-4 w-4" aria-hidden />
         </Button>
       </header>
 
@@ -163,15 +304,22 @@ export default function ReaderView({ subjectId, docId }: { subjectId: string; do
         <main className="min-w-0 flex-1" aria-label="Document">
           {viewer}
         </main>
-        {panel && (
-          <aside aria-label="Panneau du document" className="hidden w-80 shrink-0 overflow-y-auto border-l bg-background lg:block">
-            <div className="flex items-center gap-2 border-b px-4 py-3 text-sm font-semibold">
-              <Info className="h-4 w-4" aria-hidden /> Document
-            </div>
-            <div className="p-4">{doc ? <Properties doc={doc} /> : <Skeleton className="h-40 w-full" />}</div>
+        {panel && desktop && (
+          <aside aria-label="Panneau du document" className="w-96 shrink-0 border-l bg-background">
+            {panelBody}
           </aside>
         )}
       </div>
+
+      <Sheet open={sheet && !desktop} onOpenChange={setSheet}>
+        <SheetContent className="w-full p-0 sm:max-w-md">
+          <SheetHeader className="sr-only">
+            <SheetTitle>Notes et propriétés</SheetTitle>
+            <SheetDescription>Notes liées au document et ses propriétés</SheetDescription>
+          </SheetHeader>
+          {panelBody}
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
