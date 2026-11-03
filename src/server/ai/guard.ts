@@ -18,7 +18,7 @@ export const UNTRUSTED_RULES = `Règles de sécurité impératives :
 export function wrapUntrusted(label: string, text: string): string {
   const nonce = randomBytes(8).toString("hex");
   const safe = text.replaceAll(nonce, "");
-  return `<DOC-${nonce} label="${label.replace(/[^\w .\-éèêàùç]/gi, "").slice(0, 80)}">\n${safe}\n</DOC-${nonce}>`;
+  return `<DOC-${nonce} label="${label.replace(/[^\w .\-éèêàùç'’]/gi, "").slice(0, 80)}">\n${safe}\n</DOC-${nonce}>`;
 }
 
 /** Forme comparable : minuscules, sans accents ni ponctuation, espaces réduits. */

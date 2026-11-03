@@ -3,7 +3,7 @@ export const routes = {
   login: "/login",
   subjects: "/matieres",
   subject: (id: string) => `/matieres/${id}` as const,
-  generate: "/generer",
+  exercises: "/exercices",
   session: (id: string) => `/sessions/${id}` as const,
   code: "/code",
   sql: "/sql",

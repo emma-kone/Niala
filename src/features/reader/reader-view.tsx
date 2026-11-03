@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, Info, ListTree, Loader2, PanelRightClose, PanelRightOpen, StickyNote } from "lucide-react";
+import { ArrowLeft, ClipboardList, Info, ListTree, Loader2, PanelRightClose, PanelRightOpen, StickyNote } from "lucide-react";
 import { api } from "@/lib/client-api";
 import { routes } from "@/config/routes";
 import { Badge } from "@/components/ui/badge";
@@ -295,6 +295,11 @@ export default function ReaderView({ subjectId, docId }: { subjectId: string; do
             {status.label}
           </Badge>
         )}
+        <Button asChild variant="outline" size="sm" className="shrink-0 gap-1.5">
+          <Link href={`${routes.subject(subjectId)}/exercices/nouveau?document=${docId}`}>
+            <ClipboardList className="h-4 w-4" aria-hidden /> <span className="hidden sm:inline">Créer un exercice</span>
+          </Link>
+        </Button>
         <Button variant={panel ? "secondary" : "ghost"} size="icon" className="hidden h-8 w-8 shrink-0 lg:inline-flex" onClick={() => setPanel((v) => !v)} aria-pressed={panel} aria-label={panel ? "Masquer le panneau" : "Afficher le panneau"}>
           {panel ? <PanelRightClose className="h-4 w-4" aria-hidden /> : <PanelRightOpen className="h-4 w-4" aria-hidden />}
         </Button>

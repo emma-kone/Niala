@@ -1,0 +1,9 @@
+"use client";
+
+import { useSearchParams } from "next/navigation";
+import CreateExerciseView from "./create-view";
+
+export default function CreateExercisePage({ subjectId }: { subjectId: string }) {
+  const params = useSearchParams();
+  return <CreateExerciseView subjectId={subjectId} documentId={params.get("document")} />;
+}

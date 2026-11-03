@@ -7,6 +7,7 @@ import {
   ArrowDownAZ,
   ArrowUpAZ,
   ChevronRight,
+  ClipboardList,
   Download,
   ExternalLink,
   FileText,
@@ -534,6 +535,11 @@ export default function SubjectFilesView({ subjectId }: { subjectId: string }) {
                               </a>
                             </DropdownMenuItem>
                           )}
+                          <DropdownMenuItem asChild disabled={d.status === "FAILED" || d.status === "UNSUPPORTED" || d.status === "PENDING"}>
+                            <Link href={`${routes.subject(subjectId)}/exercices/nouveau?document=${d.id}`}>
+                              <ClipboardList className="mr-2 h-4 w-4" aria-hidden /> Créer un exercice
+                            </Link>
+                          </DropdownMenuItem>
                           <DropdownMenuItem onSelect={() => void openDetails(d.id)}>
                             <Info className="mr-2 h-4 w-4" aria-hidden /> Propriétés
                           </DropdownMenuItem>

@@ -326,7 +326,7 @@ export default function ProgressView() {
             Analyse de votre maîtrise par notion et révisions ciblées
           </p>
         </div>
-        <Button variant="outline" onClick={() => router.push(routes.generate)}>
+        <Button variant="outline" onClick={() => router.push(routes.exercises)}>
           <FilePlus2 className="size-4" aria-hidden="true" />
           Nouvel exercice
         </Button>

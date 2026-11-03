@@ -5,11 +5,12 @@ import { routes } from "@/config/routes";
 import { cn } from "@/lib/utils";
 
 /** Onglets d'une matière. Chaque onglet n'apparaît que lorsque sa fonctionnalité existe réellement. */
-export function SubjectTabs({ subjectId, active }: { subjectId: string; active: "files" | "notes" | "maps" }) {
+export function SubjectTabs({ subjectId, active }: { subjectId: string; active: "files" | "notes" | "maps" | "exercises" }) {
   const tabs = [
     { id: "files", label: "Fichiers", href: routes.subject(subjectId) },
     { id: "notes", label: "Notes", href: `${routes.subject(subjectId)}/notes` },
     { id: "maps", label: "Cartes", href: `${routes.subject(subjectId)}/cartes` },
+    { id: "exercises", label: "Exercices", href: `${routes.subject(subjectId)}/exercices` },
   ] as const;
   return (
     <nav aria-label="Sections de la matière" className="mb-5 flex gap-1 border-b">

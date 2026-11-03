@@ -47,3 +47,5 @@ node_modules
 # base locale PGlite
 /.pglite/
 /storage/
+
+/.next-local/

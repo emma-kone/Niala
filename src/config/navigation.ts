@@ -22,8 +22,8 @@ export const APP_NAV: NavItem[] = [
   { href: routes.home, label: "Tableau de bord", icon: Home, match: "exact" },
   { href: routes.subjects, label: "Mes matières", icon: BookOpen, match: "prefix" },
   {
-    href: routes.generate,
-    label: "Générer des exercices",
+    href: routes.exercises,
+    label: "Exercices",
     icon: FilePlus2,
     match: "prefix",
     alsoActiveFor: ["/sessions"],
