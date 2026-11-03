@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, CheckCircle2, ExternalLink, Loader2, RefreshCw, RotateCcw } from "lucide-react";
+import { ArrowLeft, ArrowRight, CheckCircle2, ExternalLink, FlaskConical, Loader2, RefreshCw, RotateCcw } from "lucide-react";
 import { api } from "@/lib/client-api";
 import { routes } from "@/config/routes";
 import { cn } from "@/lib/utils";
@@ -13,6 +13,8 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AnswerText, ExpectedText, QuestionInput } from "./question-input";
+import { TestOutcomes } from "@/features/labs/test-outcomes";
+import type { Diagnosis, TestOutcome, TestSummary } from "@/features/labs/types";
 import { VERDICT_LABEL, fmtPoints, type AttemptDetail, type AttemptQuestion } from "./types";
 
 type SaveState = "saved" | "saving" | "error";
@@ -195,7 +197,7 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
 
         <ol className="space-y-4">
           {attempt.questions.map((q) => (
-            <ResultCard key={q.position} q={q} subjectId={subjectId} documentId={attempt.exercise.documentId} />
+            <ResultCard key={q.position} q={q} subjectId={subjectId} exerciseId={exerciseId} documentId={attempt.exercise.documentId} />
           ))}
         </ol>
       </div>
@@ -268,8 +270,32 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
   );
 }
 
-function ResultCard({ q, subjectId, documentId }: { q: AttemptQuestion; subjectId: string; documentId: string | null }) {
+function LabLink({ exerciseId, position, kind }: { exerciseId: string; position: number; kind: "code" | "sql" }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  async function open() {
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await api.post<{ workspace: { id: string } }>("/api/labs", { from: "question", exerciseId, position });
+      router.push(`${kind === "sql" ? routes.sql : routes.code}/${r.workspace.id}`);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Ouverture impossible.");
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="mt-3">
+      <Button variant="outline" size="sm" className="gap-2" onClick={() => void open()} disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <FlaskConical className="h-4 w-4" aria-hidden />} Retravailler dans le laboratoire</Button>
+      {err && <p role="alert" className="mt-1 text-xs text-destructive">{err}</p>}
+    </div>
+  );
+}
+
+function ResultCard({ q, subjectId, exerciseId, documentId }: { q: AttemptQuestion; subjectId: string; exerciseId: string; documentId: string | null }) {
   const r = q.result;
+  const tests = (r?.detail as { tests?: TestOutcome[]; summary?: TestSummary; diagnoses?: Diagnosis[] } | undefined);
   const v = VERDICT_LABEL[r?.verdict ?? "ungraded"];
   const statement = q.type === "fill_choices" || q.type === "fill_blank" ? String(q.payload.statement) : String(q.payload.statement);
   return (
@@ -293,6 +319,10 @@ function ResultCard({ q, subjectId, documentId }: { q: AttemptQuestion; subjectI
           </div>
         )}
       </dl>
+      {r?.method === "tests" && tests?.tests && tests.summary && (
+        <div className="mt-3"><p className="mb-1 text-xs text-muted-foreground">Correction par tests exécutés dans un environnement isolé (objective, sans IA).</p><TestOutcomes outcomes={tests.tests} summary={tests.summary} diagnoses={tests.diagnoses} /></div>
+      )}
+      {(q.type === "code" || q.type === "sql") && <LabLink exerciseId={exerciseId} position={q.position} kind={q.type} />}
       {r?.method === "keywords" && <p className="mt-2 text-xs text-muted-foreground">Correction automatique par mots-clés (le service d&apos;IA n&apos;était pas disponible) : à relire avec la réponse de référence.</p>}
       {r?.method === "ai" && <p className="mt-2 text-xs text-muted-foreground">Correction assistée par IA selon les critères de l&apos;exercice.</p>}
       {r?.verdict === "ungraded" && <p className="mt-2 text-xs text-violet-800 dark:text-violet-300">Cette réponse n&apos;a pas été corrigée. Comparez-la à la réponse de référence ci-dessus.</p>}

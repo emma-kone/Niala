@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Prisma } from "@prisma/client";
+import type { ErrorCategory, Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { ApiHttpError } from "@/lib/api-helpers";
 import type { QuestionType } from "@/server/domain/exercise-model";
@@ -200,13 +200,21 @@ async function gradePositions(userId: string, a: Awaited<ReturnType<typeof owned
       feedback: feedback as unknown as Prisma.InputJsonValue,
       verdict: g.verdict,
       points: g.points,
-      gradedBy: g.method === "ai" ? ("AI" as const) : g.method === "keywords" ? ("RULE" as const) : ("RULE" as const),
+      gradedBy: g.method === "ai" ? ("AI" as const) : ("RULE" as const),
     };
-    await db.answer.upsert({
+    const saved = await db.answer.upsert({
       where: { attemptId_position: { attemptId: a.id, position: q.position } },
       create: { userId, attemptId: a.id, position: q.position, ...data, value: (prev?.value ?? "") as Prisma.InputJsonValue },
       update: data,
     });
+    // Diagnostic d'erreur (code/SQL exécutés) : remplacé à chaque correction, justifié par les tests concernés.
+    const diagnoses = (g.detail?.diagnoses ?? []) as { category: ErrorCategory; kind: string; confidence: number; label: string; tests: string[] }[];
+    await db.errorDiagnosis.deleteMany({ where: { userId, answerId: saved.id } });
+    if (diagnoses.length) {
+      await db.errorDiagnosis.createMany({
+        data: diagnoses.map((d) => ({ userId, answerId: saved.id, conceptId: q.concepts[0]?.id ?? null, category: d.category, confidence: d.confidence, evidence: { source: "tests", kind: d.kind, label: d.label, tests: d.tests, questionPosition: q.position } as unknown as Prisma.InputJsonValue })),
+      });
+    }
   }
 }
 

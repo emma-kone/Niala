@@ -41,7 +41,7 @@ export interface QuestionResult {
   detail?: Record<string, unknown>;
   explanation: string | null;
   questionExplanation: string | null;
-  method: "rule" | "keywords" | "ai";
+  method: "rule" | "keywords" | "ai" | "tests";
 }
 
 export interface AttemptQuestion {

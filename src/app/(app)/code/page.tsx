@@ -1,5 +1,5 @@
-import CodeLabView from "@/features/code-lab/code-lab-view";
+import LabsHome from "@/features/labs/labs-home";
 
 export default function CodeLabPage() {
-  return <CodeLabView />;
+  return <LabsHome kind="CODE" />;
 }

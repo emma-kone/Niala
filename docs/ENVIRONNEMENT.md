@@ -12,6 +12,7 @@
 | `ANTHROPIC_API_KEY` | pour les fonctions IA | Sans elle : l'analyse n'extrait que le plan issu de la numérotation, les autres fonctions IA sont indisponibles et le disent |
 | `ANTHROPIC_MODEL` | non | Modèle utilisé par la V2 (défaut `claude-sonnet-5-5`) |
 | `AI_DAILY_CALL_LIMIT` | non | Appels IA maximum par utilisateur et par 24 h (défaut 300) |
+| `LAB_MAX_CONCURRENT` | non | Nombre maximum d'exécutions isolées simultanées (défaut 3 ; chaque exécution Python pèse ~100 Mo) |
 | `EXERCISE_MAX_QUESTIONS` | non | Nombre maximum de questions par exercice (défaut 40, plafond 100) |
 | `NEXT_DIST_DIR` | non | Dossier de build Next (utilisé par `scripts/dev-local.mjs` pour coexister avec un autre `next dev`) |
 | `PRISMA_LOG_QUERIES` | non | `1` pour journaliser les requêtes SQL en développement |

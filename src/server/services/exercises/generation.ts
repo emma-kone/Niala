@@ -20,7 +20,9 @@ import {
   type RawQuestion,
   type Slot,
 } from "@/server/domain/exercise-model";
+import { languageOf, type CodeTest, type SqlSpec } from "@/server/domain/lab-tests";
 import { loadVersionPages, pagesBetween } from "@/server/services/analysis/analysis-service";
+import { verifyCodeReference, verifySqlSpec } from "@/server/services/labs/execute";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ExerciseGenerationService. Source de connaissances UNIQUE : le document choisi (jamais les autres
@@ -75,8 +77,9 @@ const FORMAT: Record<string, string> = {
   open: `{"type":"open","reference":"réponse modèle","criteria":["critère 1","critère 2"]}`,
   matching: `{"type":"matching","pairs":[{"left":"…","right":"…"},{"left":"…","right":"…"},{"left":"…","right":"…"}]}`,
   practical: `{"type":"practical","reference":"résolution modèle","criteria":["critère 1","critère 2"]}`,
-  code: `{"type":"code","language":"python","starterCode":"…","referenceSolution":"…","criteria":["critère 1","critère 2"]}`,
-  sql: `{"type":"sql","setupSql":"CREATE TABLE … ; INSERT …","referenceSql":"SELECT …","criteria":["critère 1","critère 2"]}  (SQLite)`,
+  code: `{"type":"code","language":"python","starterCode":"…","referenceSolution":"…","criteria":["critère 1","critère 2"],"tests":[{"name":"cas simple","call":{"fn":"nom_de_la_fonction","args":[3,4]},"expected":7},{"name":"cas limite : liste vide","call":{"fn":"nom_de_la_fonction","args":[[]]},"expected":0,"edge":true}]}  (langage : python, javascript ou typescript ; la solution DÉFINIT la fonction appelée par les tests ; 3 à 6 tests dont au moins un cas limite ; "expected" = valeur JSON retournée. Alternative sans fonction : {"name":"…","stdin":"entrée","expected":"sortie exacte du programme
+"}. Chaque "expected" doit être EXACTEMENT ce que produit la solution de référence.)`,
+  sql: `{"type":"sql","setupSql":"CREATE TABLE … ; INSERT … (au moins 5 lignes réalistes)","referenceSql":"SELECT …","criteria":["critère 1","critère 2"],"ordered":false,"checks":[],"variants":[{"name":"table vide ou valeurs NULL","extraSql":"DELETE FROM … ;"}]}  (SQLite ; "ordered":true seulement si l'énoncé impose un ORDER BY ; "checks" = requêtes SELECT de contrôle de l'état final, seulement pour INSERT/UPDATE/DELETE/DDL ; "variants" = 1 à 2 jeux de données limites ajoutés après setupSql)`,
 };
 
 const DIFFICULTY_HINT = {
@@ -248,12 +251,41 @@ export async function generateExercise(userId: string, rawConfig: unknown) {
   }
 
   accepted.sort((a, b) => a.slot.slot - b.slot.slot);
+
+  // Code / SQL : les tests proposés par l'IA ne sont que des CANDIDATS. Ils ne sont retenus que si la solution de
+  // référence les réussit à l'exécution (isolée). Sinon la question reste valable, corrigée par lecture, et c'est signalé.
+  let unverified = 0;
+  for (const a of accepted) {
+    const key = a.built.answerKey as Record<string, unknown>;
+    if (a.built.type === "code") {
+      const lang = languageOf(String(a.built.payload.language ?? ""));
+      const v = lang && lang !== "sql" ? await verifyCodeReference(lang, String(key.reference), key.tests as CodeTest[]).catch(() => null) : null;
+      if (v && v.tests.length >= 2) {
+        key.tests = v.tests;
+        key.verified = true;
+      } else {
+        key.tests = [];
+        key.verified = false;
+        unverified++;
+      }
+    } else if (a.built.type === "sql") {
+      const v = await verifySqlSpec(key.sql as SqlSpec).catch(() => null);
+      if (v?.baseOk) {
+        key.sql = v.spec;
+        key.verified = true;
+      } else {
+        key.verified = false;
+        unverified++;
+      }
+    }
+  }
   const points = allocatePoints(config.totalPoints, accepted.map((a) => DIFFICULTY_WEIGHT[a.slot.difficulty]));
 
   const notes: string[] = [];
   if (accepted.length < config.questionCount) {
     notes.push(`${accepted.length} question(s) sur ${config.questionCount} demandée(s) : le document ne fournit pas assez d'éléments fiables pour les autres (aucune question n'a été inventée). Le barème de ${config.totalPoints} points est réparti sur les questions créées.`);
   }
+  if (unverified) notes.push(`${unverified} question(s) de programmation ou SQL n'ont pas pu être validées par exécution (solution de référence non vérifiable) : elles seront corrigées par lecture, sans tests.`);
   if (fatal) notes.push(fatal.message);
   else if (failures) notes.push(`${failures} appel(s) au service d'IA ont échoué.`);
   const totalDropped = dropped.invalid + dropped.ungrounded + dropped.duplicate;

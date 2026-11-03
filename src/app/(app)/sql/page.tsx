@@ -1,5 +1,5 @@
-import SqlLabView from "@/features/sql-lab/sql-lab-view";
+import LabsHome from "@/features/labs/labs-home";
 
 export default function SqlLabPage() {
-  return <SqlLabView />;
+  return <LabsHome kind="SQL" />;
 }

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { parseCodeTests, sqlSpecSchema } from "./lab-tests";
 import { randomBytes } from "node:crypto";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -111,8 +112,17 @@ export const rawQuestionSchema = z.discriminatedUnion("type", [
   z.object({ ...common, type: z.literal("open"), reference: text(1500, 5), criteria: z.array(text(200)).min(2).max(5) }),
   z.object({ ...common, type: z.literal("matching"), pairs: z.array(z.object({ left: text(160), right: text(200) })).min(3).max(6) }),
   z.object({ ...common, type: z.literal("practical"), reference: text(1500, 5), criteria: z.array(text(200)).min(2).max(5) }),
-  z.object({ ...common, type: z.literal("code"), language: text(20), starterCode: z.string().max(2000).optional(), referenceSolution: text(3000, 3), criteria: z.array(text(200)).min(2).max(5) }),
-  z.object({ ...common, type: z.literal("sql"), setupSql: z.string().max(4000).optional(), referenceSql: text(2000, 6), criteria: z.array(text(200)).min(2).max(5) }),
+  z.object({ ...common, type: z.literal("code"), language: text(20), starterCode: z.string().max(2000).optional(), referenceSolution: text(3000, 3), criteria: z.array(text(200)).min(2).max(5), tests: z.array(z.unknown()).max(10).optional() }),
+  z.object({
+    ...common,
+    type: z.literal("sql"),
+    setupSql: z.string().max(4000).optional(),
+    referenceSql: text(2000, 6),
+    criteria: z.array(text(200)).min(2).max(5),
+    ordered: z.boolean().optional(),
+    checks: z.array(text(1000)).max(3).optional(),
+    variants: z.array(z.object({ name: text(80), extraSql: text(2000) })).max(4).optional(),
+  }),
 ]);
 export type RawQuestion = z.infer<typeof rawQuestionSchema>;
 
@@ -192,8 +202,13 @@ export function buildQuestion(q: RawQuestion): BuiltQuestion {
       };
     }
     case "code":
-      return { type: q.type, payload: { statement: q.statement, language: q.language, starterCode: q.starterCode ?? "" }, answerKey: { reference: q.referenceSolution, criteria: q.criteria } };
+      // Les tests proposés par l'IA ne sont que des CANDIDATS : ils ne sont retenus qu'après exécution de la solution de référence (voir labs/validate).
+      return { type: q.type, payload: { statement: q.statement, language: q.language, starterCode: q.starterCode ?? "" }, answerKey: { reference: q.referenceSolution, criteria: q.criteria, tests: parseCodeTests(q.tests ?? []), verified: false } };
     case "sql":
-      return { type: q.type, payload: { statement: q.statement, setupSql: q.setupSql ?? "" }, answerKey: { reference: q.referenceSql, criteria: q.criteria } };
+      return {
+        type: q.type,
+        payload: { statement: q.statement, setupSql: q.setupSql ?? "" },
+        answerKey: { reference: q.referenceSql, criteria: q.criteria, sql: sqlSpecSchema.parse({ setupSql: q.setupSql ?? "", referenceSql: q.referenceSql, checks: q.checks ?? [], ordered: q.ordered ?? false, variants: q.variants ?? [] }), verified: false },
+      };
   }
 }
