@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
@@ -7,9 +9,11 @@ import {
   BookMarked,
   ChevronDown,
   ChevronRight,
+  GitFork,
   Indent,
   Loader2,
   MoreVertical,
+  Network,
   Outdent,
   Pencil,
   Plus,
@@ -28,6 +32,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { NameDialog } from "@/features/subject-files/dialogs";
+import { routes } from "@/config/routes";
 
 type Origin = "DOCUMENT" | "AI_INFERRED" | "USER";
 interface Section {
@@ -80,7 +85,8 @@ function OriginTag({ origin, className }: { origin: Origin; className?: string }
   );
 }
 
-export function AnalysisPanel({ docId, onGoToPage }: { docId: string; onGoToPage: (page: number) => void }) {
+export function AnalysisPanel({ docId, subjectId, onGoToPage }: { docId: string; subjectId: string; onGoToPage: (page: number) => void }) {
+  const router = useRouter();
   const [data, setData] = useState<AnalysisResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
@@ -138,6 +144,19 @@ export function AnalysisPanel({ docId, onGoToPage }: { docId: string; onGoToPage
     }
   }
 
+  async function generateMap(kind: "STRUCTURE" | "CONCEPT") {
+    if (!data?.analysis) return;
+    setBusy("map-" + kind);
+    setActionError(null);
+    try {
+      const r = await api.post<{ id: string }>("/api/maps/generate", { analysisId: data.analysis.id, kind });
+      router.push(`${routes.subject(subjectId)}/cartes/${r.id}`);
+    } catch (e) {
+      setActionError(errText(e, "Génération impossible."));
+      setBusy(null);
+    }
+  }
+
   async function act(key: string, fn: () => Promise<unknown>) {
     setBusy(key);
     setActionError(null);
@@ -168,6 +187,7 @@ export function AnalysisPanel({ docId, onGoToPage }: { docId: string; onGoToPage
   if (!data) return <p className="flex items-center gap-2 p-4 text-sm text-muted-foreground" role="status"><Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Chargement…</p>;
 
   const a = data.analysis;
+  const roots = tree.get(null) ?? [];
   const siblingsOf = (s: Section) => tree.get(s.parentId) ?? [];
 
   const renderNode = (s: Section, depth: number): React.ReactNode => {
@@ -265,7 +285,6 @@ export function AnalysisPanel({ docId, onGoToPage }: { docId: string; onGoToPage
     );
   };
 
-  const roots = tree.get(null) ?? [];
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="space-y-2 border-b p-3">
@@ -303,6 +322,17 @@ export function AnalysisPanel({ docId, onGoToPage }: { docId: string; onGoToPage
         {a?.status === "READY" && a.notice && <p role="note" className="text-xs text-muted-foreground">{a.notice}</p>}
         {a?.outdated && <p role="note" className="rounded-md bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">Cette analyse concerne une version antérieure du document.</p>}
         {actionError && <p role="alert" className="text-xs text-destructive">{actionError}</p>}
+        {a?.status === "READY" && (
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" className="gap-1.5" disabled={roots.length === 0 || busy !== null} onClick={() => void generateMap("STRUCTURE")}>
+              {busy === "map-STRUCTURE" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <GitFork className="h-4 w-4" aria-hidden />} Carte de structure
+            </Button>
+            <Button size="sm" variant="outline" className="gap-1.5" disabled={data.concepts.length === 0 || busy !== null} onClick={() => void generateMap("CONCEPT")} title={data.concepts.length === 0 ? "Aucune notion : elles sont extraites par le service d'IA" : undefined}>
+              {busy === "map-CONCEPT" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Network className="h-4 w-4" aria-hidden />} Carte conceptuelle
+            </Button>
+            <Link href={`${routes.subject(subjectId)}/cartes`} className="self-center text-xs text-primary hover:underline">Toutes les cartes</Link>
+          </div>
+        )}
         {a?.status === "READY" && (
           <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px]" aria-label="Légende">
             {(Object.keys(ORIGIN) as Origin[]).map((o) => <OriginTag key={o} origin={o} />)}

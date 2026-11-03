@@ -264,7 +264,7 @@ export default function ReaderView({ subjectId, docId }: { subjectId: string; do
             onGoToPage={goToPage}
           />
         ) : tab === "analysis" ? (
-          <AnalysisPanel docId={docId} onGoToPage={goToPage} />
+          <AnalysisPanel docId={docId} subjectId={subjectId} onGoToPage={goToPage} />
         ) : (
           <div className="p-4">{doc ? <Properties doc={doc} /> : <Skeleton className="h-40 w-full" />}</div>
         )}

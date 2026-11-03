@@ -205,3 +205,18 @@ Limites de la phase 5 :
 - L'analyse d'une **nouvelle version** n'est pas déclenchable : le téléversement d'une nouvelle version d'un document existant n'est pas encore implémenté (le modèle et l'historique le supportent).
 - Les corrections ne sont pas reportées sur une analyse relancée en entier (l'ancienne est conservée dans l'historique).
 - La détection de plan dépend de la qualité de l'extraction du texte (sauts de ligne) : un PDF dont les lignes sont fusionnées sera traité sans plan.
+
+**Phase 6 — terminée** (cartes de structure et conceptuelles). Vérifiée : 100 tests verts (13 d'intégration cartes + 6 de disposition/validation), `tsc` et `next build --webpack` OK, et parcours réel dans le navigateur (génération d'une carte de structure depuis l'analyse d'un vrai PDF : 15 nœuds, 14 relations, arbre propre ; ajout d'un nœud, édition par double-clic, suppression, sauvegarde automatique, point de restauration et retour à une version).
+- **Structure de données éditable** (`MindMap`, `MindMapNode`, `MindMapEdge`, `MindMapRevision`), jamais une image. Éditeur **React Flow** : ajout/suppression de nœuds, édition du texte (double-clic ou panneau), déplacement, création de relations en tirant d'une poignée à l'autre, suppression, **type de relation modifiable** (prérequis, fait partie de, exemple de, définit, s'oppose à, est lié à) avec étiquette, zoom/déplacement/mini-carte, **réorganisation automatique**, commentaire par nœud, lien « Voir dans le document (p. N) ».
+- **Deux représentations** : carte de **structure** (le plan réel du document, relations enfant → parent, racine = document) et carte **conceptuelle** (notions et relations de l'analyse ; prérequis à gauche, notions isolées en grille). Génération déterministe à partir de l'analyse : aucune donnée inventée.
+- **Provenance décidée par le serveur** : chaque nœud/relation est « dans le document », « déduit par l'IA » ou « ajouté par vous » (couleur, trait pointillé, légende). Un nœud ajouté par l'étudiant est toujours `USER` quoi que le client déclare ; l'origine d'un élément existant ne peut pas être modifiée depuis le client ; un nœud dont le texte est corrigé garde son origine et reçoit `modifié` ; une relation dont le type/étiquette change passe à `USER`.
+- **Sauvegarde automatique** avec révision (409 en cas de modification ailleurs, « recharger » / « conserver ma version »), validation stricte (pas de boucle, de doublon, de nœud inexistant, d'identifiant déjà utilisé par une autre carte).
+- **Versions** : point de restauration automatique (au plus toutes les 5 min), point manuel, retour à une version (l'état actuel est lui-même conservé), 30 versions conservées.
+- Onglet **Cartes** de la matière (liste, renommer, supprimer, cartes vides) et boutons « Carte de structure » / « Carte conceptuelle » dans l'onglet Analyse du lecteur.
+
+Limites de la phase 6 :
+- La carte conceptuelle n'existe que si des **notions ont été extraites**, donc seulement avec le service d'IA configuré (bouton désactivé sinon, avec explication). Elle n'a été testée qu'avec le faux fournisseur de test.
+- Pas d'annuler/rétablir fin dans l'éditeur (remplacé par les versions) ; pas d'export image.
+- La disposition automatique est simple (arbre horizontal, couches de prérequis) : un graphe conceptuel dense peut demander des ajustements manuels.
+- Les liens vers notions/sections sont perdus si la notion ou la section est supprimée (le nœud reste, sans lien).
+- Non vérifié : écran tactile et rendu mobile de l'éditeur.
