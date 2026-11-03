@@ -46,3 +46,13 @@ SF_PASSWORD='mot-de-passe-de-10-caractères-min' node scripts/create-user.mjs vo
 ```
 
 `AUTH_SECRET` (≥ 32 caractères) est obligatoire en production.
+
+## Archivage des tables V1 (optionnel, non appliqué)
+
+`prisma/optional/archive_v1_tables.sql` déplace les tables V1 dans un schéma `archive_v1` **sans supprimer une ligne** (réversible avec `SET SCHEMA public`), après avoir vérifié que chaque chapitre et chaque session ont bien leur équivalent V2. Il n'est volontairement **pas** dans `prisma/migrations` : `migrate deploy` ne le jouera jamais seul.
+
+À faire **avant** de l'appliquer, sinon l'application échouera :
+1. Sauvegarder la base.
+2. Retirer de `prisma/schema.prisma` les modèles `Chapter`, `Session`, `SessionItem`, `Legacy*`, `ConceptStat`, `StudyRecommendation`, `ProgramRun`, `SqlQueryLog`, `ChatMessage` et la relation `Document.chapter`.
+3. Retirer du code leurs derniers usages : `src/app/api/subjects/[id]/route.ts` (comptes de conséquences et suppression), `src/app/api/subjects/route.ts` (chapitres, sessions), `scripts/enable-rls.mjs`, tests de migration.
+4. Régénérer le client (`prisma generate`), lancer `npm test` et `npm run build`.

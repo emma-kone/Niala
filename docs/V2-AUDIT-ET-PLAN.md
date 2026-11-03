@@ -269,3 +269,8 @@ Limites de la phase 9 :
 - Une notion n'a de maîtrise que si des questions lui sont rattachées : sans service d'IA, pas d'analyse donc pas de notions, et le tableau de bord le dit au lieu d'inventer.
 - Les anciennes sessions V1 ne comptent pas comme preuves (pas d'identifiant de notion) et ne sont plus affichées ; la suppression définitive des tables V1 reste à faire après sauvegarde (phase 10).
 - Pas de suivi du temps de travail ni de graphique d'évolution de la maîtrise dans le temps (seules les notes sont listées).
+
+**Phase 10 — terminée** (intégration, vérification finale, documentation). 198 tests verts, `tsc` et `next build --webpack` OK.
+- **Parcours complet automatisé** (`src/server/journey.test.ts`, 10 étapes sur vraie base PGlite et vraie exécution isolée) : dossier → import (original octet pour octet) → analyse → note avec conflit de révision → cartes → exercice (test de code erroné écarté à l'exécution) → tentatives → maîtrise → diagnostic → recommandation → laboratoire → tableau de bord → isolation entre deux étudiants.
+- **Documentation** : `README.md`, `docs/INSTALLATION.md`, `docs/ARCHITECTURE.md`, `docs/DONNEES.md`, `docs/FONCTIONNALITES-ET-LIMITES.md` (liste des fonctionnalités terminées, de ce qui est vérifié et de ce qui ne l'est pas), `docs/MIGRATION.md` complété.
+- **Tables V1** : non supprimées. Un script d'archivage **optionnel et non appliqué** (`prisma/optional/archive_v1_tables.sql`) les déplace dans un schéma `archive_v1` sans perdre de ligne, avec contrôles préalables ; il exige un nettoyage préalable du schéma et du code décrit dans `docs/MIGRATION.md`.
