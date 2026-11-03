@@ -101,7 +101,6 @@ interface Stats {
   ai: {
     calls: number;
     errors: number;
-    recentErrors: { id: string; op: string; error: string | null; createdAt: string }[];
   };
   examResults: ExamResult[];
 }

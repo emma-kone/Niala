@@ -53,7 +53,6 @@ export async function GET() {
     const workMinutes = Math.round(graded.reduce((a, s) => a + (s.durationSec ?? 0), 0) / 60);
     const aiCalls = aiLogs.length;
     const aiErrors = aiLogs.filter((l) => !l.ok).length;
-    const recentErrors = aiLogs.filter((l) => !l.ok).slice(0, 5);
 
     return {
       counts: {
@@ -82,7 +81,7 @@ export async function GET() {
         startedAt: s.startedAt,
         subject: s.subject,
       })),
-      ai: { calls: aiCalls, errors: aiErrors, recentErrors },
+      ai: { calls: aiCalls, errors: aiErrors },
       examResults: graded.filter((s) => s.mode === "examen").map((s) => ({ id: s.id, title: s.title, percentage: s.percentage, finishedAt: s.finishedAt })),
     };
   });

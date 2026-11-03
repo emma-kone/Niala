@@ -70,7 +70,7 @@ ${content}
     evaluable: JSON.stringify(d.evaluable ?? []),
     relations: JSON.stringify(d.relations ?? []),
     raw: res.raw ?? null,
-    model: res.model ?? "openrouter",
+    model: res.model ?? "anthropic",
   };
   await db.documentAnalysis.upsert({
     where: { documentId },

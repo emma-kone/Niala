@@ -92,7 +92,6 @@ interface RecentSession {
 interface AiStats {
   calls: number;
   errors: number;
-  recentErrors: { id: string; op: string; error: string | null; createdAt: string }[];
 }
 
 interface ExamResult {
@@ -537,29 +536,6 @@ export default function DashboardView() {
                 </div>
               </CardContent>
             </Card>
-          )}
-
-          {/* Alertes IA */}
-          {stats.ai.errors > 0 && stats.ai.recentErrors.length > 0 && (
-            <Alert variant="destructive">
-              <AlertTriangle className="size-4" aria-hidden="true" />
-              <AlertTitle>Dernières erreurs IA</AlertTitle>
-              <AlertDescription>
-                <ul className="space-y-1.5">
-                  {stats.ai.recentErrors.map((aiError) => (
-                    <li key={aiError.id} className="text-xs">
-                      <span className="font-medium">{aiError.op}</span>
-                      {aiError.error ? (
-                        <span> — {truncateText(aiError.error, 140)}</span>
-                      ) : null}
-                      <span className="typo-meta block">
-                        {formatDateTime(aiError.createdAt)}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </AlertDescription>
-            </Alert>
           )}
         </>
       )}

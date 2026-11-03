@@ -1,14 +1,13 @@
 import { db } from "@/lib/db";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Couche d'abstraction IA Hybride (Anthropic + Google Gemini + OpenRouter)
-// - Anthropic Claude Sonnet 5.5 (fournisseur principal, retry sur saturation)
-// - Google Gemini puis OpenRouter (secours)
-// - Bascule automatique transparente en cas d'indisponibilité
+// Couche d'abstraction IA : Anthropic Claude Sonnet 5.5 (retry sur saturation).
+// Les détails d'erreur restent dans les logs serveur ; l'interface ne reçoit
+// que des messages génériques.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type AiOp = "analysis" | "rag" | "generation" | "grading" | "explain" | "revision";
-export type AiProvider = "anthropic" | "gemini" | "openrouter";
+export type AiProvider = "anthropic";
 
 const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5-5";
 
@@ -22,145 +21,6 @@ interface CompletionResult {
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 
-// ── Appel direct Google Gemini (avec retry automatique sur pic de charge) ───
-async function callGemini(
-  systemPrompt: string,
-  userPrompt: string,
-  opts: { model?: string; timeoutMs?: number; temperature?: number; json?: boolean } = {}
-): Promise<{ ok: boolean; content: string; model: string; error?: string }> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    return { ok: false, content: "", model: "gemini", error: "GEMINI_API_KEY manquante." };
-  }
-
-  const model = opts.model || process.env.GEMINI_MODEL || "gemini-3.8-flash";
-  const timeout = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey.trim()}`;
-
-  const bodyPayload: Record<string, unknown> = {
-    contents: [{ parts: [{ text: userPrompt }] }],
-    generationConfig: {
-      temperature: opts.temperature ?? 0.3,
-      ...(opts.json ? { responseMimeType: "application/json" } : {}),
-    },
-  };
-
-  if (systemPrompt.trim()) {
-    bodyPayload.systemInstruction = {
-      parts: [{ text: systemPrompt }],
-    };
-  }
-
-  const maxRetries = 2;
-  let lastError = "";
-
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      if (attempt > 0) {
-        // Pause avec backoff (1.5s, 3s)
-        await new Promise((resolve) => setTimeout(resolve, attempt * 1500));
-        console.warn(`[Gemini] Nouvelle tentative (${attempt}/${maxRetries}) suite à saturation...`);
-      }
-
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(bodyPayload),
-        signal: AbortSignal.timeout(timeout),
-      });
-
-      if (!res.ok) {
-        const errData = await res.json().catch(() => null);
-        const msg = errData?.error?.message || `Erreur Gemini (${res.status} ${res.statusText})`;
-        lastError = msg;
-
-        // Si surcharge temporaire (503 / 429 / high demand), on retente
-        const isTemporary =
-          res.status === 429 ||
-          res.status === 503 ||
-          /demand|overloaded|unavailable|resource exhausted/i.test(msg);
-
-        if (isTemporary && attempt < maxRetries) {
-          continue;
-        }
-
-        return { ok: false, content: "", model, error: msg };
-      }
-
-      const data = await res.json();
-      const content = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-      if (!content.trim()) {
-        return { ok: false, content: "", model, error: "Réponse vide de Gemini." };
-      }
-
-      return { ok: true, content, model };
-    } catch (err) {
-      lastError = err instanceof Error ? err.message : "Erreur réseau inconnue";
-      if (attempt < maxRetries) {
-        continue;
-      }
-    }
-  }
-
-  return { ok: false, content: "", model, error: lastError || "Échec de l'appel Gemini" };
-}
-
-// ── Appel OpenRouter ─────────────────────────────────────────────────────────
-async function callOpenRouter(
-  systemPrompt: string,
-  userPrompt: string,
-  opts: { model?: string; timeoutMs?: number; temperature?: number } = {}
-): Promise<{ ok: boolean; content: string; model: string; error?: string }> {
-  const apiKey = process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    return { ok: false, content: "", model: "openrouter", error: "OPENROUTER_API_KEY manquante." };
-  }
-
-  const model = opts.model || process.env.OPENROUTER_MODEL || "google/gemma-4-31b-it:free";
-  const timeout = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-
-  const messages: Array<{ role: string; content: string }> = [];
-  if (systemPrompt.trim()) {
-    messages.push({ role: "system", content: systemPrompt });
-  }
-  messages.push({ role: "user", content: userPrompt });
-
-  try {
-    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey.trim()}`,
-        "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
-        "X-Title": "StudyForge",
-      },
-      body: JSON.stringify({
-        model,
-        messages,
-        temperature: opts.temperature ?? 0.3,
-      }),
-      signal: AbortSignal.timeout(timeout),
-    });
-
-    if (!res.ok) {
-      const errBody = await res.json().catch(() => null);
-      const errMsg = errBody?.error?.message || `Erreur OpenRouter (${res.status} ${res.statusText})`;
-      return { ok: false, content: "", model, error: errMsg };
-    }
-
-    const data = await res.json();
-    const content = data.choices?.[0]?.message?.content ?? "";
-    if (!content.trim()) {
-      return { ok: false, content: "", model, error: "Réponse vide d'OpenRouter." };
-    }
-
-    return { ok: true, content, model: data.model || model };
-  } catch (err) {
-    const errMsg = err instanceof Error ? err.message : "Erreur de connexion OpenRouter";
-    return { ok: false, content: "", model, error: errMsg };
-  }
-}
-
 // ── Appel Anthropic (Claude Sonnet 5.5, fournisseur principal) ───────────────
 async function callAnthropic(
   systemPrompt: string,
@@ -172,7 +32,7 @@ async function callAnthropic(
     return { ok: false, content: "", model: "anthropic", error: "ANTHROPIC_API_KEY manquante." };
   }
 
-  // On n'accepte qu'un identifiant Claude : un nom Gemini/OpenRouter ne doit pas arriver ici.
+  // On n'accepte qu'un identifiant Claude.
   const requested = opts.model?.startsWith("claude") ? opts.model : undefined;
   const model = requested || process.env.ANTHROPIC_MODEL || DEFAULT_ANTHROPIC_MODEL;
   const timeout = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -244,23 +104,8 @@ async function callAnthropic(
   return { ok: false, content: "", model, error: lastError || "Échec de l'appel Anthropic" };
 }
 
-async function invokeProvider(
-  provider: AiProvider,
-  systemPrompt: string,
-  userPrompt: string,
-  opts: { model?: string; timeoutMs?: number; temperature?: number; json?: boolean } = {}
-): Promise<{ ok: boolean; content: string; model: string; error?: string }> {
-  switch (provider) {
-    case "anthropic":
-      return callAnthropic(systemPrompt, userPrompt, opts);
-    case "gemini":
-      return callGemini(systemPrompt, userPrompt, opts);
-    case "openrouter":
-      return callOpenRouter(systemPrompt, userPrompt, opts);
-  }
-}
+const USER_ERROR = "Le service d'IA est momentanément indisponible. Réessayez dans un instant.";
 
-// ── Orchestrateur avec Bascule automatique (Gemini ↔ OpenRouter) ─────────────
 async function callModel(
   op: AiOp,
   systemPrompt: string,
@@ -270,61 +115,16 @@ async function callModel(
   const started = Date.now();
   const promptChars = systemPrompt.length + userPrompt.length;
 
-  const preferred = (process.env.AI_PROVIDER || "anthropic").toLowerCase() as AiProvider;
-  const hasAnthropic = Boolean(process.env.ANTHROPIC_API_KEY);
-  const hasGemini = Boolean(process.env.GEMINI_API_KEY);
-  const hasOpenRouter = Boolean(process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY);
+  const res = await callAnthropic(systemPrompt, userPrompt, opts);
 
-  const allProviders: AiProvider[] = ["anthropic", "gemini", "openrouter"];
-  const isAvailable = (p: AiProvider) => {
-    if (p === "anthropic") return hasAnthropic;
-    if (p === "gemini") return hasGemini;
-    if (p === "openrouter") return hasOpenRouter;
-    return false;
-  };
-
-  const candidateChain: AiProvider[] = [
-    preferred,
-    ...allProviders.filter((p) => p !== preferred),
-  ].filter(isAvailable);
-
-  if (candidateChain.length === 0) {
-    const err = "Aucune clé d'API configurée (définissez ANTHROPIC_API_KEY, GEMINI_API_KEY ou OPENROUTER_API_KEY).";
-    await log(op, opts.userId, "none", promptChars, 0, false, err, Date.now() - started);
-    return { ok: false, content: "", error: err };
+  if (res.ok) {
+    await log(op, opts.userId, `anthropic:${res.model}`, promptChars, res.content.length, true, undefined, Date.now() - started);
+    return { ok: true, content: res.content, model: res.model, provider: "anthropic" };
   }
 
-  const failedAttempts: string[] = [];
-
-  for (let i = 0; i < candidateChain.length; i++) {
-    const provider = candidateChain[i];
-    if (i > 0) {
-      console.warn(`[AI] Bascule automatique vers le secours (${provider})...`);
-    }
-
-    const res = await invokeProvider(provider, systemPrompt, userPrompt, opts);
-
-    if (res.ok) {
-      await log(
-        op,
-        opts.userId,
-        `${provider}:${res.model}`,
-        promptChars,
-        res.content.length,
-        true,
-        undefined,
-        Date.now() - started
-      );
-      return { ok: true, content: res.content, model: res.model, provider };
-    }
-
-    console.warn(`[AI] Le fournisseur (${provider}) a échoué: ${res.error}`);
-    failedAttempts.push(`${provider} (${res.error})`);
-  }
-
-  const combinedError = `Échec de tous les fournisseurs : ${failedAttempts.join(" | ")}`;
-  await log(op, opts.userId, "cascade-failed", promptChars, 0, false, combinedError, Date.now() - started);
-  return { ok: false, content: "", error: combinedError };
+  console.warn(`[AI] Échec de l'appel (${op}): ${res.error}`);
+  await log(op, opts.userId, "anthropic", promptChars, 0, false, res.error, Date.now() - started);
+  return { ok: false, content: "", error: USER_ERROR };
 }
 
 async function log(
