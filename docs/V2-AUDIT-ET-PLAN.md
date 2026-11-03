@@ -189,3 +189,19 @@ Limites de la phase 4 :
 - Pas d'images dans l'éditeur ni de pièces jointes (`NoteAttachment` non implémenté) ; pas de liste de tâches.
 - Recherche de notes en mémoire (jusqu'à 500 notes par matière) : suffisant pour un usage étudiant, à indexer si le volume grossit.
 - Non vérifié visuellement : feuille mobile du panneau, et sélection à la souris réelle (la sélection a été simulée par script, le panneau de test étant masqué).
+
+**Phase 5 — terminée** (architecture IA et analyse hiérarchique). Vérifiée : 81 tests verts (dont 16 d'intégration de l'analyse avec **vrai PDF extrait** et 9 de l'analyseur de structure), `tsc` OK, et parcours réel dans le navigateur (import d'un PDF numéroté, analyse, arbre de 15 titres fidèle avec pages, renommage, suppression, ajout d'une notion).
+- **Architecture** (`src/server/ai`, `src/server/services/analysis`) : aucun appel IA hors de cette couche. `generateStructured` impose quota quotidien par utilisateur, délai, journal (`AIUsageLog`, opération versionnée `analysis.concepts@analysis-v1`), validation stricte zod et une tentative de réparation. Fournisseur Anthropic derrière une interface (`AiProvider`).
+- **DocumentStructureService** : l'analyseur de numérotation est **déterministe et sans IA** (CHAPITRE, I/II/III, A/B/C, 1/2/3, 1.1, a/b/c, 1°, titres Markdown ; désambiguïsation I romain / I lettre ; rejet des numéros hors séquence). Tout ce qu'il produit est `DOCUMENT`. Sans numérotation, repli IA (plan marqué `AI_INFERRED`, titres absents du texte écartés) ; sans IA, **aucun plan n'est inventé**.
+- **ConceptExtractionService** : notions, définitions, propriétés, règles, exemples et relations, par lots de sections. Une notion n'est `DOCUMENT` que si sa citation est **retrouvée mot pour mot dans le texte** (vérifié côté serveur, avec la page) ; sinon elle est `AI_INFERRED`. Relations vers des notions inconnues rejetées. Notions **par matière** (jamais fusionnées entre matières).
+- **Protection contre l'injection** : le document est encadré par une balise à jeton aléatoire et présenté comme donnée ; instruction injectée jamais présente dans le prompt système (testé) ; sortie hostile ou illisible → analyse terminée sans notions + avertissement, jamais d'échec silencieux.
+- **DocumentAnalysisService** : une analyse par version, historique conservé, cache (analyse `READY` de même version de prompt réutilisée sans appel IA, `force` pour relancer), analyses « en cours » périmées détectées.
+- **Corrections de l'étudiant** : titres, ajout/suppression de sections, monter/descendre/indenter/désindenter, notions (corriger, ajouter, supprimer) ; tout ce qu'il touche passe en `USER`/`modifié` ; relance d'**une** section qui remplace l'IA mais conserve les ajouts de l'étudiant ; suppression des notions orphelines.
+- **Interface** : onglet « Analyse » du lecteur (arbre repliable, pages cliquables, étiquettes « Dans le document / Déduit par l'IA / Ajouté ou corrigé par vous », citations, historique des analyses).
+
+Limites de la phase 5 :
+- **Aucune clé `ANTHROPIC_API_KEY` n'est configurée dans ce projet** : l'extraction de notions et le repli IA n'ont été exercés qu'avec un **faux fournisseur de test** (identifié comme tel, uniquement dans les tests), **jamais contre le vrai modèle**. À vérifier dès que la clé est ajoutée.
+- L'analyse s'exécute dans la requête (`maxDuration` 300 s) : un très long cours peut dépasser ; au-delà de 60 sections, seules les 60 premières reçoivent des notions (signalé).
+- L'analyse d'une **nouvelle version** n'est pas déclenchable : le téléversement d'une nouvelle version d'un document existant n'est pas encore implémenté (le modèle et l'historique le supportent).
+- Les corrections ne sont pas reportées sur une analyse relancée en entier (l'ancienne est conservée dans l'historique).
+- La détection de plan dépend de la qualité de l'extraction du texte (sauts de ligne) : un PDF dont les lignes sont fusionnées sera traité sans plan.

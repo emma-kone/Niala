@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, Info, Loader2, PanelRightClose, PanelRightOpen, StickyNote } from "lucide-react";
+import { ArrowLeft, Info, ListTree, Loader2, PanelRightClose, PanelRightOpen, StickyNote } from "lucide-react";
 import { api } from "@/lib/client-api";
 import { routes } from "@/config/routes";
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +16,7 @@ import { Properties } from "@/features/subject-files/properties";
 import { STATUS_LABEL, type DocumentDetails } from "@/features/subject-files/types";
 import { ExtractedTextViewer, OriginalTextViewer } from "./text-viewers";
 import { NotesPanel } from "./notes-panel";
+import { AnalysisPanel } from "./analysis-panel";
 import type { NoteListItem } from "@/features/notes/types";
 import type { PdfAnnotation, PdfSelection } from "./pdf-viewer";
 
@@ -89,7 +90,7 @@ export default function ReaderView({ subjectId, docId }: { subjectId: string; do
   const saveReading = useReadingSaver(docId);
 
   // Notes du document + annotations affichées dans le PDF
-  const [tab, setTab] = useState<"doc" | "notes">("notes");
+  const [tab, setTab] = useState<"doc" | "notes" | "analysis">("notes");
   const [sheet, setSheet] = useState(false);
   const desktop = useDesktop();
   const [notes, setNotes] = useState<NoteListItem[] | null>(null);
@@ -236,7 +237,7 @@ export default function ReaderView({ subjectId, docId }: { subjectId: string; do
   const panelBody = (
     <div className="flex h-full min-h-0 flex-col">
       <div role="tablist" aria-label="Panneau du document" className="flex border-b">
-        {([["notes", "Notes", StickyNote], ["doc", "Document", Info]] as const).map(([id, label, Icon]) => (
+        {([["notes", "Notes", StickyNote], ["analysis", "Analyse", ListTree], ["doc", "Document", Info]] as const).map(([id, label, Icon]) => (
           <button
             key={id}
             role="tab"
@@ -262,6 +263,8 @@ export default function ReaderView({ subjectId, docId }: { subjectId: string; do
             onReload={() => void reloadNotes()}
             onGoToPage={goToPage}
           />
+        ) : tab === "analysis" ? (
+          <AnalysisPanel docId={docId} onGoToPage={goToPage} />
         ) : (
           <div className="p-4">{doc ? <Properties doc={doc} /> : <Skeleton className="h-40 w-full" />}</div>
         )}
