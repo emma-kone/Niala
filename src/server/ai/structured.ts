@@ -1,6 +1,6 @@
 import type { ZodType } from "zod";
 import { db } from "@/lib/db";
-import { parseJsonLoose } from "@/lib/ai";
+import { parseJsonLoose } from "./json";
 import { AiCallError, AiQuotaError, AiUnavailableError, getProvider } from "./provider";
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -196,30 +196,16 @@ export async function finalizeUpload(userId: string, versionId: string): Promise
         where: { id: versionId },
         data: { extractStatus: status, pageCount: extracted.pageCount ?? null, extractWarnings: warnings },
       });
-      // Compatibilité V1 (génération d'exercices actuelle) — retiré en phase 7.
+      // Champs d'état du document (l'extraction complète vit dans DocumentVersion / DocumentChunk).
       await tx.document.update({
         where: { id: doc.id },
         data: {
           status: hasText ? "READY" : "ERROR",
           error: hasText ? null : warnings[0],
-          extractedText: hasText ? text.slice(0, 500_000) : null,
           pageCount: extracted.pageCount ?? null,
           meta: JSON.stringify(extracted.meta),
         },
       });
-      await tx.legacyDocumentChunk.deleteMany({ where: { documentId: doc.id } });
-      const legacy = hasText ? chunkText(text) : [];
-      if (legacy.length) {
-        await tx.legacyDocumentChunk.createMany({
-          data: legacy.map((c, i) => ({
-            documentId: doc.id,
-            idx: i,
-            section: c.section ?? null,
-            content: c.content.slice(0, 4000),
-            words: c.content.split(/\s+/).length,
-          })),
-        });
-      }
     });
     return {
       ok: true,

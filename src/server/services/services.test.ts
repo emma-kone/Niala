@@ -116,9 +116,10 @@ describe("import et documents", () => {
     const { getStorage } = await import("@/server/storage");
     expect((await getStorage().read(key)).toString()).toBe(text);
     // compatibilité V1 : le document est visible par la génération actuelle
-    const legacy = await s.db.document.findUniqueOrThrow({ where: { id: docId } });
-    expect(legacy.status).toBe("READY");
-    expect(legacy.extractedText).toContain("fonctions");
+    // la double écriture V1 (extractedText, LegacyDocumentChunk) a été retirée en phase 9
+    const doc = await s.db.document.findUniqueOrThrow({ where: { id: docId } });
+    expect(doc.status).toBe("READY");
+    expect(doc.extractedText).toBeNull();
   });
 
   it("refuse un format inconnu, un fichier vide et une signature falsifiée", async () => {

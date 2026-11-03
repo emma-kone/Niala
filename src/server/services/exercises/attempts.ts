@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { ApiHttpError } from "@/lib/api-helpers";
 import type { QuestionType } from "@/server/domain/exercise-model";
 import { gradeAnswer } from "./evaluation";
+import { refreshProgress } from "@/server/services/progress/progress";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tentatives : copie FIGÉE de l'exercice (snapshot), réponses enregistrées au fil de l'eau (reprise),
@@ -228,6 +229,7 @@ async function finalize(userId: string, attemptId: string) {
     }),
     db.learningActivity.updateMany({ where: { userId, refType: "attempt", refId: attemptId }, data: { status: "DONE" } }),
   ]);
+  await refreshProgress(userId); // maîtrise par notion + recommandations (n'échoue jamais la correction)
 }
 
 /** Soumission : fige la tentative puis corrige. Idempotente (une seconde soumission renvoie la correction existante). */

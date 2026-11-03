@@ -5,5 +5,5 @@ import CreateExerciseView from "./create-view";
 
 export default function CreateExercisePage({ subjectId }: { subjectId: string }) {
   const params = useSearchParams();
-  return <CreateExerciseView subjectId={subjectId} documentId={params.get("document")} />;
+  return <CreateExerciseView subjectId={subjectId} documentId={params.get("document")} presetConcepts={params.get("concepts")?.split(",").filter(Boolean) ?? []} />;
 }

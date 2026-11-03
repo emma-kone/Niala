@@ -27,7 +27,7 @@ Sur une base neuve : `npx prisma migrate deploy` suffit (la baseline est alors r
 ## Ce qui n'est PAS migré (et pourquoi)
 
 - **Fichiers originaux** : jamais stockés en V1. Chaque version migrée a `originalMissing = true` et `storageKey = NULL` ; le lecteur fidèle exige de réimporter le fichier.
-- **`ConceptStat`** : aucune matière n'y est enregistrée ; le rattacher automatiquement fusionnerait des notions de matières différentes. Il sera reconstruit en phase 9 depuis les tentatives (le snapshot conserve notions et matière). La table reste en place.
+- **`ConceptStat`** : aucune matière n'y est enregistrée ; le rattacher automatiquement fusionnerait des notions de matières différentes. Phase 9 : la maîtrise (`ConceptMastery`) est désormais recalculée depuis les réponses corrigées et les tests de laboratoire (les tentatives V1 migrées n'ont pas de notions rattachées à un identifiant : elles ne comptent pas comme preuve). `ConceptStat` n'est plus lu ni écrit ; la table reste en place.
 - **`LegacyExercise`, `LegacyDocumentAnalysis`** : conservés en lecture seule ; les formats V2 (questions typées, arbre de sections) ne se déduisent pas sans perte.
 - **Ordre des chapitres** (`Chapter.position`) : les dossiers n'ont pas d'ordre manuel.
 - **Offsets de caractères** des chunks migrés : inconnus (0/0) ; seule la page est reprise.

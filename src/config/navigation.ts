@@ -26,7 +26,6 @@ export const APP_NAV: NavItem[] = [
     label: "Exercices",
     icon: FilePlus2,
     match: "prefix",
-    alsoActiveFor: ["/sessions"],
   },
   { href: routes.code, label: "Éditeur de code", icon: Terminal, match: "prefix" },
   { href: routes.sql, label: "Laboratoire SQL", icon: Database, match: "prefix" },

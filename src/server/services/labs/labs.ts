@@ -9,6 +9,7 @@ import { SQL_FIXTURES } from "@/server/labs/fixtures";
 import { capabilities, runCodeFree, runCodeTests, runSqlFree, runSqlTests } from "./execute";
 import { generateHint, type HintLevel } from "./hints";
 import { extractLabExercises } from "./import";
+import { refreshProgress } from "@/server/services/progress/progress";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Laboratoires code & SQL : espaces de travail libres ou d'exercice, exécution isolée, tests objectifs,
@@ -350,6 +351,7 @@ export async function runWorkspace(userId: string, id: string, raw: unknown) {
     });
   }
   await touchActivity(userId, w, tests?.summary.allPassed === true);
+  if (tests) await refreshProgress(userId);
   return { id: run.id, createdAt: run.createdAt, mode: p.data.mode, output, tests, diagnoses };
 }
 

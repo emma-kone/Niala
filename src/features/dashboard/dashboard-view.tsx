@@ -1,544 +1,204 @@
 "use client";
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
-import {
-  AlertTriangle,
-  ClipboardCheck,
-  FileText,
-  GraduationCap,
-  Layers,
-  Lightbulb,
-  RefreshCw,
-  Timer,
-  TrendingUp,
-  type LucideIcon,
-} from "lucide-react";
-
+import { useCallback, useEffect, useState } from "react";
+import { AlertTriangle, ArrowRight, BookOpen, FlaskConical, GraduationCap, History, Play } from "lucide-react";
 import { api } from "@/lib/client-api";
 import { routes } from "@/config/routes";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ACTION_LABEL, pct, recommendationHref, type DashboardData, type Recommendation } from "@/features/progress/types";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Types
-// ─────────────────────────────────────────────────────────────────────────────
-
-interface StatsCounts {
-  subjects: number;
-  documents: number;
-  documentsReady: number;
-  documentsError: number;
-  sessionsTotal: number;
-  sessionsGraded: number;
-  sessionsInProgress: number;
-}
-
-interface SubjectStat {
-  id: string;
-  name: string;
-  color: string;
-  documents: number;
-  sessions: number;
-  avg: number | null;
-}
-
-interface TimelineEntry {
-  date: string;
-  label: string;
-  percentage: number;
-  mode: string;
-}
-
-interface ConceptStat {
-  notion: string;
-  mastery: number;
-  attempts: number;
-  correct: number;
-  lastSeen: string;
-}
-
-interface Recommendation {
-  id: string;
-  notion: string;
-  reason: string;
-  priority: number;
-  status: string;
-  createdAt: string;
-}
-
-interface RecentSession {
-  id: string;
-  title: string;
-  mode: string;
-  status: string;
-  percentage: number | null;
-  score: number | null;
-  maxScore: number | null;
-  startedAt: string;
-  subject: { name: string; color: string } | null;
-}
-
-interface AiStats {
-  calls: number;
-  errors: number;
-}
-
-interface ExamResult {
-  id: string;
-  title: string;
-  percentage: number | null;
-  finishedAt: string | null;
-}
-
-interface Stats {
-  counts: StatsCounts;
-  overallAvg: number | null;
-  bySubject: SubjectStat[];
-  timeline: TimelineEntry[];
-  workMinutes: number;
-  conceptStats: ConceptStat[];
-  recommendations: Recommendation[];
-  recentSessions: RecentSession[];
-  ai: AiStats;
-  examResults: ExamResult[];
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-const MODE_LABELS: Record<string, string> = {
-  apprentissage: "Apprentissage",
-  entrainement: "Entraînement",
-  examen: "Examen",
-  revision: "Révision ciblée",
-  personnalise: "Personnalisé",
+const errText = (e: unknown, fb: string) => (e instanceof Error ? e.message : fb);
+const ago = (d: string | null) => {
+  if (!d) return "";
+  const days = Math.floor((Date.now() - new Date(d).getTime()) / 86_400_000);
+  return days <= 0 ? "aujourd'hui" : days === 1 ? "hier" : `il y a ${days} jours`;
 };
-
-const dateFormatter = new Intl.DateTimeFormat("fr-FR", {
-  dateStyle: "medium",
-  timeStyle: "short",
-});
-
-function formatDateTime(value: string): string {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return dateFormatter.format(parsed);
-}
-
-function clampPercent(value: number): number {
-  return Math.min(100, Math.max(0, value));
-}
-
-function truncateText(value: string, maxLength: number): string {
-  return value.length > maxLength ? `${value.slice(0, maxLength)}…` : value;
-}
-
-type BadgeVariant = "default" | "secondary" | "destructive" | "outline";
-
-interface StatusBadgeInfo {
-  label: string;
-  variant: BadgeVariant;
-}
-
-function sessionStatusBadge(status: string, percentage: number | null): StatusBadgeInfo {
-  if (status === "IN_PROGRESS") return { label: "En cours", variant: "secondary" };
-  if (status === "SUBMITTED") return { label: "Soumise", variant: "outline" };
-  if (status === "GRADED") {
-    const pct = percentage ?? 0;
-    const label = `${Math.round(pct)} %`;
-    if (pct >= 60) return { label, variant: "default" };
-    if (pct < 40) return { label, variant: "destructive" };
-    return { label, variant: "outline" };
-  }
-  return { label: status, variant: "outline" };
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Sous-composants
-// ─────────────────────────────────────────────────────────────────────────────
-
-function KpiCard({
-  icon: Icon,
-  value,
-  label,
-  badge,
-}: {
-  icon: LucideIcon;
-  value: string;
-  label: string;
-  badge?: ReactNode;
-}) {
-  return (
-    <Card>
-      <CardContent className="flex items-center gap-3 p-4">
-        <span
-          className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted"
-          aria-hidden="true"
-        >
-          <Icon className="size-5 text-muted-foreground" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="tnum truncate text-2xl font-bold leading-tight">{value}</p>
-          <p className="typo-meta truncate">{label}</p>
-        </div>
-        {badge}
-      </CardContent>
-    </Card>
-  );
-}
-
-function DashboardSkeleton() {
-  return (
-    <div className="space-y-6" aria-hidden="true">
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {[0, 1, 2, 3].map((index) => (
-          <Card key={index}>
-            <CardContent className="flex items-center gap-3 p-4">
-              <Skeleton className="size-10 rounded-lg" />
-              <div className="flex-1 space-y-2">
-                <Skeleton className="h-7 w-14" />
-                <Skeleton className="h-3 w-24" />
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-      <Card>
-        <CardContent className="space-y-3 p-6">
-          <Skeleton className="h-4 w-44" />
-          <Skeleton className="h-12 w-full" />
-          <Skeleton className="h-12 w-full" />
-          <Skeleton className="h-12 w-full" />
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent className="space-y-3 p-6">
-          <Skeleton className="h-4 w-44" />
-          <Skeleton className="h-14 w-full" />
-          <Skeleton className="h-14 w-full" />
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Vue Tableau de bord
-// ─────────────────────────────────────────────────────────────────────────────
+const KIND_LABEL: Record<string, string> = { exercise: "Exercice", lab_code: "Code", lab_sql: "SQL" };
 
 export default function DashboardView() {
-  const [stats, setStats] = useState<Stats | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [refreshCounter, setRefreshCounter] = useState(0);
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const load = useCallback(async () => {
     try {
-      const data = await api.get<Stats>("/api/stats");
-      setStats(data);
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Impossible de charger les statistiques."
-      );
-    } finally {
-      setLoading(false);
+      setData(await api.get<DashboardData>("/api/dashboard"));
+      setError(null);
+    } catch (e) {
+      setError(errText(e, "Chargement impossible."));
     }
   }, []);
-
   useEffect(() => {
-    void fetchData();
-  }, [fetchData, refreshCounter]);
+    void load();
+  }, [load]);
 
-  const isEmpty =
-    stats !== null &&
-    stats.counts.subjects === 0 &&
-    stats.counts.documents === 0 &&
-    stats.counts.sessionsTotal === 0;
+  async function dismiss(r: Recommendation) {
+    try {
+      await api.patch(`/api/recommendations/${r.id}`, { status: "DISMISSED" });
+      void load();
+    } catch (e) {
+      setError(errText(e, "Action impossible."));
+    }
+  }
+
+  if (error && !data) {
+    return (
+      <div className="mx-auto max-w-xl px-4 py-16 text-center">
+        <h1 className="typo-h2">Tableau de bord indisponible</h1>
+        <p className="typo-subtitle mt-2">{error}</p>
+        <Button className="mt-6" variant="outline" onClick={() => void load()}>Réessayer</Button>
+      </div>
+    );
+  }
+  if (!data) {
+    return (
+      <div className="mx-auto w-full max-w-6xl space-y-4 px-4 py-6 sm:px-6" aria-busy>
+        <Skeleton className="h-9 w-64" />
+        <Skeleton className="h-36 rounded-xl" />
+        <div className="grid gap-4 md:grid-cols-2"><Skeleton className="h-44 rounded-xl" /><Skeleton className="h-44 rounded-xl" /></div>
+      </div>
+    );
+  }
+
+  if (!data.hasData) {
+    return (
+      <div className="mx-auto max-w-xl px-4 py-16 text-center">
+        <GraduationCap className="mx-auto h-10 w-10 text-muted-foreground" aria-hidden />
+        <h1 className="typo-h2 mt-3">Bienvenue sur StudyForge</h1>
+        <p className="typo-subtitle mt-2">Créez votre première matière et importez-y vos cours : le tableau de bord se construira avec votre travail réel.</p>
+        <Button asChild className="mt-6"><Link href={routes.subjects}>Créer une matière</Link></Button>
+      </div>
+    );
+  }
+
+  const next = data.next;
+  const nextHref = next ? recommendationHref(next) : null;
+  const others = data.recommendations.filter((r) => r.id !== next?.id);
 
   return (
-    <section className="mx-auto w-full max-w-6xl space-y-6 px-4 py-6 sm:px-6 lg:py-8" aria-labelledby="dashboard-title">
-      <div>
-        <h1 id="dashboard-title" className="typo-h1">
-          Tableau de bord
-        </h1>
-        <p className="typo-subtitle">Vue d&apos;ensemble de votre apprentissage</p>
+    <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6">
+      <h1 className="typo-h1">Tableau de bord</h1>
+
+      <section aria-label="Prochaine activité" className="mt-4 rounded-xl border bg-card p-5">
+        <h2 className="typo-h3 mb-3">Quelle prochaine activité ?</h2>
+        {!data.resume && !next ? (
+          <p className="typo-subtitle">Rien de particulier à faire. Ouvrez un cours, faites un exercice ou un laboratoire : des suggestions apparaîtront selon vos résultats réels.</p>
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2">
+            {data.resume && (
+              <div className="rounded-lg border p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Reprendre là où vous en étiez</p>
+                <p className="mt-1 font-medium">{data.resume.title}</p>
+                <p className="text-xs text-muted-foreground">{data.resume.type === "READING" ? "Lecture" : data.resume.type === "EXERCISE" ? "Exercice" : "Laboratoire"} · {ago(data.resume.updatedAt)}</p>
+                {data.resume.href && <Button asChild className="mt-3 gap-2"><Link href={data.resume.href}><Play className="h-4 w-4" aria-hidden /> Reprendre</Link></Button>}
+              </div>
+            )}
+            {next && (
+              <div className="rounded-lg border border-primary/40 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Suggestion</p>
+                <p className="mt-1 font-medium">{next.title}</p>
+                <p className="mt-1 text-sm text-muted-foreground">{next.text}</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {nextHref && <Button asChild className="gap-2"><Link href={nextHref}>{ACTION_LABEL[next.type]} <ArrowRight className="h-4 w-4" aria-hidden /></Link></Button>}
+                  <Button variant="ghost" onClick={() => void dismiss(next)}>Pas maintenant</Button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+
+      <div className="mt-5 grid gap-5 lg:grid-cols-3">
+        <section aria-label="Où j'en suis" className="lg:col-span-2">
+          <h2 className="typo-h3 mb-2">Où j&apos;en suis ?</h2>
+          <ul className="space-y-3">
+            {data.subjects.map((s) => (
+              <li key={s.id} className="rounded-xl border bg-card p-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="h-3 w-3 rounded-full" style={{ backgroundColor: s.color }} aria-hidden />
+                  <Link href={routes.subject(s.id)} className="font-medium hover:underline">{s.name}</Link>
+                  <span className="ml-auto text-xs text-muted-foreground">{s.documents} fichier(s) · {s.exercises} exercice(s) · {s.notes} note(s)</span>
+                </div>
+                {s.mastery === null ? (
+                  <p className="mt-2 text-sm text-muted-foreground">{s.concepts.total === 0 ? "Aucune notion identifiée : analysez un cours pour suivre votre maîtrise." : `Pas assez de données : ${s.concepts.total} notion(s) identifiée(s), aucune mesurée. Faites un exercice sur ce cours.`}</p>
+                ) : (
+                  <div className="mt-2">
+                    <div className="flex items-center gap-3">
+                      <Progress value={s.mastery * 100} className="h-2 flex-1" aria-label={`Maîtrise estimée de ${s.name}`} />
+                      <span className="w-14 text-right text-sm font-semibold">{pct(s.mastery)}</span>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Maîtrise estimée sur {s.concepts.measured} notion(s) mesurée(s) sur {s.concepts.total} (confiance {pct(s.confidence)}) · {s.concepts.fragile} fragile(s) · {s.concepts.solid} solide(s). Ce n&apos;est pas une note.
+                    </p>
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        <aside className="space-y-5">
+          <section aria-label="À surveiller">
+            <h2 className="typo-h3 mb-2">Qu&apos;est-ce qui demande mon attention ?</h2>
+            {data.attention.length === 0 ? (
+              <p className="rounded-xl border bg-card p-4 text-sm text-muted-foreground">Rien d&apos;urgent.</p>
+            ) : (
+              <ul className="space-y-2">
+                {data.attention.map((a, i) => (
+                  <li key={i} className="flex gap-2 rounded-xl border bg-card p-3 text-sm">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" aria-hidden />
+                    <span>{a.href ? <Link href={a.href} className="hover:underline">{a.text}</Link> : a.text}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+          {others.length > 0 && (
+            <section aria-label="Autres suggestions">
+              <h2 className="typo-h3 mb-2">Autres suggestions</h2>
+              <ul className="space-y-2">
+                {others.map((r) => {
+                  const href = recommendationHref(r);
+                  return (
+                    <li key={r.id} className="rounded-xl border bg-card p-3 text-sm">
+                      <p className="font-medium">{r.title}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">{r.text}</p>
+                      <div className="mt-2 flex gap-2">
+                        {href && <Button asChild size="sm" variant="outline"><Link href={href}>{ACTION_LABEL[r.type]}</Link></Button>}
+                        <Button size="sm" variant="ghost" onClick={() => void dismiss(r)}>Écarter</Button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          )}
+        </aside>
       </div>
 
-      {error ? (
-        <Alert variant="destructive">
-          <AlertTriangle className="size-4" aria-hidden="true" />
-          <AlertTitle>Erreur de chargement</AlertTitle>
-          <AlertDescription className="flex flex-col items-start gap-3">
-            <span>{error}</span>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setRefreshCounter((c) => c + 1)}
-            >
-              <RefreshCw className="size-4" aria-hidden="true" />
-              Réessayer
-            </Button>
-          </AlertDescription>
-        </Alert>
-      ) : loading || !stats ? (
-        <DashboardSkeleton />
-      ) : isEmpty ? (
-        <Card>
-          <CardHeader>
-            <div className="flex items-center gap-3">
-              <span
-                className="flex size-11 shrink-0 items-center justify-center rounded-lg bg-primary/10"
-                aria-hidden="true"
-              >
-                <GraduationCap className="size-6 text-primary" />
-              </span>
-              <CardTitle className="typo-h2">Bienvenue sur StudyForge AI</CardTitle>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-5">
-            <ol className="typo-subtitle space-y-2">
-              <li>1. Importez un cours dans la Bibliothèque.</li>
-              <li>2. Générez des exercices personnalisés.</li>
-              <li>3. Suivez votre progression.</li>
-            </ol>
-            <Button asChild>
-              <Link href={routes.subjects}>Aller à Mes matières</Link>
-            </Button>
-          </CardContent>
-        </Card>
-      ) : (
-        <>
-          {/* Indicateurs clés */}
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <KpiCard icon={Layers} value={String(stats.counts.subjects)} label="Matières" />
-            <KpiCard
-              icon={FileText}
-              value={`${stats.counts.documentsReady}/${stats.counts.documents}`}
-              label="Documents"
-              badge={
-                stats.counts.documentsError > 0 ? (
-                  <Badge variant="destructive">
-                    erreur : {stats.counts.documentsError}
-                  </Badge>
-                ) : undefined
-              }
-            />
-            <KpiCard
-              icon={ClipboardCheck}
-              value={`${stats.counts.sessionsGraded}/${stats.counts.sessionsTotal}`}
-              label="Sessions corrigées"
-            />
-            <KpiCard
-              icon={TrendingUp}
-              value={stats.overallAvg === null ? "—" : `${Math.round(stats.overallAvg)} %`}
-              label="Moyenne générale"
-            />
-          </div>
-
-          <Card>
-            <CardContent className="flex items-center gap-3 p-4">
-              <span
-                className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted"
-                aria-hidden="true"
-              >
-                <Timer className="size-5 text-muted-foreground" />
-              </span>
-              <div>
-                <p className="tnum text-2xl font-bold leading-tight">
-                  {stats.workMinutes} min
-                </p>
-                <p className="typo-meta">Temps de travail cumulé</p>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Recommandations */}
-          {stats.recommendations.length > 0 && (
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between gap-4">
-                <div className="flex min-w-0 items-center gap-3">
-                  <span
-                    className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted"
-                    aria-hidden="true"
-                  >
-                    <Lightbulb className="size-4 text-muted-foreground" />
-                  </span>
-                  <CardTitle className="typo-h3">Recommandations d&apos;étude</CardTitle>
-                </div>
-                <Button size="sm" variant="outline" asChild>
-                  <Link href={routes.progress}>Voir la progression</Link>
-                </Button>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                {stats.recommendations.map((rec) => (
-                  <Link
-                    key={rec.id}
-                    href={routes.progress}
-                    className="flex w-full items-start gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    <div className="min-w-0 flex-1 space-y-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Badge variant={rec.priority > 0.75 ? "destructive" : "secondary"}>
-                          {rec.priority > 0.75 ? "Priorité haute" : "Priorité normale"}
-                        </Badge>
-                        <span className="text-sm font-medium">{rec.notion}</span>
-                      </div>
-                      <p className="typo-subtitle">{rec.reason}</p>
-                    </div>
-                  </Link>
-                ))}
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Sessions récentes */}
-          {stats.recentSessions.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="typo-h3">Sessions récentes</CardTitle>
-                <CardDescription className="typo-subtitle">
-                  Vos dernières sessions d&apos;exercices, cliquez pour les rouvrir
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="max-h-96 space-y-2 overflow-y-auto pr-1">
-                  {stats.recentSessions.map((session) => {
-                    const statusBadge = sessionStatusBadge(session.status, session.percentage);
-                    return (
-                      <Link
-                        key={session.id}
-                        href={routes.session(session.id)}
-                        className="flex w-full items-center gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      >
-                        {session.subject ? (
-                          <span
-                            className="size-2.5 shrink-0 rounded-full"
-                            style={{ backgroundColor: session.subject.color }}
-                            aria-hidden="true"
-                          />
-                        ) : (
-                          <span
-                            className="size-2.5 shrink-0 rounded-full bg-muted-foreground/40"
-                            aria-hidden="true"
-                          />
-                        )}
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-medium">
-                            {session.title}
-                          </span>
-                          <span className="typo-meta block truncate">
-                            {session.subject ? session.subject.name : "Sans matière"} ·{" "}
-                            {formatDateTime(session.startedAt)}
-                          </span>
-                        </span>
-                        <Badge variant="outline" className="shrink-0">
-                          {MODE_LABELS[session.mode] ?? session.mode}
-                        </Badge>
-                        <Badge variant={statusBadge.variant} className="tnum shrink-0">
-                          {statusBadge.label}
-                        </Badge>
-                      </Link>
-                    );
-                  })}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Répartition par matière */}
-          {stats.bySubject.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="typo-h3">Répartition par matière</CardTitle>
-                <CardDescription className="typo-subtitle">
-                  Moyenne obtenue pour chaque matière
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="max-h-96 space-y-4 overflow-y-auto pr-1">
-                  {stats.bySubject.map((subject) => {
-                    const pct = subject.avg === null ? 0 : clampPercent(subject.avg);
-                    return (
-                      <div key={subject.id} className="space-y-1.5">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="flex min-w-0 items-center gap-2">
-                            <span
-                              className="size-2.5 shrink-0 rounded-full"
-                              style={{ backgroundColor: subject.color }}
-                              aria-hidden="true"
-                            />
-                            <span className="truncate text-sm font-medium">{subject.name}</span>
-                          </span>
-                          <span className="tnum shrink-0 text-sm font-semibold">
-                            {subject.avg === null ? "—" : `${Math.round(subject.avg)} %`}
-                          </span>
-                        </div>
-                        <div className="h-2 overflow-hidden rounded-full bg-muted">
-                          <div
-                            className="h-full rounded-full transition-all"
-                            style={{ width: `${pct}%`, backgroundColor: subject.color }}
-                          />
-                        </div>
-                        <p className="typo-meta">
-                          {subject.documents} document{subject.documents > 1 ? "s" : ""} ·{" "}
-                          {subject.sessions} session{subject.sessions > 1 ? "s" : ""}
-                        </p>
-                      </div>
-                    );
-                  })}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Concepts */}
-          {stats.conceptStats.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="typo-h3">Concepts</CardTitle>
-                <CardDescription className="typo-subtitle">
-                  Niveau de maîtrise estimé par notion
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {stats.conceptStats.slice(0, 6).map((concept) => (
-                    <div key={concept.notion} className="space-y-1.5">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="truncate text-sm font-medium">{concept.notion}</span>
-                        <span className="tnum shrink-0 text-sm font-semibold">
-                          {Math.round(clampPercent(concept.mastery * 100))} %
-                        </span>
-                      </div>
-                      <Progress
-                        value={clampPercent(concept.mastery * 100)}
-                        aria-label={`Maîtrise de ${concept.notion}`}
-                      />
-                      <p className="typo-meta">
-                        {concept.attempts} tentative{concept.attempts > 1 ? "s" : ""}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-        </>
-      )}
-    </section>
+      <section aria-label="Activité récente" className="mt-6">
+        <h2 className="typo-h3 mb-2 flex items-center gap-2"><History className="h-4 w-4" aria-hidden /> Activité récente</h2>
+        {data.recent.length === 0 ? (
+          <p className="rounded-xl border bg-card p-4 text-sm text-muted-foreground">Aucune activité pour l&apos;instant.</p>
+        ) : (
+          <ul className="divide-y rounded-xl border bg-card">
+            {data.recent.map((r, i) => (
+              <li key={i}>
+                <Link href={r.href ?? "#"} className="flex items-center gap-3 px-4 py-3 text-sm hover:bg-muted/50">
+                  {r.kind === "exercise" ? <BookOpen className="h-4 w-4 text-muted-foreground" aria-hidden /> : <FlaskConical className="h-4 w-4 text-muted-foreground" aria-hidden />}
+                  <span className="font-medium">{r.title}</span>
+                  <span className="text-xs text-muted-foreground">{KIND_LABEL[r.kind]} · {ago(r.at)}</span>
+                  {r.detail && <span className="ml-auto font-semibold">{r.detail}</span>}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+      {error && <Alert variant="destructive" className="mt-4"><AlertTitle>Erreur</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
+    </div>
   );
 }

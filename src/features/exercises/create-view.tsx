@@ -25,7 +25,7 @@ const HINT: Partial<Record<QuestionType, string>> = {
   practical: "À proposer seulement si le cours contient des exercices ou des procédures.",
 };
 
-export default function CreateExerciseView({ subjectId, documentId }: { subjectId: string; documentId: string | null }) {
+export default function CreateExerciseView({ subjectId, documentId, presetConcepts = [] }: { subjectId: string; documentId: string | null; presetConcepts?: string[] }) {
   const router = useRouter();
   const [opts, setOpts] = useState<ExerciseOptions | null>(null);
   const [error, setError] = useState<{ message: string; status?: number } | null>(null);
@@ -49,8 +49,16 @@ export default function CreateExerciseView({ subjectId, documentId }: { subjectI
       .then((o) => {
         if (o.document.subjectId !== subjectId) throw Object.assign(new Error("Document introuvable."), { status: 404 });
         setOpts(o);
+        // Suggestion de la progression : notions préchoisies (uniquement celles réellement présentes dans l'analyse)
+        const valid = presetConcepts.filter((id) => o.concepts.some((c) => c.id === id));
+        if (valid.length) {
+          setCoverage("concepts");
+          setConceptIds(new Set(valid));
+          setCount("5");
+        }
       })
       .catch((e) => setError({ message: errText(e, "Chargement impossible."), status: (e as { status?: number }).status }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentId, subjectId]);
 
   const total = scale === "custom" ? Number(custom.replace(",", ".")) : Number(scale);

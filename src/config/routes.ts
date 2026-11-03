@@ -4,7 +4,6 @@ export const routes = {
   subjects: "/matieres",
   subject: (id: string) => `/matieres/${id}` as const,
   exercises: "/exercices",
-  session: (id: string) => `/sessions/${id}` as const,
   code: "/code",
   sql: "/sql",
   progress: "/progression",

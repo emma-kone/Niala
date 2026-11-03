@@ -165,7 +165,7 @@ export async function generateExercise(userId: string, rawConfig: unknown) {
       let conceptIds = config.coverage.conceptIds ?? [];
       if (config.coverage.mode === "hard") {
         const sources = await db.conceptSource.findMany({ where: { analysisId: analysis.id, userId }, include: { concept: { include: { mastery: true } } } });
-        const weak = sources.filter((s) => s.concept.mastery && s.concept.mastery.level < 0.5);
+        const weak = sources.filter((s) => s.concept.mastery && s.concept.mastery.confidence >= 0.35 && s.concept.mastery.level < 0.5);
         const pool = weak.length ? weak : sources.filter((s) => s.concept.importance === 3);
         conceptIds = [...new Set(pool.map((s) => s.conceptId))];
         if (conceptIds.length === 0) throw new ApiHttpError("Aucune notion difficile ou principale n'a été identifiée pour ce document.", 409);
