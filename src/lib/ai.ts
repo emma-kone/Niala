@@ -1,14 +1,16 @@
 import { db } from "@/lib/db";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Couche d'abstraction IA Hybride (Google Gemini + OpenRouter avec Fallback auto)
-// - Google Gemini (fournisseur principal avec retry automatique sur saturation)
-// - OpenRouter (secours et modèles complémentaires)
+// Couche d'abstraction IA Hybride (Anthropic + Google Gemini + OpenRouter)
+// - Anthropic Claude Sonnet 5.5 (fournisseur principal, retry sur saturation)
+// - Google Gemini puis OpenRouter (secours)
 // - Bascule automatique transparente en cas d'indisponibilité
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type AiOp = "analysis" | "rag" | "generation" | "grading" | "explain" | "revision";
-export type AiProvider = "gemini" | "openrouter";
+export type AiProvider = "anthropic" | "gemini" | "openrouter";
+
+const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5-5";
 
 interface CompletionResult {
   ok: boolean;
@@ -159,6 +161,89 @@ async function callOpenRouter(
   }
 }
 
+// ── Appel Anthropic (Claude Sonnet 5.5, fournisseur principal) ───────────────
+async function callAnthropic(
+  systemPrompt: string,
+  userPrompt: string,
+  opts: { model?: string; timeoutMs?: number; temperature?: number; json?: boolean } = {}
+): Promise<{ ok: boolean; content: string; model: string; error?: string }> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return { ok: false, content: "", model: "anthropic", error: "ANTHROPIC_API_KEY manquante." };
+  }
+
+  // On n'accepte qu'un identifiant Claude : un nom Gemini/OpenRouter ne doit pas arriver ici.
+  const requested = opts.model?.startsWith("claude") ? opts.model : undefined;
+  const model = requested || process.env.ANTHROPIC_MODEL || DEFAULT_ANTHROPIC_MODEL;
+  const timeout = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+
+  // Pas de mode JSON natif : on le demande explicitement dans le system prompt.
+  const system = opts.json
+    ? `${systemPrompt}\n\nRéponds UNIQUEMENT avec un JSON valide, sans texte autour ni bloc de code.`.trim()
+    : systemPrompt;
+
+  const bodyPayload: Record<string, unknown> = {
+    model,
+    max_tokens: 8192,
+    temperature: opts.temperature ?? 0.3,
+    messages: [{ role: "user", content: userPrompt }],
+    ...(system.trim() ? { system } : {}),
+  };
+
+  const maxRetries = 2;
+  let lastError = "";
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      if (attempt > 0) {
+        await new Promise((resolve) => setTimeout(resolve, attempt * 1500));
+        console.warn(`[Anthropic] Nouvelle tentative (${attempt}/${maxRetries}) suite à saturation...`);
+      }
+
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey.trim(),
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify(bodyPayload),
+        signal: AbortSignal.timeout(timeout),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => null);
+        const msg = errData?.error?.message || `Erreur Anthropic (${res.status} ${res.statusText})`;
+        lastError = msg;
+
+        // 429 / 5xx / 529 (overloaded) : erreurs temporaires, on retente
+        const isTemporary = res.status === 429 || res.status >= 500;
+        if (isTemporary && attempt < maxRetries) continue;
+
+        return { ok: false, content: "", model, error: msg };
+      }
+
+      const data = await res.json();
+      const content: string = Array.isArray(data.content)
+        ? data.content
+            .filter((b: { type: string }) => b.type === "text")
+            .map((b: { text: string }) => b.text)
+            .join("")
+        : "";
+      if (!content.trim()) {
+        return { ok: false, content: "", model, error: "Réponse vide d'Anthropic." };
+      }
+
+      return { ok: true, content, model: data.model || model };
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : "Erreur réseau inconnue";
+      if (attempt < maxRetries) continue;
+    }
+  }
+
+  return { ok: false, content: "", model, error: lastError || "Échec de l'appel Anthropic" };
+}
+
 async function invokeProvider(
   provider: AiProvider,
   systemPrompt: string,
@@ -166,6 +251,8 @@ async function invokeProvider(
   opts: { model?: string; timeoutMs?: number; temperature?: number; json?: boolean } = {}
 ): Promise<{ ok: boolean; content: string; model: string; error?: string }> {
   switch (provider) {
+    case "anthropic":
+      return callAnthropic(systemPrompt, userPrompt, opts);
     case "gemini":
       return callGemini(systemPrompt, userPrompt, opts);
     case "openrouter":
@@ -183,12 +270,14 @@ async function callModel(
   const started = Date.now();
   const promptChars = systemPrompt.length + userPrompt.length;
 
-  const preferred = (process.env.AI_PROVIDER || "gemini").toLowerCase() as AiProvider;
+  const preferred = (process.env.AI_PROVIDER || "anthropic").toLowerCase() as AiProvider;
+  const hasAnthropic = Boolean(process.env.ANTHROPIC_API_KEY);
   const hasGemini = Boolean(process.env.GEMINI_API_KEY);
   const hasOpenRouter = Boolean(process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY);
 
-  const allProviders: AiProvider[] = ["gemini", "openrouter"];
+  const allProviders: AiProvider[] = ["anthropic", "gemini", "openrouter"];
   const isAvailable = (p: AiProvider) => {
+    if (p === "anthropic") return hasAnthropic;
     if (p === "gemini") return hasGemini;
     if (p === "openrouter") return hasOpenRouter;
     return false;
@@ -200,7 +289,7 @@ async function callModel(
   ].filter(isAvailable);
 
   if (candidateChain.length === 0) {
-    const err = "Aucune clé d'API configurée (définissez GEMINI_API_KEY ou OPENROUTER_API_KEY).";
+    const err = "Aucune clé d'API configurée (définissez ANTHROPIC_API_KEY, GEMINI_API_KEY ou OPENROUTER_API_KEY).";
     await log(op, opts.userId, "none", promptChars, 0, false, err, Date.now() - started);
     return { ok: false, content: "", error: err };
   }
