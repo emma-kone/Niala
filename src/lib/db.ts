@@ -7,7 +7,7 @@ const globalForPrisma = globalThis as unknown as {
 export const db =
   globalForPrisma.prisma ??
   new PrismaClient(
-    process.env.NODE_ENV !== 'production' ? { log: ['query'] } : undefined,
+    process.env.PRISMA_LOG_QUERIES ? { log: ['query'] } : undefined,
   )
 
 // Always assign to globalForPrisma so that the singleton is preserved across

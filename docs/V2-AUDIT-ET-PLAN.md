@@ -144,3 +144,18 @@ Règle : l'IA propose, le serveur valide (citations retrouvées dans les chunks,
 **Phase 1 — terminée** : schéma V2 (25 modèles, 14 enums), 4 migrations testées sur PGlite (voir `docs/MIGRATION.md`). **Aucune migration n'a été appliquée à votre base Supabase.** Les modèles V1 en collision de nom sont `Legacy*` ; le code V1 pointe dessus (`db.legacyExercise`…) et fonctionne comme avant.
 
 **Fonctionnalités V2 utilisateur** : aucune pour l'instant (phases 2 à 10).
+
+**Phase 2 — terminée** (matières, dossiers, import, versions). Vérifiée : 37 tests verts (dont 12 d'intégration sur Prisma + PGlite), `tsc` et `next build` OK, parcours réel dans le navigateur (création de matière et de dossier, import d'un vrai PDF et d'un Markdown, refus d'un `.exe` et d'un faux PDF, recherche dans le contenu, déplacement groupé, restitution octet pour octet de l'original) et test HTTP d'isolation entre deux comptes (tous les accès croisés renvoient 404, anonyme 401).
+- Dossiers libres et récursifs (créer, renommer, déplacer, sous-dossiers, supprimer récursivement avec les fichiers), cycles et profondeur refusés, noms uniques par dossier.
+- Import en 3 temps (préparation → dépôt → contrôle de signature, empreinte SHA-256, extraction, indexation par page avec décalages). L'original est stocké tel quel ; états de traitement visibles (Prêt, Partiel, Sans texte, Échec).
+- Recherche (nom, et contenu indexé), filtre par type, tri, propriétés, téléchargement.
+- Le chapitre obligatoire a disparu : `library-view`, `chapter-reader` et `/api/chapters` sont supprimés (`/bibliotheque` redirige vers `/matieres`). La génération d'exercices V1 reste alimentée par une écriture de compatibilité (`Document.extractedText`, `LegacyDocumentChunk`), retirée en phase 7.
+- Supprimer une matière supprime désormais aussi ses documents et leurs originaux.
+
+Limites connues de la phase 2 :
+- Le stockage Supabase est implémenté mais **non testé ici** (pas de `SUPABASE_SERVICE_ROLE_KEY` dans le projet) ; le stockage local (`./storage`) est testé. Sur Vercel, définir `SUPABASE_SERVICE_ROLE_KEY` (bucket privé `documents` créé automatiquement) est obligatoire.
+- Un import interrompu avant la finalisation laisse un document « En attente » visible et supprimable ; pas de nettoyage automatique.
+- Pas de glisser-déposer pour déplacer (déplacement par dialogue) ; pas de déplacement entre matières ; pas encore de lecteur : « Ouvrir l'original » ouvre le fichier brut dans un onglet (le lecteur est la phase 3).
+- Le contrôle de doublon est un avertissement (même empreinte dans la matière), jamais un blocage.
+
+Développement local sans Supabase : `node scripts/dev-db.mjs` (PGlite, port 5433) puis `node scripts/dev-local.mjs` (port 3100).

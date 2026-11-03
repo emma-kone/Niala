@@ -1,8 +1,8 @@
 export const routes = {
   home: "/",
   login: "/login",
-  library: "/bibliotheque",
-  chapterReader: (chapterId: string) => `/bibliotheque/${chapterId}` as const,
+  subjects: "/matieres",
+  subject: (id: string) => `/matieres/${id}` as const,
   generate: "/generer",
   session: (id: string) => `/sessions/${id}` as const,
   code: "/code",

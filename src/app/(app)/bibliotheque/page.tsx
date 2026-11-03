@@ -1,5 +1,7 @@
-import LibraryView from "@/features/library/library-view";
+import { redirect } from "next/navigation";
+import { routes } from "@/config/routes";
 
-export default function LibraryPage() {
-  return <LibraryView />;
+// Ancienne adresse : la bibliothèque à chapitres a été remplacée par « Mes matières ».
+export default function LegacyLibraryPage() {
+  redirect(routes.subjects);
 }

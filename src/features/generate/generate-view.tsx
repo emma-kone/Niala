@@ -405,10 +405,10 @@ export default function GenerateView() {
                           size="sm"
                           variant="outline"
                           className="gap-1.5"
-                          onClick={() => router.push(routes.library)}
+                          onClick={() => router.push(routes.subjects)}
                         >
                           <BookOpen className="h-3.5 w-3.5" aria-hidden />
-                          Aller à la Bibliothèque
+                          Aller à Mes matières
                         </Button>
                       </AlertDescription>
                     </Alert>

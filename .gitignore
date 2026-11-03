@@ -43,3 +43,7 @@ yarn-error.log*
 # IDE / tools
 local-*
 node_modules
+
+# base locale PGlite
+/.pglite/
+/storage/

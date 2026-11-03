@@ -316,7 +316,7 @@ export default function DashboardView() {
               <li>3. Suivez votre progression.</li>
             </ol>
             <Button asChild>
-              <Link href={routes.library}>Aller à la Bibliothèque</Link>
+              <Link href={routes.subjects}>Aller à Mes matières</Link>
             </Button>
           </CardContent>
         </Card>

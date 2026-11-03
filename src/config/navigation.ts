@@ -20,7 +20,7 @@ export interface NavItem {
 
 export const APP_NAV: NavItem[] = [
   { href: routes.home, label: "Tableau de bord", icon: Home, match: "exact" },
-  { href: routes.library, label: "Bibliothèque", icon: BookOpen, match: "prefix" },
+  { href: routes.subjects, label: "Mes matières", icon: BookOpen, match: "prefix" },
   {
     href: routes.generate,
     label: "Générer des exercices",
