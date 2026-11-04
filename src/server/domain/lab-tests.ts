@@ -222,8 +222,8 @@ export function summarize(outcomes: TestOutcome[]): TestSummary {
 
 // ── Classification des erreurs ───────────────────────────────────────────────
 /** Catégories de la base (ErrorCategory) ; `kind` précise la nature observée. */
-export type Category = "SYNTAX" | "LOGIC" | "CONCEPT" | "METHOD" | "INSTRUCTION" | "FORGETTING" | "CARELESS";
-export type DiagnosisKind = "syntax" | "runtime" | "timeout" | "wrong_output" | "edge_case" | "format" | "instructions" | "schema_name" | "partial";
+export type Category = "SYNTAX" | "LOGIC" | "CONCEPT" | "METHOD" | "INSTRUCTION" | "FORGETTING" | "CARELESS" | "ALGORITHM" | "ENVIRONMENT";
+export type DiagnosisKind = "syntax" | "runtime" | "timeout" | "wrong_output" | "edge_case" | "format" | "instructions" | "schema_name" | "partial" | "sql_where_having" | "sql_null_comparison" | "environment";
 
 export interface Diagnosis {
   category: Category;

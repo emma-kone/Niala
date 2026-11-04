@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { ApiHttpError } from "@/lib/api-helpers";
 import type { QuestionType } from "@/server/domain/exercise-model";
 import { gradeAnswer } from "./evaluation";
+import { loadHistory, recordDiagnosis } from "@/server/diagnosis/record";
 import { refreshProgress } from "@/server/services/progress/progress";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -214,6 +215,27 @@ async function gradePositions(userId: string, a: Awaited<ReturnType<typeof owned
     if (diagnoses.length) {
       await db.errorDiagnosis.createMany({
         data: diagnoses.map((d) => ({ userId, answerId: saved.id, conceptId: q.concepts[0]?.id ?? null, category: d.category, confidence: d.confidence, evidence: { source: "tests", kind: d.kind, label: d.label, tests: d.tests, questionPosition: q.position } as unknown as Prisma.InputJsonValue })),
+      });
+    }
+    // Diagnostic unifié des questions de code et de SQL exécutées (les autres types viendront avec leur analyseur).
+    await db.diagnosisReport.deleteMany({ where: { userId, answerId: saved.id } });
+    if ((q.type === "code" || q.type === "sql") && g.detail?.executed) {
+      const summary = g.detail.summary as { passed: number; total: number; edgePassed: number; edgeTotal: number } | undefined;
+      await recordDiagnosis({
+        userId,
+        activity: q.type === "sql" ? "SQL" : "CODE",
+        answerId: saved.id,
+        subjectId: snap.exercise.subjectId,
+        language: String(q.payload.language ?? (q.type === "sql" ? "sql" : "")),
+        engine: {
+          activity: q.type === "sql" ? "SQL" : "CODE",
+          language: String(q.payload.language ?? ""),
+          status: g.verdict === "correct" ? "pass" : "fail",
+          diagnoses: diagnoses as never,
+          tests: summary ? { passed: summary.passed, total: summary.total, edgePassed: summary.edgePassed, edgeTotal: summary.edgeTotal } : undefined,
+          concepts: q.concepts.map((c) => ({ id: c.id, name: c.name })),
+        },
+        history: (category) => loadHistory({ userId, category, conceptId: q.concepts[0]?.id ?? null, excludeAnswerId: saved.id }),
       });
     }
   }

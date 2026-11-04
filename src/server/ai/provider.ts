@@ -55,6 +55,8 @@ export interface AiProvider {
   complete(req: CompletionRequest): Promise<CompletionResult>;
   /** Conversation à plusieurs tours avec appels d'outils (Gemini uniquement). */
   converse?(req: ConverseRequest): Promise<ConverseResult>;
+  /** Lecture d'une image par le modèle (vision) : texte, code et légendes transcrits. Gemini uniquement. */
+  readImage?(bytes: Uint8Array, mime: string, signal: AbortSignal): Promise<string>;
   /** Vecteurs sémantiques normalisés (Gemini uniquement). */
   embed?(texts: string[], task: "document" | "query", signal: AbortSignal): Promise<number[][]>;
 }
@@ -159,6 +161,19 @@ export function geminiProvider(apiKey: string, model: string, embeddingModel = D
       const text = textOf(parts as { text?: string; thought?: boolean }[]);
       if (!calls.length && !text.trim()) throw new AiCallError(data.promptFeedback?.blockReason ? "Contenu refusé par le modèle." : "Réponse vide.");
       return { text, calls, modelParts: parts, model: data.modelVersion ?? model };
+    },
+    async readImage(bytes, mime, signal) {
+      const data = await geminiPost(
+        apiKey,
+        `${encodeURIComponent(model)}:generateContent`,
+        {
+          systemInstruction: { parts: [{ text: "Tu transcris des images de cours pour un étudiant. Transcris FIDÈLEMENT tout le texte visible (titres, paragraphes, code, formules écrites en texte, légendes, tableaux sous forme de lignes). Décris en une phrase chaque schéma ou figure sans interpréter au-delà de ce qui est visible. N'invente rien : si une zone est illisible, écris [illisible]. Ne réponds avec rien d'autre que la transcription." }] },
+          contents: [{ role: "user", parts: [{ inlineData: { mimeType: mime, data: Buffer.from(bytes).toString("base64") } }, { text: "Transcris cette image." }] }],
+          generationConfig: { maxOutputTokens: 8000, temperature: 0 },
+        },
+        signal
+      );
+      return textOf(data.candidates?.[0]?.content?.parts);
     },
     async embed(texts, task, signal) {
       const out: number[][] = [];

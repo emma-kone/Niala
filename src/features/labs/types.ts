@@ -104,6 +104,42 @@ export interface RunDto {
   output: RunOutput;
   tests: TestsBlock | null;
   diagnoses: Diagnosis[];
+  report?: DiagnosisReportDto | null;
+}
+
+export interface DiagnosisReportDto {
+  id: string;
+  state: "NONE" | "DETERMINED" | "UNCERTAIN";
+  primary: string | null;
+  secondary: string[];
+  summary: string;
+  evidence: string[];
+  prerequisites: { name: string; reason: string }[];
+  severity: "none" | "low" | "medium" | "high";
+  confidence: number;
+  pedagogical: boolean;
+  recommendedAction: string;
+  needsVerification: boolean;
+}
+
+export interface CodeProblemDto {
+  line: number;
+  column?: number;
+  severity: "error" | "warning";
+  kind: "syntax" | "structure" | "environment" | "unsupported";
+  message: string;
+  hint?: string;
+  source: string;
+}
+
+export interface CodeAnalysisDto {
+  language: string;
+  executable: boolean;
+  executableReason?: string;
+  verification: "compiler" | "form" | "none";
+  summary: "ok" | "syntax_error" | "not_executable" | "unavailable" | "empty";
+  problems: CodeProblemDto[];
+  durationMs: number;
 }
 
 export interface RunHistoryItem {
@@ -124,4 +160,6 @@ export const CATEGORY_LABEL: Record<string, string> = {
   INSTRUCTION: "Consigne",
   FORGETTING: "Oubli",
   CARELESS: "Étourderie",
+  ALGORITHM: "Algorithme",
+  ENVIRONMENT: "Environnement",
 };

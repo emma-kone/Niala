@@ -54,6 +54,7 @@ model User {
   labRuns          LabRun[]
   conversations    Conversation[]
   chatMessages     ConversationMessage[]
+  diagnosisReports DiagnosisReport[]
 }
 
 model UserSettings {
@@ -458,6 +459,8 @@ enum ErrorCategory {
   INSTRUCTION
   FORGETTING
   CARELESS
+  ALGORITHM // démarche de résolution incohérente ou incomplète
+  ENVIRONMENT // bibliothèque absente, limite d'exécution… : pas une lacune pédagogique
 }
 
 enum ActivityStatus {
@@ -891,6 +894,7 @@ model Answer {
   user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   attempt   ExerciseAttempt  @relation(fields: [attemptId], references: [id], onDelete: Cascade)
   diagnoses ErrorDiagnosis[]
+  reports   DiagnosisReport[]
 
   @@unique([attemptId, position])
   @@index([userId])
@@ -1008,6 +1012,7 @@ model LabRun {
   user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   workspace LabWorkspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   diagnoses ErrorDiagnosis[]
+  reports   DiagnosisReport[]
 
   @@index([userId])
   @@index([workspaceId, createdAt])
@@ -1061,4 +1066,49 @@ model ConversationMessage {
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   @@index([conversationId, createdAt])
+}
+
+// ─────────────────────────── Moteur de diagnostic pédagogique ───────────────────────────
+
+enum DiagnosisState {
+  NONE // aucune erreur observée
+  DETERMINED // cause établie par des preuves
+  UNCERTAIN // « impossible de déterminer précisément l'origine » : une vérification est proposée
+}
+
+/// Diagnostic structuré d'UNE tentative (réponse d'exercice ou exécution de laboratoire). Les lignes ErrorDiagnosis
+/// restent les observations par catégorie ; ce rapport est la vue normalisée, commune à toutes les activités.
+model DiagnosisReport {
+  id                String         @id @default(cuid())
+  userId            String
+  activity          String // EXERCISE | CODE | SQL
+  answerId          String?
+  labRunId          String?
+  subjectId         String?
+  language          String?
+  primary           ErrorCategory?
+  secondary         Json // ErrorCategory[]
+  state             DiagnosisState
+  summary           String
+  evidence          Json // string[] : preuves observées (jamais inventées)
+  expected          Json?
+  observed          Json?
+  concepts          Json // [{ id?, name, confidence }]
+  prerequisites     Json // notions prérequises à vérifier : [{ name, reason }]
+  severity          String // none | low | medium | high
+  confidence        Float // 0..1 : solidité des preuves
+  pedagogical       Boolean        @default(true) // false : erreur d'environnement, ne compte pas contre l'étudiant
+  recommendedAction String // none | retry | targeted_explanation | review_prerequisite | clarifying_question | check_environment | verify_understanding
+  needsVerification Boolean        @default(false)
+  source            String // tools | tools+ai
+  engineVersion     String
+  createdAt         DateTime       @default(now())
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  answer Answer? @relation(fields: [answerId], references: [id], onDelete: Cascade)
+  labRun LabRun? @relation(fields: [labRunId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([answerId])
+  @@index([labRunId])
 }

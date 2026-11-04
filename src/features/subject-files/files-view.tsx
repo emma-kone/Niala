@@ -53,7 +53,7 @@ import { SubjectTabs } from "./tabs";
 
 type Sort = "name" | "date" | "size" | "type";
 type Entry = { kind: "folder"; item: FolderDto } | { kind: "doc"; item: DocumentDto };
-const ACCEPT = ".pdf,.docx,.pptx,.txt,.md";
+const ACCEPT = ".pdf,.docx,.pptx,.txt,.md,.png,.jpg,.jpeg,.webp";
 
 const errText = (e: unknown, fb: string) => (e instanceof Error ? e.message : fb);
 
@@ -356,6 +356,9 @@ export default function SubjectFilesView({ subjectId }: { subjectId: string }) {
             <SelectItem value="pdf">PDF</SelectItem>
             <SelectItem value="docx">Word</SelectItem>
             <SelectItem value="pptx">PowerPoint</SelectItem>
+            <SelectItem value="png">Image PNG</SelectItem>
+            <SelectItem value="jpg">Image JPEG</SelectItem>
+            <SelectItem value="webp">Image WebP</SelectItem>
             <SelectItem value="txt">Texte</SelectItem>
             <SelectItem value="md">Markdown</SelectItem>
           </SelectContent>

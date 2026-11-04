@@ -22,6 +22,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { TestOutcomes } from "./test-outcomes";
+import { DiagnosisCard } from "./diagnosis-card";
+import { AnalysisStrip, useLiveAnalysis, useLintMarkers } from "./live-analysis";
+import { lintGutter } from "@codemirror/lint";
+import type { EditorView } from "@codemirror/view";
 import { CATEGORY_LABEL, type Diagnosis, type RunDto, type RunHistoryItem, type RunOutput, type LabWorkspaceDto } from "./types";
 
 const errText = (e: unknown, fb: string) => (e instanceof Error ? e.message : fb);
@@ -50,6 +54,7 @@ export default function LabWorkspace({ id }: { id: string }) {
   const [hintError, setHintError] = useState<string | null>(null);
   const [reference, setReference] = useState<{ reference: string } | null>(null);
   const [tab, setTab] = useState("result");
+  const [view, setView] = useState<EditorView | null>(null);
   const dirty = useRef(false);
   const codeRef = useRef("");
   codeRef.current = code;
@@ -112,8 +117,10 @@ export default function LabWorkspace({ id }: { id: string }) {
   const kind = ws?.kind;
   const lang = ws?.files[0]?.language ?? "python";
   const editorOnly = lang === "c" || lang === "csharp";
+  const live = useLiveAnalysis(lang, code, id);
+  useLintMarkers(view, live.analysis, live.fresh);
   const extensions = useMemo<Extension[]>(
-    () => (lang === "sql" ? [sqlLang()] : lang === "python" ? [python()] : lang === "c" ? [cpp()] : lang === "csharp" ? [StreamLanguage.define(csharp)] : [javascript({ typescript: lang === "typescript" })]),
+    () => [lintGutter(), ...(lang === "sql" ? [sqlLang()] : lang === "python" ? [python()] : lang === "c" ? [cpp()] : lang === "csharp" ? [StreamLanguage.define(csharp)] : [javascript({ typescript: lang === "typescript" })])],
     [lang]
   );
 
@@ -243,10 +250,13 @@ export default function LabWorkspace({ id }: { id: string }) {
               theme={resolvedTheme === "dark" ? oneDark : "light"}
               extensions={extensions}
               onChange={(v) => { dirty.current = true; setSaved("idle"); setCode(v); }}
+              onCreateEditor={(v) => setView(v)}
               aria-label="Éditeur de code"
               basicSetup={{ lineNumbers: true, foldGutter: false }}
             />
           </div>
+
+          <AnalysisStrip analysis={live.analysis} fresh={live.fresh} busy={live.busy} error={live.error} />
 
           {editorOnly && (
             <Alert>
@@ -293,12 +303,12 @@ export default function LabWorkspace({ id }: { id: string }) {
           </TabsList>
 
           <TabsContent value="result" className="mt-3 rounded-xl border bg-card p-4">
-            {running === "run" ? <p className="flex items-center gap-2 text-sm text-muted-foreground" aria-busy><Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Exécution isolée en cours (le premier lancement Python peut prendre quelques secondes)…</p> : !out ? <p className="text-sm text-muted-foreground">Aucune exécution pour l&apos;instant. Lancez votre code pour voir son résultat ici.</p> : <OutputView out={out} diagnoses={run?.tests ? [] : diagnoses} />}
+            {running === "run" ? <p className="flex items-center gap-2 text-sm text-muted-foreground" aria-busy><Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Exécution isolée en cours (le premier lancement Python peut prendre quelques secondes)…</p> : !out ? <p className="text-sm text-muted-foreground">Aucune exécution pour l&apos;instant. Lancez votre code pour voir son résultat ici.</p> : <><OutputView out={out} diagnoses={run?.tests ? [] : diagnoses} />{run?.report && <DiagnosisCard report={run.report} />}</>}
           </TabsContent>
 
           {hasTests && (
             <TabsContent value="tests" className="mt-3 rounded-xl border bg-card p-4">
-              {running === "tests" ? <p className="flex items-center gap-2 text-sm text-muted-foreground" aria-busy><Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Tests en cours…</p> : run?.tests ? <TestOutcomes outcomes={run.tests.outcomes} summary={run.tests.summary} diagnoses={run.tests.diagnoses} /> : (
+              {running === "tests" ? <p className="flex items-center gap-2 text-sm text-muted-foreground" aria-busy><Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Tests en cours…</p> : run?.tests ? <><TestOutcomes outcomes={run.tests.outcomes} summary={run.tests.summary} diagnoses={run.tests.diagnoses} />{run.report && <DiagnosisCard report={run.report} />}</> : (
                 <div className="space-y-2 text-sm">
                   <p className="text-muted-foreground">Les tests s&apos;exécutent dans un environnement isolé et comparent votre résultat à celui d&apos;une solution de référence.</p>
                   <ul className="list-disc space-y-1 pl-5">

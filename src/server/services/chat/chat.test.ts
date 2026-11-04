@@ -47,6 +47,9 @@ const fake: AiProvider = {
   async embed(texts) {
     return texts.map(vec);
   },
+  async readImage() {
+    return "Cycle de vie Android : onCreate puis onStart puis onResume. Schéma : trois rectangles reliés par des flèches.";
+  },
   async converse(req) {
     seen.push(req);
     const step = req.turns.filter((t: ChatTurn) => t.role === "model").length;
@@ -69,7 +72,7 @@ async function importText(user: string, name: string, content: string) {
 
 beforeAll(async () => {
   pg = await PGlite.create();
-  for (const name of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat"]) {
+  for (const name of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261105000000_niala_diagnosis"]) {
     await pg.exec(readFileSync(path.join(migrations, name, "migration.sql"), "utf8"));
   }
   const port = 30000 + Math.floor(Math.random() * 10000);
@@ -280,5 +283,48 @@ describe("recherche web", () => {
     expect(JSON.stringify(seen[1].turns.at(-1))).toContain("momentanément indisponible");
     expect(r.message.citations).toEqual([]);
     __setWebSearcherForTests(undefined);
+  });
+});
+
+describe("import d'images", () => {
+  const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64, 1)]);
+  async function importBuffer(user: string, name: string, data: Buffer) {
+    const subjectId = (await db.subject.findFirstOrThrow({ where: { userId: user } })).id;
+    const [r] = await docs.prepareUploads(user, { subjectId, folderId: null, files: [{ name, size: data.length }] });
+    if (!r.ok) return { prepared: r } as const;
+    await docs.receiveLocalUpload(user, r.versionId, data);
+    return { prepared: r, fin: await docs.finalizeUpload(user, r.versionId) } as const;
+  }
+
+  it("une image est lue par l'IA, indexée, retrouvable par le chat, et marquée « lue par l'IA »", async () => {
+    const r = await importBuffer(A, "schema-cycle.PNG", PNG);
+    expect(r.fin).toMatchObject({ ok: true, status: "PARTIAL" });
+    expect(r.fin!.warnings.join(" ")).toContain("lu par l'IA");
+    const doc = await db.document.findUniqueOrThrow({ where: { id: r.fin!.documentId } });
+    expect(doc.type).toBe("png");
+    const v = await db.documentVersion.findFirstOrThrow({ where: { documentId: doc.id } });
+    expect(v.mime).toBe("image/png");
+    expect(await db.documentChunk.count({ where: { versionId: v.id, page: 1 } })).toBeGreaterThan(0);
+    seen.length = 0;
+    script = (_req, step) => (step === 0 ? { calls: [{ name: "search_passages", args: { query: "onCreate onStart onResume" } }] } : { text: "Trois étapes [1]." });
+    const c = await chat.createConversation(A, { scope: "DOCUMENT", documentId: doc.id });
+    const reply = await chat.sendMessage(A, c.id, "Quel est le cycle de vie ?");
+    expect(reply.message.citations[0]).toMatchObject({ documentName: "schema-cycle", page: 1 });
+  });
+
+  it("un fichier nommé .png qui n'est pas une image est refusé (signature)", async () => {
+    const r = await importBuffer(A, "faux.png", Buffer.from("ceci est du texte"));
+    expect(r.fin).toMatchObject({ ok: false });
+    expect(r.fin!.error).toContain("ne correspond pas");
+    expect(docs).toBeTruthy();
+  });
+
+  it("sans service d'IA : l'image est conservée et consultable, sans texte, avec l'explication", async () => {
+    prov.__setProviderForTests(null);
+    const r = await importBuffer(A, "sans-ia.jpeg", Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(64, 2)]));
+    prov.__setProviderForTests(fake);
+    expect(r.fin).toMatchObject({ ok: true, status: "UNSUPPORTED" });
+    expect(r.fin!.warnings.join(" ")).toContain("service d'IA");
+    expect((await db.document.findUniqueOrThrow({ where: { id: r.fin!.documentId } })).type).toBe("jpg");
   });
 });

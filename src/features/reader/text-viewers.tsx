@@ -111,3 +111,44 @@ export function ExtractedTextViewer({ docId, reason, downloadUrl }: { docId: str
     </div>
   );
 }
+
+/** Image importée : affichée telle quelle, avec le texte lu par l'IA (clairement identifié) en dessous. */
+export function ImageViewer({ src, docId, name, downloadUrl }: { src: string; docId: string; name: string; downloadUrl: string }) {
+  const [text, setText] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get<{ pages: { page: number | null; text: string }[] }>(`/api/files/${docId}/text`)
+      .then((r) => !cancelled && setText(r.pages.map((p) => p.text).join("\n\n").trim()))
+      .catch(() => !cancelled && setText(""));
+    return () => {
+      cancelled = true;
+    };
+  }, [docId]);
+
+  return (
+    <div className="h-full overflow-auto bg-muted/40">
+      <div className="mx-auto max-w-4xl space-y-4 p-4">
+        {/* eslint-disable-next-line @next/next/no-img-element -- fichier privé servi par l'API, pas une image statique optimisable */}
+        <img src={src} alt={name} className="mx-auto max-h-[70vh] w-auto max-w-full rounded-lg border bg-background object-contain shadow-sm" />
+        <div className="flex justify-center">
+          <Button asChild size="sm" variant="outline" className="gap-2 bg-background">
+            <a href={downloadUrl}>
+              <Download className="h-4 w-4" aria-hidden /> Télécharger l&apos;image
+            </a>
+          </Button>
+        </div>
+        {text ? (
+          <details className="rounded-lg border bg-background p-4 text-sm" open>
+            <summary className="cursor-pointer font-medium">Texte lu dans l&apos;image par l&apos;IA</summary>
+            <p className="mt-1 text-xs text-muted-foreground">Transcription automatique : elle peut contenir des erreurs. L&apos;image reste la référence.</p>
+            <p className="mt-2 whitespace-pre-wrap break-words leading-relaxed">{text}</p>
+          </details>
+        ) : text === "" ? (
+          <p className="text-center text-sm text-muted-foreground">Aucun texte n&apos;a pu être lu dans cette image.</p>
+        ) : null}
+      </div>
+    </div>
+  );
+}

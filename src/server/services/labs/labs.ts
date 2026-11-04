@@ -6,6 +6,8 @@ import { assertFound } from "@/lib/ownership";
 import { classify, editorOnlyLanguage, languageOf, parseCodeTests, sqlErrorReason, sqlSpecSchema, type CodeTest, type Diagnosis, type SqlSpec, type TestOutcome, type TestSummary } from "@/server/domain/lab-tests";
 import type { CodeCaseResult } from "@/server/labs/runner/host";
 import { SQL_FIXTURES } from "@/server/labs/fixtures";
+import { analyzeSqlAttempt } from "@/server/diagnosis/analyzers/sql";
+import { loadHistory, recordDiagnosis } from "@/server/diagnosis/record";
 import { capabilities, runCodeFree, runCodeTests, runSqlFree, runSqlTests } from "./execute";
 import { generateHint, type HintLevel } from "./hints";
 import { extractLabExercises } from "./import";
@@ -345,6 +347,13 @@ export async function runWorkspace(userId: string, id: string, raw: unknown) {
 
   if (unavailable) throw new ApiHttpError(`L'exécution isolée est indisponible : ${unavailable}`, 503);
 
+  // SQL : constats spécialisés (agrégat dans WHERE, comparaison à NULL…) ajoutés à la classification des tests
+  const errorInfo = (output as { error?: { type: string; message: string; line?: number } }).error;
+  if (w.kind === "SQL") {
+    const extra = analyzeSqlAttempt(content, errorInfo);
+    diagnoses = [...diagnoses, ...extra.filter((x) => !diagnoses.some((d) => d.kind === x.kind))];
+  }
+
   const run = await db.labRun.create({
     data: {
       userId,
@@ -359,9 +368,31 @@ export async function runWorkspace(userId: string, id: string, raw: unknown) {
       data: diagnoses.map((d) => ({ userId, labRunId: run.id, category: d.category as ErrorCategory, confidence: d.confidence, evidence: { source: tests ? "tests" : "execution", kind: d.kind, label: d.label, tests: d.tests, workspaceId: id } as unknown as Prisma.InputJsonValue })),
     });
   }
+  // Diagnostic unifié : seulement quand il y a quelque chose à diagnostiquer (tests, erreur ou constat) ; une exécution libre sans erreur n'apporte aucune information.
+  let report: Awaited<ReturnType<typeof recordDiagnosis>> | null = null;
+  if (tests || errorInfo || diagnoses.length) {
+    const status = tests?.summary.allPassed ? "pass" : (output as { status?: string }).status === "timeout" ? "timeout" : errorInfo && (!tests || tests.summary.passed === 0) ? "error" : diagnoses.length || tests ? "fail" : "pass";
+    report = await recordDiagnosis({
+      userId,
+      activity: w.kind === "SQL" ? "SQL" : "CODE",
+      labRunId: run.id,
+      subjectId: w.subjectId,
+      language: lang,
+      engine: {
+        activity: w.kind === "SQL" ? "SQL" : "CODE",
+        language: lang,
+        status,
+        diagnoses,
+        error: errorInfo,
+        tests: tests ? { passed: tests.summary.passed, total: tests.summary.total, edgePassed: tests.summary.edgePassed, edgeTotal: tests.summary.edgeTotal } : undefined,
+        concepts: [],
+      },
+      history: (category) => loadHistory({ userId, category, workspaceId: id, excludeLabRunId: run.id }),
+    });
+  }
   await touchActivity(userId, w, tests?.summary.allPassed === true);
   if (tests) await refreshProgress(userId);
-  return { id: run.id, createdAt: run.createdAt, mode: p.data.mode, output, tests, diagnoses };
+  return { id: run.id, createdAt: run.createdAt, mode: p.data.mode, output, tests, diagnoses, report };
 }
 
 export async function listRuns(userId: string, id: string) {
