@@ -54,6 +54,7 @@ model User {
   labRuns          LabRun[]
   conversations    Conversation[]
   chatMessages     ConversationMessage[]
+  exerciseSources  ExerciseSource[]
   diagnosisReports DiagnosisReport[]
   skillObservations SkillObservation[]
   diagnosisFollowups DiagnosisFollowup[]
@@ -151,6 +152,7 @@ model Document {
   noteLinks        NoteLink[]
   studyExercises   Exercise[]
   conversations    Conversation[]
+  exerciseSources  ExerciseSource[]
 
   @@index([userId])
   @@index([subjectId])
@@ -530,6 +532,7 @@ model DocumentVersion {
   analyses  DocumentAnalysis[]
   noteLinks NoteLink[]
   exercises Exercise[]
+  exerciseSources ExerciseSource[]
 
   @@unique([documentId, number])
   @@index([userId])
@@ -820,6 +823,7 @@ model Exercise {
   questions Question[]
   attempts  ExerciseAttempt[]
   labs      LabWorkspace[]
+  sources   ExerciseSource[]
 
   @@index([userId])
   @@index([subjectId, createdAt])
@@ -1165,4 +1169,27 @@ model DiagnosisFollowup {
 
   @@index([reportId])
   @@index([userId, createdAt])
+}
+
+/// Source d'un exercice : un document (en entier ou certaines sections) dans la VERSION précise utilisée pour générer les questions.
+/// Le nom et le numéro de version sont conservés tels quels : l'historique reste lisible même si le document change ou disparaît.
+model ExerciseSource {
+  id            String  @id @default(cuid())
+  userId        String
+  exerciseId    String
+  position      Int
+  documentId    String?
+  versionId     String?
+  documentName  String
+  versionNumber Int?
+  /// { mode: "all" | "sections" | "concepts" | "hard", sectionIds?, sectionLabels?, conceptIds? }
+  coverage      Json
+
+  user     User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  exercise Exercise          @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  document Document?         @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  version  DocumentVersion?  @relation(fields: [versionId], references: [id], onDelete: SetNull)
+
+  @@index([exerciseId, position])
+  @@index([userId])
 }

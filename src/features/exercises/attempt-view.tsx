@@ -334,9 +334,9 @@ function ResultCard({ q, subjectId, exerciseId, documentId }: { q: AttemptQuesti
       {r?.diagnosis && <DiagnosisCard report={r.diagnosis} />}
       {q.sourceRefs?.map((s, i) => (
         <p key={i} className="mt-2 border-l-2 border-emerald-500 pl-2 text-xs italic text-muted-foreground">
-          « {s.quote} »{" "}
-          {documentId && s.page && (
-            <Link href={`${routes.subject(subjectId)}/documents/${documentId}?page=${s.page}`} className="not-italic text-primary hover:underline">
+          {s.documentName && <span className="not-italic font-medium">{s.documentName} : </span>}« {s.quote} »{" "}
+          {(s.documentId ?? documentId) && s.page && (
+            <Link href={`${routes.subject(subjectId)}/documents/${s.documentId ?? documentId}?page=${s.page}`} className="not-italic text-primary hover:underline">
               Relire p. {s.page} <ExternalLink className="inline h-3 w-3" aria-hidden />
             </Link>
           )}

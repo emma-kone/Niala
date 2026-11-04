@@ -39,6 +39,18 @@ export const exerciseConfigSchema = z
     difficulty: z.enum(DIFFICULTIES),
     /** Adaptation décidée par le diagnostic : oriente les questions sans changer le barème ni le nombre de questions. */
     adaptation: z.enum(["edge_cases", "compare", "harder", "prerequisite"]).optional(),
+    /** Sources supplémentaires (le document principal `documentId` est toujours la première source). */
+    extraSources: z
+      .array(
+        z.object({
+          documentId: id,
+          coverage: z.object({ mode: z.enum(["all", "sections"]), sectionIds: z.array(id).max(100).optional() }),
+        })
+      )
+      .max(7)
+      .optional(),
+    /** Avec plusieurs sources : une partie des questions fait comparer ou relier les cours (chaque citation vient de son document). */
+    transversal: z.boolean().optional(),
   })
   .superRefine((c, ctx) => {
     if (c.questionCount > maxQuestions()) ctx.addIssue({ code: "custom", path: ["questionCount"], message: `Maximum ${maxQuestions()} questions.` });
@@ -46,6 +58,9 @@ export const exerciseConfigSchema = z
     if (c.totalPoints / POINT_STEP < c.questionCount) ctx.addIssue({ code: "custom", path: ["totalPoints"], message: "Barème trop petit pour ce nombre de questions (0,25 point minimum par question)." });
     if (c.coverage.mode === "sections" && !c.coverage.sectionIds?.length) ctx.addIssue({ code: "custom", path: ["coverage"], message: "Choisissez au moins une section." });
     if (c.coverage.mode === "concepts" && !c.coverage.conceptIds?.length) ctx.addIssue({ code: "custom", path: ["coverage"], message: "Choisissez au moins une notion." });
+    const ids = [c.documentId, ...(c.extraSources ?? []).map((s) => s.documentId)];
+    if (new Set(ids).size !== ids.length) ctx.addIssue({ code: "custom", path: ["extraSources"], message: "Un document ne peut être sélectionné qu'une fois." });
+    for (const s of c.extraSources ?? []) if (s.coverage.mode === "sections" && !s.coverage.sectionIds?.length) ctx.addIssue({ code: "custom", path: ["extraSources"], message: "Choisissez au moins une section pour chaque source en mode « sections »." });
   });
 export type ExerciseConfig = z.infer<typeof exerciseConfigSchema>;
 
@@ -98,6 +113,8 @@ const common = {
   slot: z.number().int().min(1),
   statement: text(900, 8),
   source: z.object({ quote: text(500, 12) }),
+  /** Question transversale : seconde citation, tirée de l'AUTRE document. */
+  source2: z.object({ quote: text(500, 12) }).optional(),
   concepts: z.array(text(120, 2)).max(4).catch([]),
   explanation: text(1000, 2).optional(),
 };

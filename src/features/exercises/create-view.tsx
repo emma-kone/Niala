@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SourcesPicker, type ExtraSource } from "./sources-picker";
 import { fmtPoints, type ExerciseOptions } from "./types";
 
 const errText = (e: unknown, fb: string) => (e instanceof Error ? e.message : fb);
@@ -34,7 +35,7 @@ const ADAPTATION_TEXT: Record<Adaptation, string> = {
   prerequisite: "Exercice adapté : questions de base pour consolider un prérequis fragile.",
 };
 
-export default function CreateExerciseView({ subjectId, documentId, presetConcepts = [], adaptation }: { subjectId: string; documentId: string | null; presetConcepts?: string[]; adaptation?: Adaptation }) {
+export default function CreateExerciseView({ subjectId, documentId, presetConcepts = [], adaptation, withDocuments = [] }: { subjectId: string; documentId: string | null; presetConcepts?: string[]; adaptation?: Adaptation; withDocuments?: string[] }) {
   const router = useRouter();
   const [opts, setOpts] = useState<ExerciseOptions | null>(null);
   const [error, setError] = useState<{ message: string; status?: number } | null>(null);
@@ -50,6 +51,8 @@ export default function CreateExerciseView({ subjectId, documentId, presetConcep
   const [difficulty, setDifficulty] = useState<(typeof DIFFICULTIES)[number]>("progressive");
   const [busy, setBusy] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [extras, setExtras] = useState<ExtraSource[]>([]);
+  const [transversal, setTransversal] = useState(true);
 
   useEffect(() => {
     if (!documentId) return setError({ message: "Aucun document choisi. Ouvrez un document et utilisez « Créer un exercice »." });
@@ -70,6 +73,24 @@ export default function CreateExerciseView({ subjectId, documentId, presetConcep
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentId, subjectId]);
 
+  // Sources déjà choisies ailleurs (espace général des exercices) : résolues parmi les documents de l'étudiant
+  useEffect(() => {
+    if (!withDocuments.length) return;
+    let cancelled = false;
+    api
+      .get<{ documents: { id: string; name: string; subjectName: string | null; analyzed: boolean }[] }>("/api/exercises/sources")
+      .then((r) => {
+        if (cancelled) return;
+        const picked = withDocuments.filter((id) => id !== documentId).map((id) => r.documents.find((d) => d.id === id)).filter((d): d is NonNullable<typeof d> => !!d);
+        setExtras(picked.map((d) => ({ documentId: d.id, name: d.name, subjectName: d.subjectName, analyzed: d.analyzed, mode: "all" as const, sectionIds: [] })));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [withDocuments.join(","), documentId]);
+
   const total = scale === "custom" ? Number(custom.replace(",", ".")) : Number(scale);
   const n = Number(count);
   const problems = useMemo(() => {
@@ -84,8 +105,9 @@ export default function CreateExerciseView({ subjectId, documentId, presetConcep
     if (types.size === 0) p.push("Choisissez au moins un type de question.");
     if (coverage === "sections" && sectionIds.size === 0) p.push("Choisissez au moins une section.");
     if (coverage === "concepts" && conceptIds.size === 0) p.push("Choisissez au moins une notion.");
+    if (extras.some((x) => x.mode === "sections" && x.sectionIds.length === 0)) p.push("Choisissez au moins une section pour chaque source en mode « sections choisies ».");
     return p;
-  }, [opts, n, total, types, coverage, sectionIds, conceptIds]);
+  }, [opts, n, total, types, coverage, sectionIds, conceptIds, extras]);
 
   const toggle = <T,>(set: Set<T>, v: T, on: boolean) => {
     const next = new Set(set);
@@ -109,6 +131,7 @@ export default function CreateExerciseView({ subjectId, documentId, presetConcep
         coverage: { mode: coverage, ...(coverage === "sections" ? { sectionIds: [...sectionIds] } : {}), ...(coverage === "concepts" ? { conceptIds: [...conceptIds] } : {}) },
         difficulty,
         ...(adaptation ? { adaptation } : {}),
+        ...(extras.length ? { extraSources: extras.map((x) => ({ documentId: x.documentId, coverage: { mode: x.mode, ...(x.mode === "sections" ? { sectionIds: x.sectionIds } : {}) } })), transversal } : {}),
       });
       router.push(`${routes.subject(subjectId)}/exercices/${r.id}`);
     } catch (err) {
@@ -136,7 +159,7 @@ export default function CreateExerciseView({ subjectId, documentId, presetConcep
     <form onSubmit={submit} className="mx-auto w-full max-w-2xl px-4 py-6 sm:px-6">
       <Link href={`${routes.subject(subjectId)}/documents/${opts.document.id}`} className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="h-4 w-4" aria-hidden /> Retour au document</Link>
       <h1 className="typo-h1">Créer un exercice</h1>
-      <p className="typo-subtitle mt-1">Source unique : <strong>{opts.document.name}</strong>. Les autres documents de la matière ne sont pas utilisés.</p>
+      <p className="typo-subtitle mt-1">{extras.length === 0 ? <>Source de départ : <strong>{opts.document.name}</strong>. Aucun autre document n'est utilisé tant que vous n'en ajoutez pas ci-dessous.</> : <>{extras.length + 1} sources : <strong>{opts.document.name}</strong>{extras.map((x) => <span key={x.documentId}> · <strong>{x.name}</strong></span>)}. Aucun autre document n'est utilisé.</>}</p>
 
       {adaptation && <p role="note" className="mt-4 rounded-lg border border-violet-500/40 bg-violet-500/5 p-3 text-sm">{ADAPTATION_TEXT[adaptation]} Le barème et le nombre de questions restent ceux que vous choisissez ci-dessous ; les questions déjà travaillées ne sont pas reposées.</p>}
       {!opts.aiConfigured && <p role="alert" className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">Le service d&apos;IA n&apos;est pas configuré (variable <code>GEMINI_API_KEY</code>) : la génération d&apos;exercices est indisponible.</p>}
@@ -148,11 +171,13 @@ export default function CreateExerciseView({ subjectId, documentId, presetConcep
           <Input id="ex-title" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={160} placeholder={`Exercice — ${opts.document.name}`} />
         </div>
 
+        <SourcesPicker primary={{ id: opts.document.id, name: opts.document.name }} value={extras} onChange={setExtras} transversal={transversal} onTransversal={setTransversal} />
+
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
             <Label htmlFor="ex-count">Nombre de questions</Label>
             <Input id="ex-count" type="number" min={1} max={opts.maxQuestions} value={count} onChange={(e) => setCount(e.target.value)} />
-            <p className="typo-meta">Maximum {opts.maxQuestions}. Si le document ne fournit pas assez de matière, l&apos;exercice contiendra moins de questions (rien n&apos;est inventé).</p>
+            <p className="typo-meta">Maximum {opts.maxQuestions}. Si les sources ne fournissent pas assez de matière, l&apos;exercice contiendra moins de questions (rien n&apos;est inventé).</p>
           </div>
           <fieldset className="space-y-1.5">
             <legend className="text-sm font-medium">Barème (total des points)</legend>

@@ -8,7 +8,6 @@ import { api } from "@/lib/client-api";
 import { routes } from "@/config/routes";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SubjectTabs } from "@/features/subject-files/tabs";
 import { fmtPoints, type ExerciseListItem } from "./types";
 
@@ -99,40 +98,58 @@ export default function ExercisesView({ subjectId }: { subjectId?: string }) {
   );
 }
 
-/** Choix d'un document pour créer un exercice depuis la page globale. */
+/** Choix libre des sources d'un exercice depuis la page globale : un ou plusieurs documents, de n'importe quelle matière. */
 function DocumentPicker() {
   const router = useRouter();
-  const [subjects, setSubjects] = useState<{ id: string; name: string }[]>([]);
-  const [subject, setSubject] = useState("");
-  const [docs, setDocs] = useState<{ id: string; name: string }[]>([]);
-  const [doc, setDoc] = useState("");
+  const [docs, setDocs] = useState<{ id: string; name: string; subjectId: string | null; subjectName: string | null }[] | null>(null);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api.get<{ subjects: { id: string; name: string }[] }>("/api/subjects").then((r) => setSubjects(r.subjects)).catch(() => undefined);
+    api
+      .get<{ documents: { id: string; name: string; subjectId: string | null; subjectName: string | null }[] }>("/api/exercises/sources")
+      .then((r) => setDocs(r.documents))
+      .catch((e) => setError(errText(e, "Documents indisponibles.")));
   }, []);
-  useEffect(() => {
-    setDoc("");
-    setDocs([]);
-    if (subject) api.get<{ documents: { id: string; name: string }[] }>(`/api/subjects/${subject}/documents`).then((r) => setDocs(r.documents)).catch(() => undefined);
-  }, [subject]);
+
+  const bySubject = new Map<string, NonNullable<typeof docs>>();
+  for (const d of docs ?? []) bySubject.set(d.subjectName ?? "Sans matière", [...(bySubject.get(d.subjectName ?? "Sans matière") ?? []), d]);
+  const first = docs?.find((d) => d.id === picked[0]);
+  const toggle = (id: string) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
 
   return (
-    <section aria-label="Créer un exercice" className="mb-6 flex flex-wrap items-end gap-2 rounded-xl border bg-card p-4">
-      <div className="min-w-48 flex-1">
-        <p className="mb-1 text-xs font-medium text-muted-foreground">Matière</p>
-        <Select value={subject} onValueChange={setSubject}>
-          <SelectTrigger aria-label="Matière"><SelectValue placeholder="Choisir une matière" /></SelectTrigger>
-          <SelectContent>{subjects.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
-        </Select>
+    <section aria-label="Créer un exercice" className="mb-6 space-y-3 rounded-xl border bg-card p-4">
+      <div>
+        <h2 className="text-sm font-semibold">Créer un exercice</h2>
+        <p className="text-xs text-muted-foreground">Cochez un ou plusieurs documents : l&apos;exercice sera fondé sur eux seulement, et peut comparer vos cours entre eux. Le premier coché est la source de départ ; vous pourrez encore ajouter ou retirer des sources à l&apos;étape suivante.</p>
       </div>
-      <div className="min-w-48 flex-1">
-        <p className="mb-1 text-xs font-medium text-muted-foreground">Document source</p>
-        <Select value={doc} onValueChange={setDoc} disabled={!subject}>
-          <SelectTrigger aria-label="Document"><SelectValue placeholder={subject && docs.length === 0 ? "Aucun document" : "Choisir un document"} /></SelectTrigger>
-          <SelectContent>{docs.map((d) => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}</SelectContent>
-        </Select>
+      {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
+      {docs === null && !error && <Skeleton className="h-16" />}
+      {docs?.length === 0 && <p className="text-sm text-muted-foreground">Aucun document prêt : importez un cours d&apos;abord.</p>}
+      <div className="grid max-h-64 gap-3 overflow-y-auto sm:grid-cols-2">
+        {[...bySubject.entries()].map(([subject, list]) => (
+          <fieldset key={subject} className="space-y-1">
+            <legend className="text-xs font-medium text-muted-foreground">{subject}</legend>
+            {list.map((d) => (
+              <label key={d.id} className="flex cursor-pointer items-center gap-2 text-sm">
+                <input type="checkbox" checked={picked.includes(d.id)} onChange={() => toggle(d.id)} />
+                <span className="min-w-0 flex-1 truncate">{d.name}</span>
+                {picked[0] === d.id && <span className="text-[11px] text-muted-foreground">départ</span>}
+              </label>
+            ))}
+          </fieldset>
+        ))}
       </div>
-      <Button disabled={!subject || !doc} onClick={() => router.push(`${routes.subject(subject)}/exercices/nouveau?document=${doc}`)}>Créer un exercice</Button>
+      <Button
+        disabled={!first?.subjectId}
+        onClick={() => {
+          const q = new URLSearchParams({ document: picked[0] });
+          if (picked.length > 1) q.set("with", picked.slice(1).join(","));
+          router.push(`${routes.subject(first!.subjectId!)}/exercices/nouveau?${q.toString()}`);
+        }}
+      >
+        Créer un exercice{picked.length > 1 ? ` (${picked.length} sources)` : ""}
+      </Button>
     </section>
   );
 }

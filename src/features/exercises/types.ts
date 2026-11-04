@@ -23,6 +23,8 @@ export interface ExerciseDetail {
   subject: { id: string; name: string; color: string };
   document: { id: string; name: string } | null;
   versionNumber: number | null;
+  /** Sources de l'exercice avec la version exacte utilisée pour générer les questions. */
+  sources: { documentId: string | null; documentName: string; versionNumber: number | null; coverage: { mode: string; labels?: string[] } }[];
   createdAt: string;
   totalPoints: number;
   notice: string | null;
@@ -54,7 +56,7 @@ export interface AttemptQuestion {
   payload: Record<string, unknown>;
   answer: unknown;
   result?: QuestionResult | null;
-  sourceRefs?: { quote: string; page: number | null }[];
+  sourceRefs?: { quote: string; page: number | null; documentId?: string; documentName?: string }[];
   concepts?: { id: string; name: string }[];
 }
 

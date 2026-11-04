@@ -25,3 +25,28 @@ export async function getExerciseOptions(userId: string, documentId: string) {
     concepts: [...uniq.values()].sort((a, b) => b.importance - a.importance || a.name.localeCompare(b.name)),
   };
 }
+
+export interface SourceCandidate {
+  id: string;
+  name: string;
+  subjectId: string | null;
+  subjectName: string | null;
+  kind: string;
+  pageCount: number | null;
+  /** Les sections et notions ne peuvent être choisies que si le document a été analysé. */
+  analyzed: boolean;
+}
+
+/** Documents que l'étudiant peut choisir comme sources d'un exercice : propriétaire seulement, texte extrait. */
+export async function listSourceCandidates(userId: string): Promise<SourceCandidate[]> {
+  const docs = await db.document.findMany({
+    where: { userId, currentVersion: { is: { extractStatus: { in: ["READY", "PARTIAL"] } } } },
+    select: { id: true, name: true, type: true, subjectId: true, subject: { select: { name: true } }, currentVersion: { select: { id: true, pageCount: true } } },
+    orderBy: [{ subjectId: "asc" }, { name: "asc" }],
+    take: 500,
+  });
+  const analyzed = new Set(
+    (await db.documentAnalysis.findMany({ where: { userId, status: "READY", versionId: { in: docs.map((d) => d.currentVersion!.id) } }, select: { versionId: true } })).map((a) => a.versionId)
+  );
+  return docs.map((d) => ({ id: d.id, name: d.name, subjectId: d.subjectId, subjectName: d.subject?.name ?? null, kind: d.type, pageCount: d.currentVersion!.pageCount, analyzed: analyzed.has(d.currentVersion!.id) }));
+}

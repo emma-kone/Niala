@@ -21,11 +21,19 @@ interface SnapshotQuestion {
   payload: Record<string, unknown>;
   answerKey: Record<string, unknown>;
   explanation: string | null;
-  sourceRefs: { quote: string; page: number | null }[];
+  sourceRefs: SourceRef[];
   concepts: { id: string; name: string }[];
 }
+/** Passage cité : `documentId` et `documentName` identifient le cours (exercices multi-sources), absents des anciens exercices. */
+export interface SourceRef {
+  quote: string;
+  page: number | null;
+  documentId?: string;
+  documentName?: string;
+  versionId?: string;
+}
 interface Snapshot {
-  exercise: { id: string; title: string; totalPoints: number; documentId: string | null; documentName: string | null; versionId: string | null; versionNumber: number | null; subjectId: string };
+  exercise: { id: string; title: string; totalPoints: number; documentId: string | null; documentName: string | null; versionId: string | null; versionNumber: number | null; subjectId: string; sources?: { documentId: string | null; documentName: string; versionNumber: number | null }[] };
   questions: SnapshotQuestion[];
 }
 
@@ -57,6 +65,7 @@ export async function startAttempt(userId: string, exerciseId: string, opts: { f
       versionId: exercise.versionId,
       versionNumber: exercise.version?.number ?? null,
       subjectId: exercise.subjectId,
+      sources: (await db.exerciseSource.findMany({ where: { exerciseId: exercise.id, userId }, orderBy: { position: "asc" } })).map((s) => ({ documentId: s.documentId, documentName: s.documentName, versionNumber: s.versionNumber })),
     },
     questions: exercise.questions.map((q) => ({
       position: q.position,
@@ -104,7 +113,7 @@ export interface AttemptQuestionDto {
   answer: unknown;
   /** Présents uniquement une fois la tentative corrigée. */
   result?: (FeedbackJson & { questionExplanation: string | null; diagnosis?: unknown }) | null;
-  sourceRefs?: { quote: string; page: number | null }[];
+  sourceRefs?: SourceRef[];
   concepts?: { id: string; name: string }[];
 }
 
@@ -367,6 +376,7 @@ export async function getExercise(userId: string, id: string) {
       subject: { select: { id: true, name: true, color: true } },
       document: { select: { id: true, name: true } },
       version: { select: { number: true } },
+      sources: { orderBy: { position: "asc" } },
     },
   });
   if (!e) throw new ApiHttpError("Exercice introuvable.", 404);
@@ -377,6 +387,7 @@ export async function getExercise(userId: string, id: string) {
     subject: e.subject,
     document: e.document,
     versionNumber: e.version?.number ?? null,
+    sources: e.sources.map((x) => ({ documentId: x.documentId, documentName: x.documentName, versionNumber: x.versionNumber, coverage: x.coverage as { mode: string; labels?: string[] } })),
     createdAt: e.createdAt,
     totalPoints: e.totalPoints,
     notice: cfg.notice ?? null,

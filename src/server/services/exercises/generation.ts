@@ -39,28 +39,29 @@ interface Window {
   label: string;
   pages: PageText[];
   text: string;
+  source: SourceCtx;
 }
 interface Target {
   window: Window;
   focus?: string;
 }
 
-const windowOf = (label: string, pages: PageText[]): Window => ({ label, pages, text: pages.map((p) => p.text).join("\n").slice(0, WINDOW_CHARS) });
+const windowOf = (label: string, pages: PageText[], source: SourceCtx): Window => ({ label, pages, text: pages.map((p) => p.text).join("\n").slice(0, WINDOW_CHARS), source });
 
-function windowsForAll(pages: PageText[]): Window[] {
+function windowsForAll(pages: PageText[], source: SourceCtx): Window[] {
   const out: Window[] = [];
   let cur: PageText[] = [];
   let size = 0;
   for (const p of pages) {
     if (cur.length && size + p.text.length > WINDOW_CHARS) {
-      out.push(windowOf(`Pages ${cur[0].page ?? 1}–${cur.at(-1)!.page ?? 1}`, cur));
+      out.push(windowOf(`Pages ${cur[0].page ?? 1}–${cur.at(-1)!.page ?? 1}`, cur, source));
       cur = [];
       size = 0;
     }
     cur.push(p);
     size += p.text.length;
   }
-  if (cur.length) out.push(windowOf(`Pages ${cur[0].page ?? 1}–${cur.at(-1)!.page ?? 1}`, cur));
+  if (cur.length) out.push(windowOf(`Pages ${cur[0].page ?? 1}–${cur.at(-1)!.page ?? 1}`, cur, source));
   return out.filter((w) => w.text.replace(/\s/g, "").length >= 120);
 }
 
@@ -107,7 +108,7 @@ interface Accepted {
   slot: Slot;
   built: BuiltQuestion;
   explanation: string | null;
-  refs: { quote: string; page: number | null }[];
+  refs: { quote: string; page: number | null; documentId: string; documentName: string; versionId: string }[];
   concepts: string[];
 }
 
@@ -134,51 +135,60 @@ async function askWindow(userId: string, w: Window, slots: (Slot & { focus?: str
   return generateStructured({ userId, op: "exercise.generate", promptVersion: GENERATION_PROMPT_VERSION, system: SYSTEM, user, schema: responseSchema, maxTokens: 7000, temperature: 0.3 });
 }
 
-export async function generateExercise(userId: string, rawConfig: unknown) {
-  const parsed = exerciseConfigSchema.safeParse(rawConfig);
-  if (!parsed.success) throw new ApiHttpError(parsed.error.issues[0]?.message ?? "Configuration invalide.", 422);
-  const config: ExerciseConfig = parsed.data;
+interface SourceCtx {
+  index: number;
+  documentId: string;
+  name: string;
+  subjectId: string;
+  versionId: string;
+  versionNumber: number;
+  pages: PageText[];
+  coverage: Record<string, unknown>;
+}
 
-  if (!isAiConfigured()) {
-    throw new ApiHttpError("La génération d'exercices nécessite le service d'IA, qui n'est pas configuré (GEMINI_API_KEY).", 503);
-  }
-  const doc = await db.document.findFirst({ where: { id: config.documentId, userId }, include: { currentVersion: true } });
+interface Collected {
+  ctx: SourceCtx;
+  targets: Target[];
+  knownConcepts: string[];
+}
+
+/** Fenêtres de texte d'UN document selon la couverture demandée (tout, sections, notions, notions difficiles). */
+async function collectSource(userId: string, index: number, documentId: string, coverage: ExerciseConfig["coverage"], multi: boolean): Promise<Collected> {
+  const doc = await db.document.findFirst({ where: { id: documentId, userId }, include: { currentVersion: true } });
   if (!doc) throw new ApiHttpError("Document introuvable.", 404);
-  if (!doc.subjectId) throw new ApiHttpError("Ce document n'est rattaché à aucune matière.", 409);
+  const tag = multi ? ` « ${doc.name} »` : "";
+  if (!doc.subjectId) throw new ApiHttpError(`Le document${tag || " "} n'est rattaché à aucune matière.`, 409);
   const version = doc.currentVersion;
-  if (!version || !["READY", "PARTIAL"].includes(version.extractStatus)) throw new ApiHttpError("Le texte de ce document n'a pas pu être extrait : impossible de créer un exercice.", 409);
+  if (!version || !["READY", "PARTIAL"].includes(version.extractStatus)) throw new ApiHttpError(`Le texte du document${tag} n'a pas pu être extrait : impossible de créer un exercice.`, 409);
   const pages = await loadVersionPages(userId, version.id);
-  if (pages.every((p) => p.text.replace(/\s/g, "").length < 120)) throw new ApiHttpError("Ce document contient trop peu de texte pour créer un exercice.", 409);
+  if (pages.every((p) => p.text.replace(/\s/g, "").length < 120)) throw new ApiHttpError(`Le document${tag} contient trop peu de texte pour créer un exercice.`, 409);
 
-  const subjectId = doc.subjectId;
+  const ctx: SourceCtx = { index, documentId: doc.id, name: doc.name, subjectId: doc.subjectId, versionId: version.id, versionNumber: version.number, pages, coverage: coverage as Record<string, unknown> };
   const analysis = await db.documentAnalysis.findFirst({ where: { userId, versionId: version.id, status: "READY" }, orderBy: { createdAt: "desc" } });
-  const knownConcepts = analysis
-    ? (await db.conceptSource.findMany({ where: { analysisId: analysis.id, userId }, include: { concept: true }, take: 200 })).map((s) => s.concept.name)
-    : [];
+  const knownConcepts = analysis ? (await db.conceptSource.findMany({ where: { analysisId: analysis.id, userId }, include: { concept: true }, take: 200 })).map((s) => s.concept.name) : [];
 
-  // ── Couverture → cibles (fenêtres de texte du document sélectionné uniquement) ──
   let targets: Target[] = [];
-  if (config.coverage.mode === "all") {
-    targets = windowsForAll(pages).map((window) => ({ window }));
+  if (coverage.mode === "all") {
+    targets = windowsForAll(pages, ctx).map((window) => ({ window }));
   } else {
-    if (!analysis) throw new ApiHttpError("Analysez d'abord ce document (onglet Analyse du lecteur) pour choisir des sections ou des notions.", 409);
+    if (!analysis) throw new ApiHttpError(`Analysez d'abord le document${tag || " "}(onglet Analyse du lecteur) pour choisir des sections ou des notions.`, 409);
     const sections = await db.courseSection.findMany({ where: { analysisId: analysis.id, userId } });
-    const sectionWindow = (s: (typeof sections)[number]) => windowOf(`${s.numbering ? s.numbering + " " : ""}${s.label}`, pagesBetween(pages, s.pageStart, s.pageEnd));
-    if (config.coverage.mode === "sections") {
-      const picked = sections.filter((s) => config.coverage.sectionIds!.includes(s.id));
-      if (picked.length !== new Set(config.coverage.sectionIds).size) throw new ApiHttpError("Section introuvable dans l'analyse de ce document.", 404);
+    const sectionWindow = (s: (typeof sections)[number]) => windowOf(`${s.numbering ? s.numbering + " " : ""}${s.label}`, pagesBetween(pages, s.pageStart, s.pageEnd), ctx);
+    if (coverage.mode === "sections") {
+      const picked = sections.filter((s) => coverage.sectionIds!.includes(s.id));
+      if (picked.length !== new Set(coverage.sectionIds).size) throw new ApiHttpError(`Section introuvable dans l'analyse du document${tag || " "}.`, 404);
       targets = picked.map((s) => ({ window: sectionWindow(s) }));
     } else {
-      let conceptIds = config.coverage.conceptIds ?? [];
-      if (config.coverage.mode === "hard") {
+      let conceptIds = coverage.conceptIds ?? [];
+      if (coverage.mode === "hard") {
         const sources = await db.conceptSource.findMany({ where: { analysisId: analysis.id, userId }, include: { concept: { include: { mastery: true } } } });
         const weak = sources.filter((s) => s.concept.mastery && s.concept.mastery.confidence >= 0.35 && s.concept.mastery.level < 0.5);
         const pool = weak.length ? weak : sources.filter((s) => s.concept.importance === 3);
         conceptIds = [...new Set(pool.map((s) => s.conceptId))];
-        if (conceptIds.length === 0) throw new ApiHttpError("Aucune notion difficile ou principale n'a été identifiée pour ce document.", 409);
+        if (conceptIds.length === 0) throw new ApiHttpError(`Aucune notion difficile ou principale n'a été identifiée pour le document${tag || " "}.`, 409);
       }
       const sources = await db.conceptSource.findMany({ where: { analysisId: analysis.id, userId, conceptId: { in: conceptIds } }, include: { concept: true } });
-      if (new Set(sources.map((s) => s.conceptId)).size !== new Set(conceptIds).size && config.coverage.mode === "concepts") throw new ApiHttpError("Notion introuvable dans l'analyse de ce document.", 404);
+      if (new Set(sources.map((s) => s.conceptId)).size !== new Set(conceptIds).size && coverage.mode === "concepts") throw new ApiHttpError(`Notion introuvable dans l'analyse du document${tag || " "}.`, 404);
       const seen = new Set<string>();
       for (const s of sources) {
         const sec = sections.find((x) => x.id === s.sectionId);
@@ -189,13 +199,71 @@ export async function generateExercise(userId: string, rawConfig: unknown) {
     }
   }
   targets = targets.filter((t) => t.window.text.replace(/\s/g, "").length >= 120);
-  if (targets.length === 0) throw new ApiHttpError("La partie choisie du document ne contient pas assez de texte.", 409);
+  if (targets.length === 0) throw new ApiHttpError(`La partie choisie du document${tag || " "}ne contient pas assez de texte.`, 409);
+  return { ctx, targets, knownConcepts };
+}
 
-  // ── Créneaux ──
+const CROSS_RULES = `
+QUESTIONS TRANSVERSALES : tu reçois DEUX extraits, A et B, de cours différents. Chaque question doit nécessiter les DEUX extraits (comparer, relier, distinguer, ou appliquer une idée de l'un à l'autre).
+- Chaque question DOIT contenir DEUX champs de citation : "source":{"quote":"<citation VERBATIM de l'extrait A>"} ET "source2":{"quote":"<citation VERBATIM de l'extrait B>"} (15 à 300 caractères chacune). Une question sans "source2" sera rejetée.
+- Format de réponse pour ces questions : {"slot":<n>,"type":"...","statement":"...","source":{"quote":"..."},"source2":{"quote":"..."},"concepts":["..."],"explanation":"...", ...champs du type}.
+- Si les deux extraits n'ont aucun lien exploitable, n'invente rien : ajoute le créneau dans "insufficient".`;
+
+async function askCross(userId: string, a: Window, b: Window, slots: Slot[], extra = "") {
+  const spec = [...new Set(slots.map((s) => s.type))].map((t) => `- ${t} (${TYPE_LABEL[t]}) : ${FORMAT[t]}`).join("\n");
+  const wanted = slots.map((s) => ({ slot: s.slot, type: s.type, difficulty: s.difficulty, niveau: DIFFICULTY_HINT[s.difficulty] }));
+  const half = (w: Window) => w.text.slice(0, WINDOW_CHARS / 2);
+  const user = `Créneaux à remplir (questions transversales) :\n${JSON.stringify(wanted)}\n\nFormat des champs spécifiques :\n${spec}\n\n${extra ? `${extra}\n\n` : ""}Extrait A (cours « ${a.source.name} », ${a.label}) :\n${wrapUntrusted(`cours A ${a.source.name}`, half(a))}\n\nExtrait B (cours « ${b.source.name} », ${b.label}) :\n${wrapUntrusted(`cours B ${b.source.name}`, half(b))}`;
+  return generateStructured({ userId, op: "exercise.generate.cross", promptVersion: GENERATION_PROMPT_VERSION, system: SYSTEM + CROSS_RULES, user, schema: responseSchema, maxTokens: 7000, temperature: 0.3 });
+}
+
+/** Alterne les sources : chaque cours contribue à l'exercice avant qu'un même cours ne revienne. */
+function interleave<T>(lists: T[][]): T[] {
+  const out: T[] = [];
+  for (let i = 0; lists.some((l) => i < l.length); i++) for (const l of lists) if (i < l.length) out.push(l[i]);
+  return out;
+}
+
+export async function generateExercise(userId: string, rawConfig: unknown) {
+  const parsed = exerciseConfigSchema.safeParse(rawConfig);
+  if (!parsed.success) throw new ApiHttpError(parsed.error.issues[0]?.message ?? "Configuration invalide.", 422);
+  const config: ExerciseConfig = parsed.data;
+
+  if (!isAiConfigured()) {
+    throw new ApiHttpError("La génération d'exercices nécessite le service d'IA, qui n'est pas configuré (GEMINI_API_KEY).", 503);
+  }
+
+  // ── Sources : le document principal puis les sources ajoutées (jamais un document non choisi) ──
+  const extras = config.extraSources ?? [];
+  const multi = extras.length > 0;
+  const collected: Collected[] = [await collectSource(userId, 0, config.documentId, config.coverage, multi)];
+  for (const [i, e] of extras.entries()) collected.push(await collectSource(userId, i + 1, e.documentId, e.coverage, true));
+  const primary = collected[0].ctx;
+  const subjectId = primary.subjectId;
+  const knownConcepts = [...new Set(collected.flatMap((c) => c.knownConcepts))];
+  const targets: Target[] = interleave(collected.map((c) => c.targets));
+
+  // ── Créneaux : ordinaires (une fenêtre) et transversaux (deux cours à la fois) ──
   const slots = buildSlots(config.questionCount, config.types, config.difficulty);
+  const useCross = collected.length >= 2 && config.transversal !== false && config.questionCount >= 3;
+  const crossCount = useCross ? Math.max(1, Math.floor(config.questionCount / 4)) : 0;
+  const crossAt = new Set(Array.from({ length: crossCount }, (_, k) => Math.min(config.questionCount - 1, 2 + k * 4)));
   const byWindow = new Map<Window, (Slot & { focus?: string })[]>();
+  const crossGroups = new Map<string, { a: Window; b: Window; slots: Slot[] }>();
+  const pairs: [number, number][] = [];
+  for (let i = 0; i < collected.length; i++) for (let j = i + 1; j < collected.length; j++) pairs.push([i, j]);
+  let ordinary = 0;
+  let crossIndex = 0;
   slots.forEach((s, i) => {
-    const t = targets[i % targets.length];
+    if (crossAt.has(i) && pairs.length) {
+      const [a, b] = pairs[crossIndex++ % pairs.length];
+      const key = `${a}-${b}`;
+      const g = crossGroups.get(key) ?? { a: collected[a].targets[0].window, b: collected[b].targets[0].window, slots: [] };
+      g.slots.push(s);
+      crossGroups.set(key, g);
+      return;
+    }
+    const t = targets[ordinary++ % targets.length];
     byWindow.set(t.window, [...(byWindow.get(t.window) ?? []), { ...s, focus: t.focus }]);
   });
 
@@ -207,13 +275,25 @@ export async function generateExercise(userId: string, rawConfig: unknown) {
   let failures = 0;
   let fatal: Error | null = null;
   const seenStatements = new Set<string>();
-  // Adaptation : orientation demandée + énoncés DÉJÀ travaillés sur ce document (pour ne pas faire répéter les mêmes questions)
+  // Adaptation : orientation demandée + énoncés DÉJÀ travaillés sur ces documents (pour ne pas faire répéter les mêmes questions)
   let extra = "";
   if (config.adaptation) {
-    const prior = await db.question.findMany({ where: { userId, exercise: { documentId: config.documentId } }, orderBy: { id: "desc" }, take: 15, select: { payload: true } });
+    const ids = collected.map((c) => c.ctx.documentId);
+    const prior = await db.question.findMany({ where: { userId, exercise: { OR: [{ documentId: { in: ids } }, { sources: { some: { documentId: { in: ids } } } }] } }, orderBy: { id: "desc" }, take: 15, select: { payload: true } });
     const statements = prior.map((q) => String((q.payload as { statement?: string }).statement ?? "")).filter(Boolean);
     extra = `${ADAPTATION_PROMPT[config.adaptation]}${statements.length ? `\nNe repose PAS ces questions déjà travaillées (reformule ou change de situation) :\n${statements.map((t) => `- ${t.slice(0, 160)}`).join("\n")}` : ""}`;
   }
+
+  const refOf = (w: Window, quote: string, page: number | null) => ({ quote, page, documentId: w.source.documentId, documentName: w.source.name, versionId: w.source.versionId });
+  const accept = (q: RawQuestion, slot: Slot, refs: Accepted["refs"]) => {
+    const key = foldText(q.statement).slice(0, 80);
+    if (seenStatements.has(key) || accepted.some((a) => a.slot.slot === q.slot)) {
+      dropped.duplicate++;
+      return;
+    }
+    seenStatements.add(key);
+    accepted.push({ slot, built: buildQuestion(q), explanation: q.explanation ?? null, refs, concepts: q.concepts });
+  };
 
   outer: for (const [w, list] of byWindow) {
     for (let i = 0; i < list.length; i += MAX_SLOTS_PER_CALL) {
@@ -245,14 +325,52 @@ export async function generateExercise(userId: string, rawConfig: unknown) {
           dropped.ungrounded++; // la citation n'existe pas dans le document : question rejetée
           continue;
         }
-        const key = foldText(q.statement).slice(0, 80);
-        if (seenStatements.has(key) || accepted.some((a) => a.slot.slot === q.slot)) {
-          dropped.duplicate++;
+        accept(q, slot, [refOf(w, q.source.quote, page)]);
+      }
+    }
+  }
+
+  // Questions transversales : les DEUX citations doivent exister, chacune dans son document
+  if (!fatal) {
+    for (const g of crossGroups.values()) {
+      for (let i = 0; i < g.slots.length; i += MAX_SLOTS_PER_CALL) {
+        const group = g.slots.slice(i, i + MAX_SLOTS_PER_CALL);
+        calls++;
+        let result: z.infer<typeof responseSchema>;
+        try {
+          result = (await askCross(userId, g.a, g.b, group, extra)).data;
+        } catch (e) {
+          failures++;
+          if (e instanceof AiQuotaError || e instanceof AiUnavailableError) {
+            fatal = e;
+            break;
+          }
+          if (!(e instanceof AiCallError)) console.error("[exercise]", e);
           continue;
         }
-        seenStatements.add(key);
-        accepted.push({ slot, built: buildQuestion(q), explanation: q.explanation ?? null, refs: [{ quote: q.source.quote, page }], concepts: q.concepts });
+        result.insufficient.forEach((s) => insufficient.add(s));
+        for (const rawQ of result.questions) {
+          const p = rawQuestionSchema.safeParse(rawQ);
+          const slot = p.success ? group.find((s) => s.slot === p.data.slot) : undefined;
+          if (!p.success || !slot || p.data.type !== slot.type || semanticProblem(p.data) || !p.data.source2) {
+            dropped.invalid++;
+            console.warn("[exercise] question transversale écartée :", !p.success ? p.error.issues.slice(0, 2).map((i) => `${i.path.join(".")} ${i.message}`).join(" ; ") : !slot ? "créneau inconnu" : p.data.type !== slot.type ? "type différent du créneau" : !p.data.source2 ? "seconde citation absente" : "incohérence interne");
+            continue;
+          }
+          const q: RawQuestion = p.data;
+          const q2 = q.source2!.quote;
+          const inA = (t: string) => quoteInText(t, g.a.text);
+          const inB = (t: string) => quoteInText(t, g.b.text);
+          const [wa, wb] = inA(q.source.quote) && inB(q2) ? [g.a, g.b] : inB(q.source.quote) && inA(q2) ? [g.b, g.a] : [null, null];
+          if (!wa || !wb) {
+            dropped.ungrounded++; // une des deux citations n'existe pas dans « son » document
+            console.warn("[exercise] question transversale écartée : citation introuvable dans son document");
+            continue;
+          }
+          accept(q, slot, [refOf(wa, q.source.quote, pageOfQuote(q.source.quote, wa.pages)), refOf(wb, q2, pageOfQuote(q2, wb.pages))]);
+        }
       }
+      if (fatal) break;
     }
   }
   if (fatal && accepted.length === 0) {
@@ -261,7 +379,7 @@ export async function generateExercise(userId: string, rawConfig: unknown) {
   if (accepted.length === 0) {
     console.warn("[exercise] aucune question retenue", { dropped, insufficient: [...insufficient], calls, failures });
     if (failures === calls) throw new ApiHttpError("Le service d'IA est momentanément indisponible. Réessayez dans un instant.", 502);
-    throw new ApiHttpError("Le document ne fournit pas assez d'informations fiables pour créer des questions de ce type. Essayez d'autres types ou une autre partie du document.", 422);
+    throw new ApiHttpError(multi ? "Les documents choisis ne fournissent pas assez d'informations fiables pour créer des questions de ce type. Essayez d'autres types ou d'autres parties." : "Le document ne fournit pas assez d'informations fiables pour créer des questions de ce type. Essayez d'autres types ou une autre partie du document.", 422);
   }
 
   accepted.sort((a, b) => a.slot.slot - b.slot.slot);
@@ -297,7 +415,13 @@ export async function generateExercise(userId: string, rawConfig: unknown) {
 
   const notes: string[] = [];
   if (accepted.length < config.questionCount) {
-    notes.push(`${accepted.length} question(s) sur ${config.questionCount} demandée(s) : le document ne fournit pas assez d'éléments fiables pour les autres (aucune question n'a été inventée). Le barème de ${config.totalPoints} points est réparti sur les questions créées.`);
+    notes.push(`${accepted.length} question(s) sur ${config.questionCount} demandée(s) : ${multi ? "les sources choisies ne fournissent" : "le document ne fournit"} pas assez d'éléments fiables pour les autres (aucune question n'a été inventée). Le barème de ${config.totalPoints} points est réparti sur les questions créées.`);
+  }
+  if (multi) {
+    const contributed = new Set(accepted.flatMap((a) => a.refs.map((r) => r.documentId)));
+    const silent = collected.filter((c) => !contributed.has(c.ctx.documentId)).map((c) => `« ${c.ctx.name} »`);
+    if (silent.length) notes.push(`Aucune question n'a pu être créée à partir de ${silent.join(", ")}.`);
+    if (useCross && !accepted.some((a) => a.refs.length > 1)) notes.push("Aucune question transversale fiable n'a pu être créée : les sources choisies n'ont pas de lien exploitable.");
   }
   if (unverified) notes.push(`${unverified} question(s) de programmation ou SQL n'ont pas pu être validées par exécution (solution de référence non vérifiable) : elles seront corrigées par lecture, sans tests.`);
   if (fatal) notes.push(fatal.message);
@@ -305,7 +429,7 @@ export async function generateExercise(userId: string, rawConfig: unknown) {
   const totalDropped = dropped.invalid + dropped.ungrounded + dropped.duplicate;
   if (totalDropped) notes.push(`${totalDropped} question(s) proposée(s) ont été écartées (format invalide, citation introuvable dans le document ou doublon).`);
 
-  // ── Enregistrement : exercice indépendant, avec référence au document et à sa version ──
+  // ── Enregistrement : exercice indépendant, avec ses sources et la version exacte de chacune ──
   const exerciseId = await db.$transaction(async (tx) => {
     const conceptIdOf = async (name: string) => {
       const normalizedName = foldText(name);
@@ -318,12 +442,24 @@ export async function generateExercise(userId: string, rawConfig: unknown) {
       data: {
         userId,
         subjectId,
-        documentId: doc.id,
-        versionId: version.id,
-        title: config.title?.trim() || `Exercice — ${doc.name}`.slice(0, 160),
+        documentId: primary.documentId,
+        versionId: primary.versionId,
+        title: config.title?.trim() || (multi ? `Exercice — ${primary.name} et ${extras.length} autre(s) source(s)` : `Exercice — ${primary.name}`).slice(0, 160),
         totalPoints: config.totalPoints,
         config: { ...config, generated: accepted.length, notice: notes.join(" ") || null, promptVersion: GENERATION_PROMPT_VERSION, windows: targets.length } as unknown as Prisma.InputJsonValue,
       },
+    });
+    await tx.exerciseSource.createMany({
+      data: collected.map((c, i) => ({
+        userId,
+        exerciseId: ex.id,
+        position: i + 1,
+        documentId: c.ctx.documentId,
+        versionId: c.ctx.versionId,
+        documentName: c.ctx.name,
+        versionNumber: c.ctx.versionNumber,
+        coverage: { ...c.ctx.coverage, labels: c.targets.map((t) => t.window.label).slice(0, 20) } as unknown as Prisma.InputJsonValue,
+      })),
     });
     for (let i = 0; i < accepted.length; i++) {
       const a = accepted[i];
@@ -351,5 +487,5 @@ export async function generateExercise(userId: string, rawConfig: unknown) {
     return ex.id;
   }, { timeout: 30_000 });
 
-  return { id: exerciseId, created: accepted.length, requested: config.questionCount, notice: notes.join(" ") || null };
+  return { id: exerciseId, created: accepted.length, requested: config.questionCount, notice: notes.join(" ") || null, sources: collected.length };
 }
