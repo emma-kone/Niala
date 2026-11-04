@@ -42,6 +42,8 @@ beforeAll(async () => {
   await pg.exec(sql("20261101000100_v2_foundation"));
   await pg.exec(sql("20261101000200_v2_backfill"));
   await pg.exec(sql("20261101000300_v2_rls"));
+  await pg.exec(sql("20261104000000_niala_theme_default"));
+  await pg.exec(sql("20261104000100_niala_chat"));
 });
 
 describe("migration V1 → V2", () => {

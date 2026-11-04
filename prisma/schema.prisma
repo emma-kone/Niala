@@ -52,6 +52,8 @@ model User {
   learningRecs     LearningRecommendation[]
   labWorkspaces    LabWorkspace[]
   labRuns          LabRun[]
+  conversations    Conversation[]
+  chatMessages     ConversationMessage[]
 }
 
 model UserSettings {
@@ -93,6 +95,7 @@ model Subject {
   activities     LearningActivity[]
   learningRecs   LearningRecommendation[]
   labWorkspaces  LabWorkspace[]
+  conversations  Conversation[]
 
   @@index([userId])
 }
@@ -144,6 +147,7 @@ model Document {
   versions         DocumentVersion[] @relation("DocumentVersions")
   noteLinks        NoteLink[]
   studyExercises   Exercise[]
+  conversations    Conversation[]
 
   @@index([userId])
   @@index([subjectId])
@@ -538,6 +542,9 @@ model DocumentChunk {
   charEnd   Int    @default(0)
   content   String
   words     Int    @default(0)
+  /// Vecteur sémantique (Gemini, normalisé). Vide tant que le passage n'est pas encore indexé.
+  embedding      Float[] @default([])
+  embeddingModel String?
 
   user    User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   version DocumentVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
@@ -1004,4 +1011,54 @@ model LabRun {
 
   @@index([userId])
   @@index([workspaceId, createdAt])
+}
+
+// ─────────────────────────── Conversations avec l'IA ───────────────────────────
+
+enum ConversationScope {
+  GLOBAL // toute la bibliothèque (ou une matière)
+  DOCUMENT // un seul cours : la conversation ne voit jamais les autres documents
+}
+
+enum ChatRole {
+  USER
+  ASSISTANT
+}
+
+model Conversation {
+  id         String            @id @default(cuid())
+  userId     String
+  scope      ConversationScope
+  documentId String?
+  subjectId  String?
+  title      String
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+
+  user     User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  document Document?             @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  subject  Subject?              @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  messages ConversationMessage[]
+
+  @@index([userId, scope, updatedAt])
+  @@index([documentId])
+}
+
+model ConversationMessage {
+  id             String   @id @default(cuid())
+  userId         String
+  conversationId String
+  role           ChatRole
+  content        String
+  /// Références réellement retrouvées dans les documents : [{ n, documentId, documentName, versionId, page, section, quote }]
+  citations      Json?
+  /// Ce que l'IA a consulté : { documents, passages, pages, coverage, warnings }
+  consulted      Json?
+  model          String?
+  createdAt      DateTime @default(now())
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
 }

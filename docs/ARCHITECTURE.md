@@ -31,6 +31,7 @@ Règle d'architecture : **un composant React ou une route API n'appelle jamais l
 | `src/features/…` | Interface par module (subjects, subject-files, reader, notes, maps, exercises, labs, progress, dashboard) |
 | `src/server/domain/` | Règles pures : validation de fichiers, arbre de dossiers, chunking, plan (`structure-parser`), notes (liste blanche Tiptap), cartes, barème et correction d'exercices, tests de laboratoire, maîtrise, recommandations |
 | `src/server/services/` | `folders`, `documents`, `notes`, `maps`, `analysis/*`, `exercises/*`, `labs/*`, `progress/*` |
+| `src/server/services/chat/` | Chat : `chat` (conversations, boucle d'outils, citations), `retrieval` (recherche hybride, lecture progressive, couverture), `indexing` (vecteurs par lots) |
 | `src/server/ai/` | `provider` (interface + Gemini, repli Anthropic), `structured` (appel structuré), `guard` (injection, citations) |
 | `src/server/labs/runner/` | `host.ts` (parent) et `child.mjs` (processus isolé) |
 | `src/lib/` | Auth, base, helpers d'API, propriété (`ownership.ts`), extraction de texte |

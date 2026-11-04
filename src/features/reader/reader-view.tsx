@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, ClipboardList, Info, ListTree, Loader2, PanelRightClose, PanelRightOpen, StickyNote } from "lucide-react";
+import { ArrowLeft, ClipboardList, Info, ListTree, Loader2, MessageSquare, PanelRightClose, PanelRightOpen, StickyNote } from "lucide-react";
 import { api } from "@/lib/client-api";
 import { routes } from "@/config/routes";
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +17,7 @@ import { STATUS_LABEL, type DocumentDetails } from "@/features/subject-files/typ
 import { ExtractedTextViewer, OriginalTextViewer } from "./text-viewers";
 import { NotesPanel } from "./notes-panel";
 import { AnalysisPanel } from "./analysis-panel";
+import ChatPanel from "@/features/chat/chat-panel";
 import type { NoteListItem } from "@/features/notes/types";
 import type { PdfAnnotation, PdfSelection } from "./pdf-viewer";
 
@@ -93,7 +94,7 @@ export default function ReaderView({ subjectId, docId }: { subjectId: string; do
   const preview = previewResult?.id === docId ? (previewResult.ok ? "ok" : "failed") : "loading";
 
   // Notes du document + annotations affichées dans le PDF
-  const [tab, setTab] = useState<"doc" | "notes" | "analysis">("notes");
+  const [tab, setTab] = useState<"doc" | "notes" | "analysis" | "chat">("notes");
   const [sheet, setSheet] = useState(false);
   const desktop = useDesktop();
   const [notes, setNotes] = useState<NoteListItem[] | null>(null);
@@ -262,20 +263,20 @@ export default function ReaderView({ subjectId, docId }: { subjectId: string; do
   const panelBody = (
     <div className="flex h-full min-h-0 flex-col">
       <div role="tablist" aria-label="Panneau du document" className="flex border-b">
-        {([["notes", "Notes", StickyNote], ["analysis", "Analyse", ListTree], ["doc", "Document", Info]] as const).map(([id, label, Icon]) => (
+        {([["notes", "Notes", StickyNote], ["chat", "Chat", MessageSquare], ["analysis", "Analyse", ListTree], ["doc", "Document", Info]] as const).map(([id, label, Icon]) => (
           <button
             key={id}
             role="tab"
             aria-selected={tab === id}
             onClick={() => setTab(id)}
-            className={cn("-mb-px flex flex-1 items-center justify-center gap-2 border-b-2 px-3 py-2.5 text-sm font-semibold", tab === id ? "border-primary" : "border-transparent text-muted-foreground hover:text-foreground")}
+            className={cn("-mb-px flex flex-1 items-center justify-center gap-1.5 border-b-2 px-2 py-2.5 text-sm font-semibold", tab === id ? "border-primary" : "border-transparent text-muted-foreground hover:text-foreground")}
           >
             <Icon className="h-4 w-4" aria-hidden /> {label}
             {id === "notes" && notes && notes.length > 0 && <span className="rounded-full bg-muted px-1.5 text-[11px]">{notes.length}</span>}
           </button>
         ))}
       </div>
-      <div role="tabpanel" className="min-h-0 flex-1 overflow-y-auto">
+      <div role="tabpanel" className={cn("min-h-0 flex-1", tab === "chat" ? "overflow-hidden" : "overflow-y-auto")}>
         {tab === "notes" ? (
           <NotesPanel
             subjectId={subjectId}
@@ -288,6 +289,8 @@ export default function ReaderView({ subjectId, docId }: { subjectId: string; do
             onReload={() => void reloadNotes()}
             onGoToPage={goToPage}
           />
+        ) : tab === "chat" ? (
+          <ChatPanel scope="DOCUMENT" documentId={docId} onCitation={(c) => c.page && goToPage(c.page)} />
         ) : tab === "analysis" ? (
           <AnalysisPanel docId={docId} subjectId={subjectId} onGoToPage={goToPage} />
         ) : (

@@ -3,6 +3,7 @@ import {
   Database,
   FilePlus2,
   Home,
+  MessageSquare,
   Settings,
   Terminal,
   TrendingUp,
@@ -21,6 +22,7 @@ export interface NavItem {
 export const APP_NAV: NavItem[] = [
   { href: routes.home, label: "Tableau de bord", icon: Home, match: "exact" },
   { href: routes.subjects, label: "Mes matières", icon: BookOpen, match: "prefix" },
+  { href: routes.assistant, label: "Assistant IA", icon: MessageSquare, match: "prefix" },
   {
     href: routes.exercises,
     label: "Exercices",

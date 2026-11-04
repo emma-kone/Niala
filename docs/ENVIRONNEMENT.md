@@ -11,6 +11,7 @@
 | `STORAGE_DIR` | non | Dossier du stockage local (défaut `./storage`) |
 | `GEMINI_API_KEY` | pour les fonctions IA | Clé Google Gemini (fournisseur principal). **Serveur uniquement** : jamais dans le code, le client ou Git. Sans elle : plan issu de la numérotation seulement, les autres fonctions IA sont indisponibles et le disent |
 | `GEMINI_MODEL` | non | Modèle Gemini (défaut `gemini-3.5-flash-lite`, vérifié disponible ; `gemini-3.6-flash` et `gemini-3.8-flash` existent mais répondaient très lentement ou en 503 lors des essais) |
+| `GEMINI_EMBEDDING_MODEL` | non | Modèle de vecteurs sémantiques (défaut `gemini-embedding-001`, 768 dimensions normalisées) |
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | non | Repli, utilisé uniquement si `GEMINI_API_KEY` est absente |
 | `AI_DAILY_CALL_LIMIT` | non | Appels IA maximum par utilisateur et par 24 h (défaut 300) |
 | `LAB_MAX_CONCURRENT` | non | Nombre maximum d'exécutions isolées simultanées (défaut 3 ; chaque exécution Python pèse ~100 Mo) |
