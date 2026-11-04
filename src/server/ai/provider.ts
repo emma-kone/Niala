@@ -39,6 +39,8 @@ export interface ConverseRequest {
   maxTokens: number;
   temperature: number;
   signal: AbortSignal;
+  /** Reçoit le texte au fur et à mesure (streaming). Sans lui, la réponse est renvoyée d'un bloc. */
+  onText?: (delta: string) => void;
 }
 export interface ConverseResult {
   text: string;
@@ -82,11 +84,11 @@ const GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models
 const isAbort = (e: unknown) => ["TimeoutError", "AbortError"].includes((e as { name?: string })?.name ?? "");
 
 /** Appel HTTP Gemini avec reprises (429/5xx). La clé ne figure que dans l'en-tête, jamais dans l'URL ni les erreurs. */
-export async function geminiPost(apiKey: string, path: string, body: unknown, signal: AbortSignal): Promise<Record<string, any>> {
+async function geminiFetch(apiKey: string, path: string, body: unknown, signal: AbortSignal): Promise<Response> {
   const maxRetries = 2;
   let lastError = "";
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    if (attempt > 0) await new Promise((r) => setTimeout(r, attempt * 1500));
+    if (attempt > 0) await new Promise((r) => setTimeout(r, attempt * 800));
     try {
       const res = await fetch(`${GEMINI_ENDPOINT}/${path}`, {
         method: "POST",
@@ -100,7 +102,7 @@ export async function geminiPost(apiKey: string, path: string, body: unknown, si
         if ((res.status === 429 || res.status >= 500) && attempt < maxRetries) continue;
         throw new AiCallError(lastError);
       }
-      return await res.json();
+      return res;
     } catch (e) {
       if (e instanceof AiCallError) throw e;
       if (isAbort(e)) throw new AiCallError("Délai dépassé.");
@@ -110,6 +112,74 @@ export async function geminiPost(apiKey: string, path: string, body: unknown, si
   }
   throw new AiCallError(lastError || "Échec de l'appel.");
 }
+
+export async function geminiPost(apiKey: string, path: string, body: unknown, signal: AbortSignal): Promise<Record<string, any>> {
+  const res = await geminiFetch(apiKey, path, body, signal);
+  try {
+    return await res.json();
+  } catch (e) {
+    if (isAbort(e)) throw new AiCallError("Délai dépassé.");
+    throw new AiCallError("Réponse illisible.");
+  }
+}
+
+type RawPart = ChatPart & { text?: string; thought?: boolean; thoughtSignature?: string };
+
+/** Appel en flux (SSE) : `onText` reçoit le texte visible au fil de l'eau ; renvoie les parties assemblées, rejouables telles quelles. */
+async function geminiStream(apiKey: string, path: string, body: unknown, signal: AbortSignal, onText: (d: string) => void) {
+  const res = await geminiFetch(apiKey, `${path.replace(":generateContent", ":streamGenerateContent")}?alt=sse`, body, signal);
+  if (!res.body) throw new AiCallError("Flux vide.");
+  const parts: RawPart[] = [];
+  let modelVersion: string | undefined;
+  let blockReason: string | undefined;
+  const take = (block: string) => {
+    const line = block.split("\n").find((l) => l.startsWith("data:"));
+    if (!line) return;
+    let chunk: Record<string, any>;
+    try {
+      chunk = JSON.parse(line.slice(5).trim());
+    } catch {
+      return;
+    }
+    modelVersion = chunk.modelVersion ?? modelVersion;
+    blockReason = chunk.promptFeedback?.blockReason ?? blockReason;
+    for (const p of (chunk.candidates?.[0]?.content?.parts ?? []) as RawPart[]) {
+      const prev = parts[parts.length - 1];
+      const plain = typeof p.text === "string" && !p.thought && !p.thoughtSignature;
+      if (plain && prev && typeof prev.text === "string" && !prev.thought && !prev.thoughtSignature) prev.text += p.text;
+      else parts.push({ ...p });
+      if (typeof p.text === "string" && !p.thought && p.text) onText(p.text);
+    }
+  };
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+      let i: number;
+      while ((i = buffer.indexOf("\n\n")) >= 0) {
+        take(buffer.slice(0, i));
+        buffer = buffer.slice(i + 2);
+      }
+    }
+    if (buffer.trim()) take(buffer);
+  } catch (e) {
+    if (isAbort(e)) throw new AiCallError("Délai dépassé.");
+    throw new AiCallError("Flux interrompu.");
+  }
+  return { parts, modelVersion, blockReason };
+}
+
+/**
+ * Réflexion du modèle : coupée par défaut (le chat pédagogique n'en a pas besoin, elle ajoute plusieurs secondes).
+ * GEMINI_THINKING=default rétablit le comportement du modèle. Selon la génération du modèle, la forme acceptée diffère :
+ * on essaie « budget 0 », puis « niveau minimal », puis rien, et on retient ce qui a fonctionné.
+ */
+const THINKING_CANDIDATES: (Record<string, unknown> | null)[] = [{ thinkingBudget: 0 }, { thinkingLevel: "minimal" }, null];
+let thinkingIndex = process.env.GEMINI_THINKING?.trim() === "default" ? THINKING_CANDIDATES.length - 1 : 0;
 
 const textOf = (parts: { text?: string; thought?: boolean }[] | undefined) =>
   (parts ?? []).filter((p) => !p.thought && typeof p.text === "string").map((p) => p.text).join("");
@@ -142,25 +212,48 @@ export function geminiProvider(apiKey: string, model: string, embeddingModel = D
       if (!text.trim()) throw new AiCallError(data.promptFeedback?.blockReason ? "Contenu refusé par le modèle." : "Réponse vide.");
       return { text, model: data.modelVersion ?? model };
     },
-    async converse({ system, turns, tools, maxTokens, temperature, signal }) {
-      const data = await geminiPost(
-        apiKey,
-        `${encodeURIComponent(model)}:generateContent`,
-        {
-          systemInstruction: { parts: [{ text: system }] },
-          contents: turns,
-          ...(tools?.length ? { tools: [{ functionDeclarations: tools }] } : {}),
-          generationConfig: { maxOutputTokens: maxTokens, temperature },
-        },
-        signal
-      );
-      const parts: ChatPart[] = data.candidates?.[0]?.content?.parts ?? [];
+    async converse({ system, turns, tools, maxTokens, temperature, signal, onText }) {
+      const path = `${encodeURIComponent(model)}:generateContent`;
+      const build = (thinking: Record<string, unknown> | null) => ({
+        systemInstruction: { parts: [{ text: system }] },
+        contents: turns,
+        ...(tools?.length ? { tools: [{ functionDeclarations: tools }] } : {}),
+        generationConfig: { maxOutputTokens: maxTokens, temperature, ...(thinking ? { thinkingConfig: thinking } : {}) },
+      });
+      let parts: ChatPart[] = [];
+      let version: string | undefined;
+      let blocked: string | undefined;
+      for (;;) {
+        const body = build(THINKING_CANDIDATES[thinkingIndex]);
+        let streamed = false;
+        try {
+          if (onText) {
+            const out = await geminiStream(apiKey, path, body, signal, (d) => ((streamed = true), onText(d)));
+            parts = out.parts;
+            version = out.modelVersion;
+            blocked = out.blockReason;
+          } else {
+            const data = await geminiPost(apiKey, path, body, signal);
+            parts = data.candidates?.[0]?.content?.parts ?? [];
+            version = data.modelVersion;
+            blocked = data.promptFeedback?.blockReason;
+          }
+          break;
+        } catch (e) {
+          // Paramètre de réflexion refusé par ce modèle : variante suivante (jamais après avoir déjà émis du texte).
+          if (e instanceof AiCallError && /think/i.test(e.message) && !streamed && thinkingIndex < THINKING_CANDIDATES.length - 1) {
+            thinkingIndex++;
+            continue;
+          }
+          throw e;
+        }
+      }
       const calls = parts
         .filter((p) => p.functionCall)
         .map((p) => ({ name: String((p.functionCall as { name: string }).name), args: ((p.functionCall as { args?: Record<string, unknown> }).args ?? {}) as Record<string, unknown> }));
       const text = textOf(parts as { text?: string; thought?: boolean }[]);
-      if (!calls.length && !text.trim()) throw new AiCallError(data.promptFeedback?.blockReason ? "Contenu refusé par le modèle." : "Réponse vide.");
-      return { text, calls, modelParts: parts, model: data.modelVersion ?? model };
+      if (!calls.length && !text.trim()) throw new AiCallError(blocked ? "Contenu refusé par le modèle." : "Réponse vide.");
+      return { text, calls, modelParts: parts, model: version ?? model };
     },
     async readImage(bytes, mime, signal) {
       const data = await geminiPost(

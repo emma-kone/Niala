@@ -1069,6 +1069,8 @@ model ConversationMessage {
   citations      Json?
   /// Ce que l'IA a consulté : { documents, passages, pages, coverage, warnings }
   consulted      Json?
+  /// Pièces jointes du message : [{ kind: library|file|image, name, documentId?, text?, mime?, data? }]
+  attachments    Json?
   model          String?
   createdAt      DateTime @default(now())
 

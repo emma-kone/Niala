@@ -72,7 +72,7 @@ async function importText(user: string, name: string, content: string) {
 
 beforeAll(async () => {
   pg = await PGlite.create();
-  for (const name of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261105000000_niala_diagnosis", "20261106000000_niala_progression", "20261107000000_niala_followups", "20261108000000_niala_exercise_sources"]) {
+  for (const name of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261105000000_niala_diagnosis", "20261106000000_niala_progression", "20261107000000_niala_followups", "20261108000000_niala_exercise_sources", "20261109000000_niala_chat_attachments"]) {
     await pg.exec(readFileSync(path.join(migrations, name, "migration.sql"), "utf8"));
   }
   const port = 30000 + Math.floor(Math.random() * 10000);
@@ -352,3 +352,50 @@ describe("mémoire pédagogique dans le chat", () => {
   });
 });
 
+
+describe("pièces jointes du chat", () => {
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(32, 1)]);
+  const file = (name: string, data: Buffer | string) => new File([typeof data === "string" ? data : new Uint8Array(data)], name);
+
+  it("un fichier de l'ordinateur est lu comme DONNÉE, l'image est transmise au modèle, et l'historique les conserve", async () => {
+    script = () => ({ text: "J'ai lu ton fichier." });
+    seen.length = 0;
+    const c = await chat.createConversation(A, { scope: "GLOBAL" });
+    const events: string[] = [];
+    await chat.sendMessage(A, c.id, "Explique ce fichier", { files: [file("notes.txt", "Le polymorphisme permet de traiter des objets différents via une interface commune."), file("schema.png", png)], emit: (e) => events.push(e.type) });
+    const parts = seen[0].turns.at(-1)!.parts;
+    expect(String(parts[0].text)).toContain("notes.txt");
+    expect(String(parts[0].text)).toContain("polymorphisme");
+    expect(String(parts[0].text)).toMatch(/<DOC-[0-9a-f]+/);
+    expect(parts.some((p) => (p as { inlineData?: unknown }).inlineData)).toBe(true);
+    expect(seen[0].system).toContain("Pièces jointes");
+    // le message suivant rejoue le texte du fichier
+    seen.length = 0;
+    await chat.sendMessage(A, c.id, "Et un exemple ?");
+    const replay = seen[0].turns.flatMap((t) => t.parts.map((p) => String(p.text ?? ""))).join("\n");
+    expect(replay).toContain("polymorphisme");
+    // la lecture de la conversation ne renvoie que la description des pièces jointes
+    const conv = await chat.getConversation(A, c.id);
+    const first = conv.messages.find((m) => m.role === "USER")!;
+    expect(first.attachments).toEqual([{ kind: "file", name: "notes.txt" }, { kind: "image", name: "schema.png" }]);
+    expect(JSON.stringify(conv.messages)).not.toContain("polymorphisme permet");
+  });
+
+  it("un document de la bibliothèque joint est consultable par les outils ; refusé en chat de document et pour un autre utilisateur", async () => {
+    script = (_r, step) => (step === 0 ? { calls: [{ name: "search_passages", args: { query: "tri fusion", document_id: docAutre } }] } : { text: "Le tri fusion divise la liste [1]." });
+    const c = await chat.createConversation(A, { scope: "GLOBAL" });
+    const r = await chat.sendMessage(A, c.id, "Résume ce document", { libraryDocumentIds: [docAutre] });
+    expect(r.message.citations[0]?.documentId).toBe(docAutre);
+    const d = await chat.createConversation(A, { scope: "DOCUMENT", documentId: docCours });
+    await expect(chat.sendMessage(A, d.id, "x", { libraryDocumentIds: [docAutre] })).rejects.toMatchObject({ status: 422 });
+    const cb = await chat.createConversation(B, { scope: "GLOBAL" });
+    await expect(chat.sendMessage(B, cb.id, "x", { libraryDocumentIds: [docAutre] })).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("un fichier invalide est refusé AVANT d'enregistrer le message", async () => {
+    const c = await chat.createConversation(A, { scope: "GLOBAL" });
+    await expect(chat.sendMessage(A, c.id, "x", { files: [file("faux.png", "pas une image")] })).rejects.toMatchObject({ status: 422 });
+    await expect(chat.sendMessage(A, c.id, "x", { files: [file("virus.exe", "MZ")] })).rejects.toMatchObject({ status: 415 });
+    expect(await db.conversationMessage.count({ where: { conversationId: c.id } })).toBe(0);
+  });
+});

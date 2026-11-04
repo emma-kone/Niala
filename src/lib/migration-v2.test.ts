@@ -48,6 +48,7 @@ beforeAll(async () => {
   await pg.exec(sql("20261106000000_niala_progression"));
   await pg.exec(sql("20261107000000_niala_followups"));
   await pg.exec(sql("20261108000000_niala_exercise_sources"));
+  await pg.exec(sql("20261109000000_niala_chat_attachments"));
 });
 
 describe("migration V1 → V2", () => {
