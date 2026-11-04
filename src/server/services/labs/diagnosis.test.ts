@@ -16,7 +16,7 @@ let dir: string;
 let A: string;
 let B: string;
 
-const MIGRATIONS = ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261105000000_niala_diagnosis"];
+const MIGRATIONS = ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261105000000_niala_diagnosis", "20261106000000_niala_progression"];
 
 beforeAll(async () => {
   pg = await PGlite.create();
@@ -138,3 +138,24 @@ describe("diagnostic unifié des exécutions", () => {
     expect(r.report).toMatchObject({ primary: "ENVIRONMENT", pedagogical: false, recommendedAction: "check_environment" });
   }, 60_000);
 });
+
+describe("observations par compétence", () => {
+  it("les constats des outils alimentent des compétences communes aux langages ; une réussite ou un environnement défaillant n'en crée aucune", async () => {
+    const js = await labs.createFree(A, { kind: "CODE", language: "javascript" });
+    const sql = await labs.createFree(A, { kind: "SQL", fixtureId: "entreprise" });
+    const before = await db.skillObservation.count({ where: { userId: A, skill: "syntaxe" } });
+    await labs.runWorkspace(A, js.id, { mode: "run", content: "let = ;" });
+    await labs.runWorkspace(A, sql.id, { content: "SELEC nom FROM employes;" });
+    const rows = await db.skillObservation.findMany({ where: { userId: A, skill: "syntaxe" }, orderBy: { createdAt: "asc" } });
+    expect(rows.length - before).toBe(2);
+    expect(rows.slice(-2).map((r) => [r.activity, r.language])).toEqual([["CODE", "javascript"], ["SQL", "sql"]]);
+    const nulls = await db.skillObservation.count({ where: { userId: A, skill: "valeurs-nulles" } });
+    await labs.runWorkspace(A, sql.id, { content: "SELECT nom FROM employes WHERE nom = NULL;" });
+    expect(await db.skillObservation.count({ where: { userId: A, skill: "valeurs-nulles" } })).toBe(nulls + 1);
+    // une exécution sans erreur ne crée aucune observation
+    const total = await db.skillObservation.count({ where: { userId: A } });
+    await labs.runWorkspace(A, js.id, { mode: "run", content: "console.log(2)" });
+    expect(await db.skillObservation.count({ where: { userId: A } })).toBe(total);
+  });
+});
+

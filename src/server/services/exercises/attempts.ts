@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { ApiHttpError } from "@/lib/api-helpers";
 import type { QuestionType } from "@/server/domain/exercise-model";
 import { gradeAnswer } from "./evaluation";
-import { loadHistory, recordDiagnosis } from "@/server/diagnosis/record";
+import { loadHistory, loadPrerequisites, recordDiagnosis } from "@/server/diagnosis/record";
 import { analyzeExerciseAnswer } from "@/server/diagnosis/analyzers/exercise";
 import { refreshProgress } from "@/server/services/progress/progress";
 
@@ -247,6 +247,7 @@ async function gradePositions(userId: string, a: Awaited<ReturnType<typeof owned
           error: undefined,
           concepts: q.concepts.map((c) => ({ id: c.id, name: c.name })),
           extraEvidence: observation.facts,
+          prerequisites: await loadPrerequisites(userId, q.concepts[0]?.id),
         },
         history: (category) => loadHistory({ userId, category, conceptId: q.concepts[0]?.id ?? null, excludeAnswerId: saved.id }),
       });
@@ -265,6 +266,7 @@ async function gradePositions(userId: string, a: Awaited<ReturnType<typeof owned
           diagnoses: diagnoses as never,
           tests: summary ? { passed: summary.passed, total: summary.total, edgePassed: summary.edgePassed, edgeTotal: summary.edgeTotal } : undefined,
           concepts: q.concepts.map((c) => ({ id: c.id, name: c.name })),
+          prerequisites: await loadPrerequisites(userId, q.concepts[0]?.id),
         },
         history: (category) => loadHistory({ userId, category, conceptId: q.concepts[0]?.id ?? null, excludeAnswerId: saved.id }),
       });

@@ -1,6 +1,7 @@
 import type { ErrorCategory, Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { buildReport, type Activity, type EngineInput, type Report } from "./engine";
+import { skillForKind } from "@/server/domain/skills";
 
 // Persistance du diagnostic : UN point d'écriture pour toutes les activités (exercices, éditeur, SQL).
 // Le rapport est la vue normalisée ; les lignes ErrorDiagnosis restent les observations par catégorie.
@@ -87,5 +88,27 @@ export async function recordDiagnosis(input: RecordInput): Promise<ReportDto> {
       engineVersion: report.engineVersion,
     },
   });
+  // Observations par compétence (code, SQL et calcul) : base des difficultés récurrentes entre activités et langages.
+  // Les réponses conceptuelles d'exercices sont rattachées à leur notion, pas à une compétence de programmation.
+  if (report.pedagogical && report.state !== "NONE") {
+    const skills = new Set<string>();
+    for (const d of input.engine.diagnoses) {
+      if (input.activity === "EXERCISE" && d.kind !== "numeric") continue;
+      const info = input.activity === "EXERCISE" ? { key: "calcul" } : skillForKind(d.kind);
+      if (info) skills.add(info.key);
+    }
+    if (skills.size) {
+      await db.skillObservation.createMany({
+        data: [...skills].map((skill) => ({ userId: input.userId, skill, activity: input.activity, language: input.language || null, category: report.primary as ErrorCategory | null, conceptId: input.engine.concepts[0]?.id ?? null, reportId: row.id })),
+      });
+    }
+  }
   return { ...report, id: row.id, createdAt: row.createdAt };
+}
+
+/** Notions prérequises (relation PREREQUISITE entrante) avec leur maîtrise MESURÉE : seules ces mesures peuvent désigner un prérequis fragile. */
+export async function loadPrerequisites(userId: string, conceptId: string | null | undefined): Promise<{ name: string; level: number; confidence: number }[]> {
+  if (!conceptId) return [];
+  const rels = await db.conceptRelation.findMany({ where: { userId, toId: conceptId, type: "PREREQUISITE" }, include: { from: { include: { mastery: true } } }, take: 20 });
+  return rels.map((r) => ({ name: r.from.name, level: r.from.mastery?.level ?? 0, confidence: r.from.mastery?.confidence ?? 0 }));
 }

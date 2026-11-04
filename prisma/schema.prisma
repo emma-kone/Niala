@@ -55,6 +55,7 @@ model User {
   conversations    Conversation[]
   chatMessages     ConversationMessage[]
   diagnosisReports DiagnosisReport[]
+  skillObservations SkillObservation[]
 }
 
 model UserSettings {
@@ -931,6 +932,10 @@ model ConceptMastery {
   evidenceCount  Int       @default(0)
   lastEvidenceAt DateTime?
   updatedAt      DateTime  @updatedAt
+  /// État de progression (NOT_ASSESSED | TO_DISCOVER | ACQUIRING | FRAGILE | MASTERED | CONFIRMED), recalculé avec la maîtrise
+  state          String    @default("NOT_ASSESSED")
+  needsRecheck   Boolean   @default(false)
+  stateReasons   Json?
 
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   concept Concept @relation(fields: [conceptId], references: [id], onDelete: Cascade)
@@ -1107,8 +1112,29 @@ model DiagnosisReport {
   user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   answer Answer? @relation(fields: [answerId], references: [id], onDelete: Cascade)
   labRun LabRun? @relation(fields: [labRunId], references: [id], onDelete: Cascade)
+  skillObservations SkillObservation[]
 
   @@index([userId, createdAt])
   @@index([answerId])
   @@index([labRunId])
+}
+
+/// Observation d'une difficulté sur une COMPÉTENCE abstraite (commune aux langages), tirée d'un diagnostic.
+/// Sert à retrouver les difficultés récurrentes entre activités sans fusionner les règles propres à chaque langage.
+model SkillObservation {
+  id        String         @id @default(cuid())
+  userId    String
+  skill     String // clé de src/server/domain/skills.ts
+  activity  String // EXERCISE | CODE | SQL
+  language  String?
+  category  ErrorCategory?
+  conceptId String?
+  reportId  String?
+  createdAt DateTime       @default(now())
+
+  user   User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  report DiagnosisReport? @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@index([userId, skill, createdAt])
+  @@index([reportId])
 }

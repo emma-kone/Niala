@@ -90,10 +90,10 @@ export function analyzeExerciseAnswer(type: QuestionType, key: Record<string, un
         const rel = numeric.relation;
         if (rel === "different") {
           facts.push("Le résultat numérique ne correspond pas à la valeur attendue.");
-          out.push(d("LOGIC", "wrong_output", "Résultat de calcul incorrect.", 0.8));
+          out.push(d("LOGIC", "numeric", "Résultat de calcul incorrect.", 0.8));
         } else if (rel !== "equal" && rel !== "rounded") {
           facts.push(RELATION_TEXT[rel]);
-          out.push(d("LOGIC", "wrong_output", `Résultat de calcul incorrect : ${RELATION_TEXT[rel]}`, 0.8));
+          out.push(d("LOGIC", "numeric", `Résultat de calcul incorrect : ${RELATION_TEXT[rel]}`, 0.8));
           // Le schéma d'écart est un constat ; l'inattention n'est qu'une explication possible
           if (rel === "opposite" || rel === "off_by_one") out.push(d("CARELESS", "partial", "Écart typique d'une étourderie de calcul (signe ou décalage d'une unité) : hypothèse à vérifier.", 0.45));
         }
