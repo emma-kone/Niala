@@ -86,6 +86,7 @@ export async function recordDiagnosis(input: RecordInput): Promise<ReportDto> {
       needsVerification: report.needsVerification,
       source: report.source,
       engineVersion: report.engineVersion,
+      facts: { status: engineInput.status, tests: engineInput.tests ?? null, history: engineInput.history ?? null, error: engineInput.error ?? null } as unknown as Prisma.InputJsonValue,
     },
   });
   // Observations par compétence (code, SQL et calcul) : base des difficultés récurrentes entre activités et langages.

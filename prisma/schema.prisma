@@ -56,6 +56,7 @@ model User {
   chatMessages     ConversationMessage[]
   diagnosisReports DiagnosisReport[]
   skillObservations SkillObservation[]
+  diagnosisFollowups DiagnosisFollowup[]
 }
 
 model UserSettings {
@@ -1107,9 +1108,14 @@ model DiagnosisReport {
   needsVerification Boolean        @default(false)
   source            String // tools | tools+ai
   engineVersion     String
+  /// Constats techniques au moment du diagnostic (statut, tests, historique) : permettent de valider une interprétation IA plus tard
+  facts             Json?
+  /// Interprétation IA validée, aides données : { interpretation, help[] }
+  ai                Json?
   createdAt         DateTime       @default(now())
 
   user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  followups DiagnosisFollowup[]
   answer Answer? @relation(fields: [answerId], references: [id], onDelete: Cascade)
   labRun LabRun? @relation(fields: [labRunId], references: [id], onDelete: Cascade)
   skillObservations SkillObservation[]
@@ -1137,4 +1143,26 @@ model SkillObservation {
 
   @@index([userId, skill, createdAt])
   @@index([reportId])
+}
+
+/// Question de vérification posée à l'étudiant après un diagnostic, et sa réponse : elle enrichit le diagnostic
+/// (on ne déduit pas la compréhension d'un code isolé).
+model DiagnosisFollowup {
+  id         String    @id @default(cuid())
+  userId     String
+  reportId   String
+  question   String
+  /// Ce que la question cherche à vérifier (visible : l'étudiant sait pourquoi on lui demande)
+  purpose    String
+  answer     String?
+  /// { understanding: understood | partial | not_understood | unclear | unassessed, justification, source: ai | none }
+  assessment Json?
+  createdAt  DateTime  @default(now())
+  answeredAt DateTime?
+
+  user   User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  report DiagnosisReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@index([reportId])
+  @@index([userId, createdAt])
 }

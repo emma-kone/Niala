@@ -16,7 +16,7 @@ let dir: string;
 let A: string;
 let B: string;
 
-const MIGRATIONS = ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261105000000_niala_diagnosis", "20261106000000_niala_progression"];
+const MIGRATIONS = ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261105000000_niala_diagnosis", "20261106000000_niala_progression", "20261107000000_niala_followups"];
 
 beforeAll(async () => {
   pg = await PGlite.create();
