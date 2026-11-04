@@ -275,3 +275,18 @@ export function languageOf(l: string): "javascript" | "typescript" | "python" | 
   if (v === "sql" || v === "sqlite") return "sql";
   return null;
 }
+
+/** Langages proposés dans l'éditeur SANS exécution : aucun compilateur sûr n'est disponible, rien n'est jamais simulé. */
+export const EDITOR_ONLY_LANGUAGES = [
+  { id: "c", label: "C" },
+  { id: "csharp", label: "C#" },
+] as const;
+
+export type EditorOnlyLanguage = (typeof EDITOR_ONLY_LANGUAGES)[number]["id"];
+
+export function editorOnlyLanguage(l: string): EditorOnlyLanguage | null {
+  const v = l.toLowerCase().trim();
+  if (v === "c") return "c";
+  if (v === "c#" || v === "cs" || v === "csharp") return "csharp";
+  return null;
+}

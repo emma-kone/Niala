@@ -18,6 +18,8 @@ const CODE_LANGS = [
   { id: "python", label: "Python 3" },
   { id: "javascript", label: "JavaScript" },
   { id: "typescript", label: "TypeScript" },
+  { id: "c", label: "C (sans exécution)" },
+  { id: "csharp", label: "C# (sans exécution)" },
 ];
 
 interface Capabilities {

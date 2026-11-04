@@ -138,6 +138,18 @@ describe("mode libre", () => {
     expect(name.diagnoses[0]).toMatchObject({ category: "INSTRUCTION", kind: "schema_name" });
   }, 60_000);
 
+  it("C et C# : espace d'écriture avec modèle, mais jamais d'exécution ni de résultat simulé", async () => {
+    for (const [language, file, marker, label] of [["c", "main.c", "#include <stdio.h>", "C"], ["C#", "Program.cs", "Console.WriteLine", "C#"]] as const) {
+      const w = await labs.createFree(A, { kind: "CODE", language });
+      expect(w.files[0]).toMatchObject({ name: file, language: language === "C#" ? "csharp" : "c" });
+      expect(w.files[0].content).toContain(marker);
+      await expect(labs.runWorkspace(A, w.id, { mode: "run", content: w.files[0].content })).rejects.toMatchObject({ status: 422, message: expect.stringContaining(`Le langage ${label} n'est pas exécutable`) });
+      expect(await db.labRun.count({ where: { workspaceId: w.id } })).toBe(0);
+    }
+    await expect(labs.createFree(A, { kind: "CODE", language: "cobol" })).rejects.toMatchObject({ status: 422 });
+    expect(labs.labCapabilities().editorOnly.map((l) => l.id)).toEqual(["c", "csharp"]);
+  });
+
   it("Python libre", async () => {
     const w = await labs.createFree(A, { kind: "CODE", language: "python" });
     const r = await labs.runWorkspace(A, w.id, { content: "n = int(input())\nprint(n * 2)", stdin: "21\n" });

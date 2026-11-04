@@ -8,6 +8,9 @@ import CodeMirror, { type Extension } from "@uiw/react-codemirror";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { javascript } from "@codemirror/lang-javascript";
 import { python } from "@codemirror/lang-python";
+import { cpp } from "@codemirror/lang-cpp";
+import { StreamLanguage } from "@codemirror/language";
+import { csharp } from "@codemirror/legacy-modes/mode/clike";
 import { sql as sqlLang } from "@codemirror/lang-sql";
 import { ChevronRight, FileText, FlaskConical, Lightbulb, Loader2, Play, Eye, Trash2 } from "lucide-react";
 import { api } from "@/lib/client-api";
@@ -108,9 +111,14 @@ export default function LabWorkspace({ id }: { id: string }) {
 
   const kind = ws?.kind;
   const lang = ws?.files[0]?.language ?? "python";
-  const extensions = useMemo<Extension[]>(() => (lang === "sql" ? [sqlLang()] : lang === "python" ? [python()] : [javascript({ typescript: lang === "typescript" })]), [lang]);
+  const editorOnly = lang === "c" || lang === "csharp";
+  const extensions = useMemo<Extension[]>(
+    () => (lang === "sql" ? [sqlLang()] : lang === "python" ? [python()] : lang === "c" ? [cpp()] : lang === "csharp" ? [StreamLanguage.define(csharp)] : [javascript({ typescript: lang === "typescript" })]),
+    [lang]
+  );
 
   async function exec(mode: "run" | "tests") {
+    if (editorOnly) return;
     setRunning(mode);
     setRunError(null);
     try {
@@ -240,7 +248,16 @@ export default function LabWorkspace({ id }: { id: string }) {
             />
           </div>
 
-          {kind === "CODE" && (
+          {editorOnly && (
+            <Alert>
+              <AlertTitle>Coloration syntaxique seulement</AlertTitle>
+              <AlertDescription>
+                Le langage {lang === "csharp" ? "C#" : "C"} n&apos;est pas exécutable dans Niala : aucun compilateur sûr n&apos;est disponible et rien n&apos;est simulé. Utilisez l&apos;éditeur pour écrire et relire votre code, puis compilez-le sur votre machine.
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {kind === "CODE" && !editorOnly && (
             <details className="rounded-md border p-2 text-sm">
               <summary className="cursor-pointer font-medium">Entrée standard (input / readLine)</summary>
               <Textarea aria-label="Entrée standard" value={stdin} onChange={(e) => setStdin(e.target.value)} rows={3} maxLength={4000} className="mt-2 font-mono text-xs" placeholder="Une ligne par appel à input() (Python) ou readLine() (JS/TS)" />
@@ -248,7 +265,7 @@ export default function LabWorkspace({ id }: { id: string }) {
           )}
 
           <div className="flex flex-wrap gap-2">
-            <Button className="gap-2" onClick={() => void exec("run")} disabled={running !== null || !code.trim()}>
+            <Button className="gap-2" onClick={() => void exec("run")} disabled={running !== null || !code.trim() || editorOnly} title={editorOnly ? "Exécution indisponible pour ce langage" : undefined}>
               {running === "run" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Play className="h-4 w-4" aria-hidden />} Exécuter <kbd className="ml-1 hidden rounded border px-1 text-[10px] sm:inline">Ctrl+↵</kbd>
             </Button>
             {hasTests && (
@@ -262,7 +279,7 @@ export default function LabWorkspace({ id }: { id: string }) {
             {ws.canReveal && !ws.brief?.revealedAt && <Button variant="ghost" className="gap-2" onClick={() => void reveal()}><Eye className="h-4 w-4" aria-hidden /> Voir la solution</Button>}
             {ws.brief?.revealedAt && <Button variant="ghost" className="gap-2" onClick={() => void reveal()}><Eye className="h-4 w-4" aria-hidden /> Revoir la solution</Button>}
           </div>
-          {!run && <p className="text-xs text-muted-foreground">Exécutez d&apos;abord votre code : les indices s&apos;appuient sur le résultat réel.</p>}
+          {!run && !editorOnly && <p className="text-xs text-muted-foreground">Exécutez d&apos;abord votre code : les indices s&apos;appuient sur le résultat réel.</p>}
           {runError && <Alert variant="destructive"><AlertTitle>Exécution impossible</AlertTitle><AlertDescription>{runError}</AlertDescription></Alert>}
         </div>
 
