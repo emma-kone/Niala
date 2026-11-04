@@ -5,6 +5,7 @@ import { ApiHttpError } from "@/lib/api-helpers";
 import type { QuestionType } from "@/server/domain/exercise-model";
 import { gradeAnswer } from "./evaluation";
 import { loadHistory, recordDiagnosis } from "@/server/diagnosis/record";
+import { analyzeExerciseAnswer } from "@/server/diagnosis/analyzers/exercise";
 import { refreshProgress } from "@/server/services/progress/progress";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -102,9 +103,14 @@ export interface AttemptQuestionDto {
   payload: Record<string, unknown>;
   answer: unknown;
   /** Présents uniquement une fois la tentative corrigée. */
-  result?: (FeedbackJson & { questionExplanation: string | null }) | null;
+  result?: (FeedbackJson & { questionExplanation: string | null; diagnosis?: unknown }) | null;
   sourceRefs?: { quote: string; page: number | null }[];
   concepts?: { id: string; name: string }[];
+}
+
+/** Version publique d'un diagnostic enregistré. */
+function toReportDto(r: Awaited<ReturnType<typeof db.diagnosisReport.findMany>>[number]) {
+  return { id: r.id, state: r.state, primary: r.primary, secondary: r.secondary, summary: r.summary, evidence: r.evidence, prerequisites: r.prerequisites, severity: r.severity, confidence: r.confidence, pedagogical: r.pedagogical, recommendedAction: r.recommendedAction, needsVerification: r.needsVerification };
 }
 
 export async function getAttempt(userId: string, id: string) {
@@ -112,6 +118,8 @@ export async function getAttempt(userId: string, id: string) {
   const snap = a.snapshot as unknown as Snapshot;
   const graded = a.status === "GRADED";
   const answerOf = new Map(a.answers.map((x) => [x.position, x]));
+  const reports = graded ? await db.diagnosisReport.findMany({ where: { userId, answerId: { in: a.answers.map((x) => x.id) } } }) : [];
+  const reportOf = new Map(reports.map((r) => [r.answerId, r]));
 
   const questions: AttemptQuestionDto[] = snap.questions.map((q) => {
     const ans = answerOf.get(q.position);
@@ -127,7 +135,7 @@ export async function getAttempt(userId: string, id: string) {
     const fb = (ans?.feedback as FeedbackJson | null) ?? null;
     return {
       ...base,
-      result: fb ? { ...fb, explanation: fb.explanation ?? q.explanation, questionExplanation: q.explanation } : null,
+      result: fb ? { ...fb, explanation: fb.explanation ?? q.explanation, questionExplanation: q.explanation, diagnosis: ans && reportOf.get(ans.id) ? toReportDto(reportOf.get(ans.id)!) : null } : null,
       sourceRefs: q.sourceRefs,
       concepts: q.concepts,
     };
@@ -209,17 +217,40 @@ async function gradePositions(userId: string, a: Awaited<ReturnType<typeof owned
       create: { userId, attemptId: a.id, position: q.position, ...data, value: (prev?.value ?? "") as Prisma.InputJsonValue },
       update: data,
     });
-    // Diagnostic d'erreur (code/SQL exécutés) : remplacé à chaque correction, justifié par les tests concernés.
-    const diagnoses = (g.detail?.diagnoses ?? []) as { category: ErrorCategory; kind: string; confidence: number; label: string; tests: string[] }[];
+    // Diagnostic d'erreur : remplacé à chaque correction. Code/SQL exécutés : constats des tests. Autres types : constats de la
+    // correction (réponse attendue vs donnée, critères manqués, valeur numérique), présentés comme des hypothèses de confiance modérée.
+    const executed = (q.type === "code" || q.type === "sql") && g.detail?.executed;
+    const classic = !executed && !(q.type === "code" || q.type === "sql" || q.type === "practical") && (g.verdict === "partial" || g.verdict === "incorrect");
+    const observation = classic ? analyzeExerciseAnswer(q.type, q.answerKey as Record<string, unknown>, prev?.value ?? null, g) : null;
+    const diagnoses = (observation ? observation.diagnoses : (g.detail?.diagnoses ?? [])) as { category: ErrorCategory; kind: string; confidence: number; label: string; tests: string[] }[];
     await db.errorDiagnosis.deleteMany({ where: { userId, answerId: saved.id } });
     if (diagnoses.length) {
       await db.errorDiagnosis.createMany({
-        data: diagnoses.map((d) => ({ userId, answerId: saved.id, conceptId: q.concepts[0]?.id ?? null, category: d.category, confidence: d.confidence, evidence: { source: "tests", kind: d.kind, label: d.label, tests: d.tests, questionPosition: q.position } as unknown as Prisma.InputJsonValue })),
+        data: diagnoses.map((d) => ({ userId, answerId: saved.id, conceptId: q.concepts[0]?.id ?? null, category: d.category, confidence: d.confidence, evidence: { source: observation ? "rules" : "tests", ...(observation ? { hypothesis: true } : {}), kind: d.kind, label: d.label, tests: d.tests, questionPosition: q.position } as unknown as Prisma.InputJsonValue })),
       });
     }
     // Diagnostic unifié des questions de code et de SQL exécutées (les autres types viendront avec leur analyseur).
     await db.diagnosisReport.deleteMany({ where: { userId, answerId: saved.id } });
-    if ((q.type === "code" || q.type === "sql") && g.detail?.executed) {
+    if (observation) {
+      await recordDiagnosis({
+        userId,
+        activity: "EXERCISE",
+        answerId: saved.id,
+        subjectId: snap.exercise.subjectId,
+        engine: {
+          activity: "EXERCISE",
+          status: "fail",
+          diagnoses: observation.diagnoses,
+          expected: g.expected,
+          observed: observation.observed,
+          // faits observés (réponse attendue vs donnée, critères manqués…) : seules preuves avancées
+          error: undefined,
+          concepts: q.concepts.map((c) => ({ id: c.id, name: c.name })),
+          extraEvidence: observation.facts,
+        },
+        history: (category) => loadHistory({ userId, category, conceptId: q.concepts[0]?.id ?? null, excludeAnswerId: saved.id }),
+      });
+    } else if ((q.type === "code" || q.type === "sql") && g.detail?.executed) {
       const summary = g.detail.summary as { passed: number; total: number; edgePassed: number; edgeTotal: number } | undefined;
       await recordDiagnosis({
         userId,

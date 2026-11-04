@@ -30,6 +30,8 @@ export interface EngineInput {
   error?: { type: string; message: string; line?: number };
   expected?: unknown;
   observed?: unknown;
+  /** Faits observés par l'analyseur de l'activité (ajoutés tels quels aux preuves). */
+  extraEvidence?: string[];
   tests?: { passed: number; total: number; edgePassed: number; edgeTotal: number };
   concepts: { id?: string; name: string }[];
   /** Prérequis des notions concernées dont la maîtrise est mesurée (relation PREREQUISITE). */
@@ -132,7 +134,7 @@ export function buildReport(input: EngineInput): Report {
 
   // ── Constats déterministes ───────────────────────────────────────────────
   const found = [...input.diagnoses].sort((a, b) => rank(a.category as Category) - rank(b.category as Category) || b.confidence - a.confidence);
-  const evidence: string[] = [];
+  const evidence: string[] = [...(input.extraEvidence ?? [])];
   for (const d of found) evidence.push(d.label);
   if (input.error) evidence.push(`Message de l'outil : ${input.error.type} : ${input.error.message}${input.error.line ? ` (ligne ${input.error.line})` : ""}`);
   if (input.tests && input.tests.total) evidence.push(`${input.tests.passed} test(s) réussi(s) sur ${input.tests.total}${input.tests.edgeTotal ? ` (cas limites : ${input.tests.edgePassed}/${input.tests.edgeTotal})` : ""}.`);
@@ -194,7 +196,7 @@ export function buildReport(input: EngineInput): Report {
   }
 
   const logicRatio = input.tests && input.tests.total ? input.tests.passed / input.tests.total : null;
-  const severity: Severity = primary === "CONCEPT" || primary === "ALGORITHM" || hist.sameCategory >= 2 ? "high" : primary === "LOGIC" && logicRatio !== null && logicRatio < 0.5 ? "high" : primary === "SYNTAX" || primary === "INSTRUCTION" || primary === "LOGIC" ? "medium" : "low";
+  const severity: Severity = primary === "ALGORITHM" || (primary === "CONCEPT" && (confidence >= 0.6 || hist.sameCategory >= 1)) || hist.sameCategory >= 2 ? "high" : primary === "LOGIC" && logicRatio !== null && logicRatio < 0.5 ? "high" : primary === "SYNTAX" || primary === "INSTRUCTION" || primary === "LOGIC" || primary === "CONCEPT" ? "medium" : "low";
 
   return {
     ...base,

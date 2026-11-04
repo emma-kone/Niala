@@ -267,8 +267,10 @@ export async function progress(userId: string, subjectId?: string) {
   const since = new Date(Date.now() - 30 * 24 * 3600 * 1000);
   const diag = await db.errorDiagnosis.findMany({ where: { userId, createdAt: { gte: since } }, select: { category: true, evidence: true, conceptId: true } });
   const byCategory = new Map<string, number>();
-  for (const d of diag) if ((d.evidence as { source?: string } | null)?.source !== "ai") byCategory.set(d.category, (byCategory.get(d.category) ?? 0) + 1);
-  const hypotheses = diag.filter((d) => (d.evidence as { source?: string } | null)?.source === "ai").length;
+  // Les hypothèses (suppositions de l'IA ou lecture d'une réponse fausse) sont comptées à part des erreurs établies par les outils.
+  const isHypothesis = (e: { source?: string; hypothesis?: boolean } | null) => e?.source === "ai" || e?.hypothesis === true;
+  for (const d of diag) if (!isHypothesis(d.evidence as { source?: string; hypothesis?: boolean } | null)) byCategory.set(d.category, (byCategory.get(d.category) ?? 0) + 1);
+  const hypotheses = diag.filter((d) => isHypothesis(d.evidence as { source?: string; hypothesis?: boolean } | null)).length;
 
   return {
     concepts: concepts

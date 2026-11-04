@@ -1,3 +1,4 @@
+import type { DiagnosisReportDto } from "@/features/labs/types";
 import type { QuestionType } from "@/server/domain/exercise-types";
 
 export interface ExerciseListItem {
@@ -41,6 +42,7 @@ export interface QuestionResult {
   detail?: Record<string, unknown>;
   explanation: string | null;
   questionExplanation: string | null;
+  diagnosis?: DiagnosisReportDto | null;
   method: "rule" | "keywords" | "ai" | "tests";
 }
 

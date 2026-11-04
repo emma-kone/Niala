@@ -286,6 +286,14 @@ describe("tentatives et correction", () => {
     expect(byType.open.verdict).toBe("ungraded");
     expect(byType.open.points).toBeNull();
     expect(r.ungraded).toBe(1);
+    // diagnostic unifié : seulement pour la réponse fausse, présenté comme une hypothèse (jamais pour une réussite ni une réponse non corrigée)
+    const diag = (byType.true_false as unknown as { diagnosis: { primary: string; state: string; needsVerification: boolean; confidence: number } | null }).diagnosis;
+    expect(diag).toMatchObject({ primary: "CONCEPT", state: "DETERMINED", needsVerification: true });
+    expect(diag!.confidence).toBeLessThan(0.5);
+    expect((byType.qcm_single as unknown as { diagnosis: unknown }).diagnosis).toBeNull();
+    expect((byType.open as unknown as { diagnosis: unknown }).diagnosis).toBeNull();
+    const hypo = await db.errorDiagnosis.findMany({ where: { userId: A, answer: { attemptId } } });
+    expect(hypo.every((h) => (h.evidence as { hypothesis?: boolean }).hypothesis === true)).toBe(true);
     const pts = (t: string) => questions.find((x) => x.type === t)!.points;
     expect(r.score).toBeCloseTo(pts("qcm_single") + pts("short_answer"), 2);
     expect(r.maxScore).toBe(10);
