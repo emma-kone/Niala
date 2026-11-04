@@ -28,7 +28,7 @@ export default function LoginView() {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-background">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" aria-hidden />
-        <p className="typo-subtitle">Chargement de StudyForge AI…</p>
+        <p className="typo-subtitle">Chargement de Niala…</p>
       </div>
     );
   }
@@ -60,7 +60,7 @@ export default function LoginView() {
             <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-lg">
               <GraduationCap className="h-7 w-7" aria-hidden />
             </div>
-            <h1 className="typo-display">StudyForge AI</h1>
+            <h1 className="typo-display">Niala</h1>
             <p className="typo-subtitle max-w-sm">
               Importez vos cours, générez des exercices personnalisés, codez, pratiquez le SQL et suivez votre progression.
             </p>
@@ -112,7 +112,7 @@ export default function LoginView() {
         </div>
       </main>
       <footer className="mt-auto border-t bg-muted/40 px-6 py-3 text-center">
-        <p className="typo-meta">StudyForge AI · Plateforme privée · Session sécurisée chiffrée (HMAC-SHA256, httpOnly)</p>
+        <p className="typo-meta">Niala · Plateforme privée · Session sécurisée chiffrée (HMAC-SHA256, httpOnly)</p>
       </footer>
     </div>
   );

@@ -9,15 +9,16 @@
 | `SUPABASE_SERVICE_ROLE_KEY` | oui en production | Stockage des fichiers originaux (bucket privé `documents`, créé automatiquement). **Serveur uniquement : ne jamais exposer au client.** Sans elle : stockage disque local (développement). |
 | `SUPABASE_STORAGE_BUCKET` | non | Nom du bucket (défaut `documents`) |
 | `STORAGE_DIR` | non | Dossier du stockage local (défaut `./storage`) |
-| `ANTHROPIC_API_KEY` | pour les fonctions IA | Sans elle : l'analyse n'extrait que le plan issu de la numérotation, les autres fonctions IA sont indisponibles et le disent |
-| `ANTHROPIC_MODEL` | non | Modèle utilisé par la V2 (défaut `claude-sonnet-5-5`) |
+| `GEMINI_API_KEY` | pour les fonctions IA | Clé Google Gemini (fournisseur principal). **Serveur uniquement** : jamais dans le code, le client ou Git. Sans elle : plan issu de la numérotation seulement, les autres fonctions IA sont indisponibles et le disent |
+| `GEMINI_MODEL` | non | Modèle Gemini (défaut `gemini-3.5-flash-lite`, vérifié disponible ; `gemini-3.6-flash` et `gemini-3.8-flash` existent mais répondaient très lentement ou en 503 lors des essais) |
+| `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | non | Repli, utilisé uniquement si `GEMINI_API_KEY` est absente |
 | `AI_DAILY_CALL_LIMIT` | non | Appels IA maximum par utilisateur et par 24 h (défaut 300) |
 | `LAB_MAX_CONCURRENT` | non | Nombre maximum d'exécutions isolées simultanées (défaut 3 ; chaque exécution Python pèse ~100 Mo) |
 | `EXERCISE_MAX_QUESTIONS` | non | Nombre maximum de questions par exercice (défaut 40, plafond 100) |
 | `NEXT_DIST_DIR` | non | Dossier de build Next (utilisé par `scripts/dev-local.mjs` pour coexister avec un autre `next dev`) |
 | `PRISMA_LOG_QUERIES` | non | `1` pour journaliser les requêtes SQL en développement |
 
-Les variables `GEMINI_*`, `OPENROUTER_*` et `AI_PROVIDER` du `.env` actuel ne sont plus utilisées.
+Les variables `OPENROUTER_*` et `AI_PROVIDER` du `.env` ne sont plus utilisées. Un modèle `.env.example` (sans valeur) est fourni.
 
 ## Développement local sans Supabase
 

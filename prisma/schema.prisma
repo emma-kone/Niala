@@ -57,7 +57,7 @@ model User {
 model UserSettings {
   id            String  @id @default(cuid())
   userId        String  @unique
-  theme         String  @default("system") // light | dark | system
+  theme         String  @default("dark") // light | dark | system
   defaultMode   String  @default("apprentissage")
   maxUploadMB   Int     @default(20)
   hintsEnabled  Boolean @default(true)
@@ -370,7 +370,7 @@ model AIUsageLog {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-//                              STUDYFORGE V2
+//                              NIALA V2
 // Principes : chaque table porte un userId (isolation + RLS) ; le JSON n'est
 // utilisé que pour des contenus validés par zod côté serveur ; les fichiers
 // originaux vivent dans le stockage objet (DocumentVersion.storageKey), le texte

@@ -20,7 +20,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-background">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" aria-hidden />
-        <p className="typo-subtitle">Chargement de StudyForge AI…</p>
+        <p className="typo-subtitle">Chargement de Niala…</p>
       </div>
     );
   }

@@ -1,4 +1,4 @@
-# StudyForge V2 — Audit de la V1 et plan de migration
+# Niala V2 — Audit de la V1 et plan de migration
 
 Statut : **étapes 1 (audit) et 2 (conception) terminées, étape 3 (validation) en attente.** Aucun code applicatif n'a été modifié.
 

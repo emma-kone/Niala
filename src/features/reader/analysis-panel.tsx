@@ -290,7 +290,7 @@ export function AnalysisPanel({ docId, subjectId, onGoToPage }: { docId: string;
       <div className="space-y-2 border-b p-3">
         {!data.aiConfigured && (
           <p role="note" className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
-            Le service d&apos;IA n&apos;est pas configuré (variable <code>ANTHROPIC_API_KEY</code>). Le plan est détecté à partir de la numérotation du document ; les notions ne peuvent pas être extraites.
+            Le service d&apos;IA n&apos;est pas configuré (variable <code>GEMINI_API_KEY</code>). Le plan est détecté à partir de la numérotation du document ; les notions ne peuvent pas être extraites.
           </p>
         )}
         <div className="flex items-center gap-2">

@@ -1,6 +1,6 @@
-# Architecture de StudyForge V2
+# Architecture de Niala V2
 
-StudyForge est un environnement d'étude personnel assisté par IA : Next.js 16 (App Router), React 19, Prisma 6 sur Postgres (Supabase), Anthropic pour l'IA. Une seule application, pas de micro-services.
+Niala est un environnement d'étude personnel assisté par IA : Next.js 16 (App Router), React 19, Prisma 6 sur Postgres (Supabase), Google Gemini pour l'IA. Une seule application, pas de micro-services.
 
 ## 1. Vue d'ensemble
 
@@ -17,7 +17,7 @@ src/server/services/**   logique métier + accès base (Prisma), TOUJOURS filtr�
    │        ├─ src/server/storage/**  fichiers originaux (Supabase Storage ou disque local)
    │        └─ src/server/labs/runner exécution isolée du code étudiant (processus séparé)
    ▼
-Postgres (Prisma)                Supabase Storage (bucket privé)          Anthropic API
+Postgres (Prisma)                Supabase Storage (bucket privé)          Gemini API   
 ```
 
 Règle d'architecture : **un composant React ou une route API n'appelle jamais l'IA**. Seuls les services passent par `src/server/ai/structured.ts`.
@@ -31,7 +31,7 @@ Règle d'architecture : **un composant React ou une route API n'appelle jamais l
 | `src/features/…` | Interface par module (subjects, subject-files, reader, notes, maps, exercises, labs, progress, dashboard) |
 | `src/server/domain/` | Règles pures : validation de fichiers, arbre de dossiers, chunking, plan (`structure-parser`), notes (liste blanche Tiptap), cartes, barème et correction d'exercices, tests de laboratoire, maîtrise, recommandations |
 | `src/server/services/` | `folders`, `documents`, `notes`, `maps`, `analysis/*`, `exercises/*`, `labs/*`, `progress/*` |
-| `src/server/ai/` | `provider` (interface + Anthropic), `structured` (appel structuré), `guard` (injection, citations) |
+| `src/server/ai/` | `provider` (interface + Gemini, repli Anthropic), `structured` (appel structuré), `guard` (injection, citations) |
 | `src/server/labs/runner/` | `host.ts` (parent) et `child.mjs` (processus isolé) |
 | `src/lib/` | Auth, base, helpers d'API, propriété (`ownership.ts`), extraction de texte |
 | `prisma/` | Schéma, migrations (V1 → V2), script d'archivage optionnel |

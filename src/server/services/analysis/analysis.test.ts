@@ -98,7 +98,7 @@ beforeAll(async () => {
   process.env.DIRECT_URL = process.env.DATABASE_URL;
   process.env.STORAGE_DIR = dir;
   delete process.env.SUPABASE_SERVICE_ROLE_KEY;
-  delete process.env.ANTHROPIC_API_KEY;
+  process.env.GEMINI_API_KEY = ""; // vide (et non supprimé) : Prisma recharge .env sinon
   db = (await import("@/lib/db")).db;
   docs = await import("@/server/services/documents");
   svc = await import("./analysis-service");

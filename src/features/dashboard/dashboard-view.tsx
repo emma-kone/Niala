@@ -67,7 +67,7 @@ export default function DashboardView() {
     return (
       <div className="mx-auto max-w-xl px-4 py-16 text-center">
         <GraduationCap className="mx-auto h-10 w-10 text-muted-foreground" aria-hidden />
-        <h1 className="typo-h2 mt-3">Bienvenue sur StudyForge</h1>
+        <h1 className="typo-h2 mt-3">Bienvenue sur Niala</h1>
         <p className="typo-subtitle mt-2">Créez votre première matière et importez-y vos cours : le tableau de bord se construira avec votre travail réel.</p>
         <Button asChild className="mt-6"><Link href={routes.subjects}>Créer une matière</Link></Button>
       </div>

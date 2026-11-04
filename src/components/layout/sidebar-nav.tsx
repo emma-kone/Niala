@@ -26,7 +26,7 @@ export function SidebarNav({ user, onLogout }: SidebarNavProps) {
           <GraduationCap className="h-5 w-5" aria-hidden />
         </div>
         <div>
-          <p className="typo-h3 leading-tight">StudyForge AI</p>
+          <p className="typo-h3 leading-tight">Niala</p>
           <p className="typo-meta">Apprentissage assisté par IA</p>
         </div>
       </div>

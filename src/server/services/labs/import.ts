@@ -79,7 +79,7 @@ export interface ImportResult {
 }
 
 export async function extractLabExercises(userId: string, input: { documentId: string; kind: "CODE" | "SQL"; language?: string }): Promise<ImportResult> {
-  if (!isAiConfigured()) throw new ApiHttpError("L'import d'énoncés nécessite le service d'IA, qui n'est pas configuré (ANTHROPIC_API_KEY).", 503);
+  if (!isAiConfigured()) throw new ApiHttpError("L'import d'énoncés nécessite le service d'IA, qui n'est pas configuré (GEMINI_API_KEY).", 503);
   const doc = await db.document.findFirst({ where: { id: input.documentId, userId }, include: { currentVersion: true } });
   if (!doc) throw new ApiHttpError("Document introuvable.", 404);
   const version = doc.currentVersion;

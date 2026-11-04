@@ -1,8 +1,8 @@
-# StudyForge V2
+# Niala V2
 
 Environnement d'étude personnel assisté par IA : on y range ses cours, on les lit fidèlement, on prend des notes, on cartographie la structure et les notions, on s'exerce (exercices générés à partir d'un document, laboratoires de code et de SQL à tests objectifs) et on suit sa progression par notion — avec un niveau de confiance affiché et sans jamais confondre une note avec une maîtrise.
 
-Next.js 16 · React 19 · Prisma 6 · Postgres (Supabase) · Anthropic.
+Next.js 16 · React 19 · Prisma 6 · Postgres (Supabase) · Google Gemini.
 
 ## Démarrer
 ```bash

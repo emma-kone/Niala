@@ -26,7 +26,7 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import { ArrowLeft, History, LayoutGrid, Loader2, Plus, Save, Trash2 } from "lucide-react";
-import { useTheme } from "next-themes";
+import { useTheme } from "@/components/theme/theme-provider";
 import { api, ApiError } from "@/lib/client-api";
 import { routes } from "@/config/routes";
 import { cn } from "@/lib/utils";

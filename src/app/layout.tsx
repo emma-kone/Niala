@@ -2,9 +2,10 @@ import type { Metadata, Viewport } from "next";
 import { Bricolage_Grotesque, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
+import { ThemeProvider, THEME_INIT_SCRIPT } from "@/components/theme/theme-provider";
 
 /**
- * ── TYPOGRAPHIE GLOBALE STUDYFORGE AI ─────────────────────────────────────────
+ * ── TYPOGRAPHIE GLOBALE NIALA ─────────────────────────────────────────
  * Police principale : Bricolage Grotesque (importée depuis Google Fonts via
  * next/font — auto-hébergée, zéro décalage de mise en page, fallback ajusté
  * automatiquement, `font-display: swap`).
@@ -28,7 +29,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "StudyForge AI — Plateforme d'apprentissage assistée par IA",
+  title: "Niala — Plateforme d'apprentissage assistée par IA",
   description:
     "Importez vos cours, générez des exercices personnalisés, codez et pratiquez le SQL, suivez votre progression. Plateforme personnelle d'apprentissage assistée par intelligence artificielle.",
   icons: {
@@ -38,8 +39,7 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
-    { media: "(prefers-color-scheme: dark)", color: "#0c0a09" },
+    { color: "#0c0a09" },
   ],
 };
 
@@ -52,11 +52,17 @@ export default function RootLayout({
     <html
       lang="fr"
       suppressHydrationWarning
-      className={`${bricolageGrotesque.variable} ${jetbrainsMono.variable}`}
+      className={`${bricolageGrotesque.variable} ${jetbrainsMono.variable} dark`}
     >
+      <head>
+        {/* Thème appliqué avant le premier rendu : sombre par défaut, sans flash */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+      </head>
       <body className="antialiased bg-background text-foreground">
-        {children}
-        <Toaster />
+        <ThemeProvider>
+          {children}
+          <Toaster />
+        </ThemeProvider>
       </body>
     </html>
   );

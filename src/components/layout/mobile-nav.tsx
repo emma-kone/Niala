@@ -15,7 +15,7 @@ export function MobileNav({ onLogout }: { onLogout: () => void }) {
       <div className="flex items-center justify-between px-4 py-2.5">
         <div className="flex items-center gap-2">
           <GraduationCap className="h-5 w-5" aria-hidden />
-          <span className="font-semibold">StudyForge AI</span>
+          <span className="font-semibold">Niala</span>
         </div>
         <Button variant="ghost" size="sm" onClick={onLogout}>
           <LogOut className="h-4 w-4" aria-hidden />

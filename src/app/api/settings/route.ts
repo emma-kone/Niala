@@ -2,12 +2,15 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { handle, readJson } from "@/lib/api-helpers";
+import { getProvider } from "@/server/ai/provider";
 
 export async function GET() {
   return handle(async () => {
     const user = await requireUser();
     const settings = await db.userSettings.upsert({ where: { userId: user.id }, create: { userId: user.id }, update: {} });
-    return { settings, user: { id: user.id, email: user.email, name: user.name } };
+    const ai = getProvider();
+    // Le modèle réellement utilisé vient de la configuration serveur, pas de la ligne en base.
+    return { settings, ai: { configured: !!ai, provider: ai?.name ?? null, model: ai?.model ?? null }, user: { id: user.id, email: user.email, name: user.name } };
   });
 }
 

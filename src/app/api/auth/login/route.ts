@@ -18,6 +18,8 @@ export async function POST(req: Request) {
     if (!user || !verifyPassword(password, user.passwordHash)) {
       return jsonError("E-mail ou mot de passe incorrect.", 401);
     }
+    // Les préférences existent dès la connexion (valeurs par défaut Niala : thème sombre…)
+    await db.userSettings.upsert({ where: { userId: user.id }, create: { userId: user.id }, update: {} });
     await setSessionCookie(user.id);
     return NextResponse.json({ ok: true, user: { id: user.id, email: user.email, name: user.name } });
   });

@@ -4,7 +4,7 @@ import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Store applicatif StudyForge AI
+// Store applicatif Niala
 // - État transitoire : authentification (revérifiée au démarrage)
 // - État d'interface PERSISTANT (localStorage) : navigation de la bibliothèque,
 //   filtres, brouillons d'import, configuration de génération, brouillons de
@@ -12,6 +12,9 @@ import { persist, createJSONStorage } from "zustand/middleware";
 //   → Un changement de route ne réinitialise plus le travail en cours : les
 //   composants peuvent être démontés/remontés sans perte.
 // ─────────────────────────────────────────────────────────────────────────────
+
+/** Ancienne clé de persistance locale, conservée uniquement pour la reprise des données. */
+const LEGACY_STORAGE_KEY = "studyforge-ui-v1";
 
 export interface AppUser {
   id: string;
@@ -213,9 +216,17 @@ export const useAppStore = create<AppState>()(
         })),
     }),
     {
-      name: "studyforge-ui-v1",
+      name: "niala-ui-v1",
       version: 2,
-      storage: createJSONStorage(() => localStorage),
+      // Reprend une fois les données de l'ancienne clé de stockage (brouillons, filtres), puis la supprime.
+      storage: createJSONStorage(() => ({
+        getItem: (n: string) => localStorage.getItem(n) ?? localStorage.getItem(LEGACY_STORAGE_KEY),
+        setItem: (n: string, v: string) => {
+          localStorage.setItem(n, v);
+          localStorage.removeItem(LEGACY_STORAGE_KEY);
+        },
+        removeItem: (n: string) => localStorage.removeItem(n),
+      })),
       migrate: (persisted) => {
         const raw = persisted as Record<string, unknown>;
         const { view: _view, activeSessionId: _session, ...rest } = raw;

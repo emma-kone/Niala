@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useTheme } from "next-themes";
+import { useTheme } from "@/components/theme/theme-provider";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import CodeMirror, { type Extension } from "@uiw/react-codemirror";
 import { oneDark } from "@codemirror/theme-one-dark";

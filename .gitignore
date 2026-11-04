@@ -21,6 +21,7 @@ db/.auth-secret
 
 # env files
 .env*
+!.env.example
 
 # typescript
 *.tsbuildinfo

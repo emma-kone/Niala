@@ -133,7 +133,7 @@ export async function generateExercise(userId: string, rawConfig: unknown) {
   const config: ExerciseConfig = parsed.data;
 
   if (!isAiConfigured()) {
-    throw new ApiHttpError("La génération d'exercices nécessite le service d'IA, qui n'est pas configuré (ANTHROPIC_API_KEY).", 503);
+    throw new ApiHttpError("La génération d'exercices nécessite le service d'IA, qui n'est pas configuré (GEMINI_API_KEY).", 503);
   }
   const doc = await db.document.findFirst({ where: { id: config.documentId, userId }, include: { currentVersion: true } });
   if (!doc) throw new ApiHttpError("Document introuvable.", 404);

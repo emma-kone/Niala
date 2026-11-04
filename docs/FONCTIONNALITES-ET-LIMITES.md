@@ -8,6 +8,7 @@ Légende : **✔ testé** = test automatisé sur vraie base PGlite / vraie exéc
 |---|---|---|
 | Matières et fichiers | Matières ; dossiers libres et récursifs (créer, renommer, déplacer, supprimer) ; import PDF/texte/Markdown/etc. en 3 temps avec contrôle de signature, SHA-256, extraction par page ; états de traitement ; recherche dans le contenu ; déplacement groupé ; suppression (fichiers du stockage compris) | ✔ testé, ✔ vu |
 | Lecteur fidèle | Original affiché tel quel (pdf.js, texte, Markdown, image), pages, reprise à la dernière page, texte extrait seulement en repli | ✔ vu, ✔ testé (octet pour octet) |
+| Aperçu PDF des documents Office/texte | À l'import, DOCX, PPTX, TXT et MD sont convertis en PDF (pdf-lib, 100 % JS, stocké à côté de l'original sous la clé `<original>-pdf`, régénéré à l'ouverture s'il manque) et lus dans le lecteur PDF (pages, sélection, annotations). **Limite** : la mise en page est reconstruite (titres, paragraphes, listes, tableaux, images PNG/JPEG, code), pas reproduite à l'identique ; polices, colonnes, formes, animations et notes de diapositives sont perdues. Caractères hors Latin-1 remplacés par `?`. L'original reste téléchargeable. Repli sur le texte extrait si la conversion échoue. | ✔ testé (`src/server/pdf/convert.test.ts`), ✘ pas comparé à Word/PowerPoint sur de vrais cours |
 | Notes unifiées | Notes personnelles, de document, annotations de passage, fiches de synthèse ; éditeur riche (titres, listes, tableaux, code, citations…) ; sauvegarde automatique avec révision et gestion de conflit ; liens vers documents/passages/pages | ✔ testé, ✔ vu |
 | Analyse hiérarchique | Plan fidèle à la numérotation (CHAPITRE > I > A > 1 > a), sans IA ; notions avec citations **vérifiées** ; distinction « dans le document » / « déduit par l'IA » ; analyse versionnée par version de document ; correction manuelle (renommer, déplacer, indenter) | ✔ testé (faux fournisseur) ; ⚠ non testé contre le vrai modèle |
 | Cartes | Carte de structure et carte conceptuelle éditables (React Flow) : nœuds, relations typées, provenance, réorganisation automatique, versions restaurables, sauvegarde automatique | ✔ testé, ✔ vu |
@@ -24,7 +25,7 @@ Parcours de bout en bout automatisé : `src/server/journey.test.ts`.
 
 **IA**
 - Aucune fonction IA n'a tourné contre le **vrai modèle** (pas de clé dans l'environnement de travail). Les prompts, les schémas de réponse et les seuils sont à ajuster sur de vrais cours dès la première utilisation.
-- Sans `ANTHROPIC_API_KEY` : pas de notions, pas de génération d'exercices, pas de correction de réponses rédigées ; l'interface le dit au lieu de simuler.
+- Sans `GEMINI_API_KEY` : pas de notions, pas de génération d'exercices, pas de correction de réponses rédigées ; l'interface le dit au lieu de simuler.
 - Tests et solutions de référence des exercices de code/SQL sont écrits par l'IA : validés par cohérence (la référence les réussit), pas par un humain ; pas d'éditeur de tests.
 
 **Documents**
@@ -49,7 +50,7 @@ Parcours de bout en bout automatisé : `src/server/journey.test.ts`.
 - Stockage **Supabase** (seul le disque local a été exercé) et les migrations sur **votre** base (essayées seulement sur PGlite) ; écran tactile et rendu mobile fin de l'éditeur de cartes ; accessibilité au lecteur d'écran (structure ARIA soignée, mais pas auditée).
 
 ## À faire de votre côté
-1. Renseigner `ANTHROPIC_API_KEY` et `SUPABASE_SERVICE_ROLE_KEY`.
+1. Renseigner `GEMINI_API_KEY` et `SUPABASE_SERVICE_ROLE_KEY`.
 2. Changer `AUTH_SECRET` si le dépôt a été partagé (la V1 en avait un dans l'historique).
 3. Rejouer les migrations sur une **copie** de la base Supabase (`docs/MIGRATION.md`) avant la vraie.
 4. Facultatif : archiver les tables V1 (`prisma/optional/archive_v1_tables.sql`) après le nettoyage de code décrit dans `docs/MIGRATION.md`.

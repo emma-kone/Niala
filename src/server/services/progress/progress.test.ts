@@ -35,7 +35,7 @@ beforeAll(async () => {
   process.env.DATABASE_URL = `postgresql://postgres:postgres@127.0.0.1:${port}/postgres?connection_limit=1&pgbouncer=true`;
   process.env.DIRECT_URL = process.env.DATABASE_URL;
   process.env.STORAGE_DIR = dir;
-  delete process.env.ANTHROPIC_API_KEY;
+  process.env.GEMINI_API_KEY = ""; // vide (et non supprimé) : Prisma recharge .env sinon
   db = (await import("@/lib/db")).db;
   att = await import("@/server/services/exercises/attempts");
   prog = await import("./progress");

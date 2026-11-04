@@ -1,7 +1,7 @@
 "use client";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SettingsView — Réglages de StudyForge AI.
+// SettingsView — Réglages de Niala.
 // - Apparence : thème clair / sombre / système. Aucun ThemeProvider n'existe
 //   dans ce projet : la classe "dark" est appliquée manuellement sur <html>
 //   (au montage après chargement, puis à chaque changement).
@@ -16,6 +16,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/client-api";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { useTheme } from "@/components/theme/theme-provider";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -55,6 +56,7 @@ interface AppUser {
 
 interface SettingsResponse {
   settings: AppSettings;
+  ai?: { configured: boolean; provider: string | null; model: string | null };
   user: AppUser;
 }
 
@@ -82,7 +84,7 @@ const WEIGHT_SPECIMENS: { weight: number; className: string }[] = [
   { weight: 800, className: "font-extrabold text-lg" },
 ];
 
-const TYPE_SPECIMEN = "StudyForge AI — typographie expressive et lisible";
+const TYPE_SPECIMEN = "Niala — typographie expressive et lisible";
 
 const CODE_SPECIMEN = "const mastery = 0.87; // JetBrains Mono — réservée au code et à la console";
 
@@ -90,18 +92,6 @@ const CODE_SPECIMEN = "const mastery = 0.87; // JetBrains Mono — réservée au
 
 function isThemeChoice(value: string): value is ThemeChoice {
   return value === "light" || value === "dark" || value === "system";
-}
-
-/** Applique manuellement le thème : classe "dark" sur <html> (pas de ThemeProvider). */
-function applyThemeClass(theme: string): void {
-  if (typeof window === "undefined") return;
-  const resolved =
-    theme === "system"
-      ? window.matchMedia("(prefers-color-scheme: dark)").matches
-        ? "dark"
-        : "light"
-      : theme;
-  document.documentElement.classList.toggle("dark", resolved === "dark");
 }
 
 function errorMessage(err: unknown, fallback: string): string {
@@ -149,7 +139,8 @@ export default function SettingsView() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   // ── Réglages modifiables (état local optimiste) ──
-  const [theme, setTheme] = useState<ThemeChoice>("system");
+  const { theme: appliedTheme, setTheme: applyTheme } = useTheme();
+  const [theme, setTheme] = useState<ThemeChoice>(appliedTheme);
   const [defaultMode, setDefaultMode] = useState("apprentissage");
   const [hintsEnabled, setHintsEnabled] = useState(true);
   const [maxUploadInput, setMaxUploadInput] = useState("10");
@@ -177,18 +168,18 @@ export default function SettingsView() {
       .then((res) => {
         if (cancelled) return;
         const settings = res.settings;
-        setTheme(isThemeChoice(settings.theme) ? settings.theme : "system");
+        setTheme(isThemeChoice(settings.theme) ? settings.theme : "dark");
         setDefaultMode(settings.defaultMode);
         setHintsEnabled(settings.hintsEnabled);
         setMaxUploadInput(String(settings.maxUploadMB));
         setSavedMaxUploadMB(settings.maxUploadMB);
         setInfo({
-          aiModel: settings.aiModel,
+          aiModel: res.ai?.configured ? `${res.ai.model} (${res.ai.provider})` : "Service d'IA non configuré",
           exerciseLang: settings.exerciseLang,
           retentionDays: settings.retentionDays,
         });
         setUser(res.user);
-        applyThemeClass(settings.theme);
+        if (isThemeChoice(settings.theme)) applyTheme(settings.theme);
       })
       .catch((err: unknown) => {
         if (!cancelled) {
@@ -203,15 +194,6 @@ export default function SettingsView() {
     };
   }, []);
 
-  // Thème « système » : suivi des préférences du système d'exploitation
-  useEffect(() => {
-    if (theme !== "system" || typeof window === "undefined") return;
-    const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const onChange = () => applyThemeClass("system");
-    media.addEventListener("change", onChange);
-    return () => media.removeEventListener("change", onChange);
-  }, [theme]);
-
   // Options de mode : valeur inconnue du serveur ajoutée défensivement
   const modeOptions: ModeOption[] =
     defaultMode === "" || MODE_OPTIONS.some((m) => m.value === defaultMode)
@@ -224,14 +206,14 @@ export default function SettingsView() {
       if (!isThemeChoice(value) || savingTheme) return;
       const previous = theme;
       setTheme(value);
-      applyThemeClass(value);
+      applyTheme(value);
       setSavingTheme(true);
       try {
         await api.put<{ settings: AppSettings }>("/api/settings", { theme: value });
         toast({ title: "Réglages enregistrés", description: "Le thème a été appliqué." });
       } catch (err: unknown) {
         setTheme(previous);
-        applyThemeClass(previous);
+        applyTheme(previous);
         toast({
           title: "Enregistrement impossible",
           description: errorMessage(err, "Le thème n'a pas pu être enregistré."),

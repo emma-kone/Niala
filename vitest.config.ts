@@ -10,5 +10,7 @@ export default defineConfig({
     hookTimeout: 120_000,
     testTimeout: 60_000,
     maxWorkers: 4,
+    // Les tests ne contactent jamais un vrai fournisseur IA, même si .env contient des clés (Prisma le charge).
+    env: { GEMINI_API_KEY: "", ANTHROPIC_API_KEY: "" },
   },
 });

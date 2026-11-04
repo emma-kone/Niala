@@ -3,7 +3,7 @@
 ## Prérequis
 - Node.js 24 (l'exécution isolée utilise l'option `--permission` : Node ≥ 22 recommandé, testé avec 24)
 - Postgres (Supabase en production) — ou rien en développement (PGlite local)
-- Une clé Anthropic pour les fonctions IA (facultatif : sans elle, plan issu de la numérotation, lecteur, notes, cartes de structure, laboratoires libres et exercices déjà créés fonctionnent)
+- Une clé Google Gemini pour les fonctions IA (facultatif : sans elle, plan issu de la numérotation, lecteur, notes, cartes de structure, laboratoires libres et exercices déjà créés fonctionnent)
 
 ## Développement local sans compte externe
 ```bash
@@ -15,7 +15,7 @@ Créer un utilisateur (aucun compte par défaut n'existe) :
 ```bash
 SF_PASSWORD='mot-de-passe-10-car-min' DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5433/postgres?connection_limit=1&pgbouncer=true' node scripts/create-user.mjs moi@exemple.fr "Mon nom"
 ```
-Ajoutez `ANTHROPIC_API_KEY` dans `.env` pour activer les fonctions IA.
+Ajoutez `GEMINI_API_KEY` dans `.env` pour activer les fonctions IA.
 
 ## Production (Supabase + hébergeur Node)
 1. Variables : voir `docs/ENVIRONNEMENT.md` (`DATABASE_URL`, `DIRECT_URL`, `AUTH_SECRET` ≥ 32 caractères, `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, `ANTHROPIC_API_KEY`).

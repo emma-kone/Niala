@@ -1,4 +1,4 @@
-// Crée un compte StudyForge (aucun compte par défaut n'existe en V2).
+// Crée un compte Niala (aucun compte par défaut n'existe en V2).
 // Usage : node scripts/create-user.mjs <email> <nom> [--reset]
 // Le mot de passe est lu dans la variable d'environnement SF_PASSWORD (jamais en argument).
 import { PrismaClient } from "@prisma/client";

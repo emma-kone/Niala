@@ -67,6 +67,7 @@ export async function generateStructured<T>(req: StructuredRequest<T>): Promise<
         user,
         maxTokens: req.maxTokens ?? 6000,
         temperature: req.temperature ?? 0.1,
+        json: true,
         signal: AbortSignal.timeout(req.timeoutMs ?? DEFAULT_TIMEOUT_MS),
       });
       text = res.text;

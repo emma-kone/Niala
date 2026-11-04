@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "studyforge-local", "runtimeExecutable": "node", "runtimeArgs": ["scripts/dev-local.mjs", "3100"], "port": 3100 }
+    { "name": "niala-local", "runtimeExecutable": "node", "runtimeArgs": ["scripts/dev-local.mjs", "3100"], "port": 3100 }
   ]
 }
