@@ -101,12 +101,13 @@ describe("construction et correction objective", () => {
     expect(gradeObjective("short_answer", { accepted: ["3.5"] }, "3,5", 1)!.verdict).toBe("correct");
 
     const f = build({ type: "fill_blank", statement: "Une ___ appelle une autre ___ elle-même.", blanks: [{ accepted: ["fonction", "function"] }, { accepted: ["fonction"] }] });
-    const [b1, b2] = Object.keys(f.answerKey.answers as object);
+    // ordre de l'énoncé (les identifiants sont aléatoires : Object.keys réordonnerait ceux qui ne sont que des chiffres)
+    const [b1, b2] = (f.payload.blanks as { id: string }[]).map((b) => b.id);
     expect(gradeObjective("fill_blank", f.answerKey, { [b1]: "Fonction", [b2]: "méthode" }, 2)).toMatchObject({ verdict: "partial", points: 1 });
     expect(gradeObjective("fill_blank", f.answerKey, { [b1]: "function", [b2]: "la fonction" }, 2)).toMatchObject({ verdict: "correct", points: 2 });
 
     const c = build({ type: "fill_choices", statement: "Une ___ est un bloc.", blanks: [{ options: ["fonction", "variable", "boucle"], correctIndex: 0 }] });
-    const [bid] = Object.keys(c.answerKey.answers as object);
+    const [bid] = (c.payload.blanks as { id: string }[]).map((b) => b.id);
     expect(gradeObjective("fill_choices", c.answerKey, { [bid]: "fonction" }, 1)!.verdict).toBe("correct");
     expect(gradeObjective("fill_choices", c.answerKey, { [bid]: "boucle" }, 1)!.verdict).toBe("incorrect");
   });
