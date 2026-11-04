@@ -1,0 +1,36 @@
+// Fiabilité des sources web : règles pures. L'IA ne décide pas de la confiance accordée à un site ;
+// le serveur classe chaque domaine et l'affiche à l'étudiant.
+
+export type TrustTier = "reconnue" | "a_verifier";
+
+/** Domaines dont le contenu est une référence : documentation officielle, standards, universités, revues. */
+export const TRUSTED_DOMAINS = [
+  "developer.mozilla.org", "developer.android.com", "android.com", "kotlinlang.org", "docs.python.org", "python.org",
+  "docs.oracle.com", "oracle.com", "openjdk.org", "learn.microsoft.com", "microsoft.com", "typescriptlang.org", "nodejs.org",
+  "react.dev", "w3.org", "whatwg.org", "ecma-international.org", "postgresql.org", "sqlite.org", "mysql.com", "mongodb.com",
+  "isocpp.org", "cppreference.com", "gnu.org", "kernel.org", "git-scm.com", "docker.com", "kubernetes.io", "rust-lang.org",
+  "go.dev", "php.net", "ruby-lang.org", "swift.org", "developer.apple.com", "cloud.google.com", "aws.amazon.com", "owasp.org",
+  "ietf.org", "iso.org", "nist.gov", "wikipedia.org", "britannica.com", "khanacademy.org", "openclassrooms.com", "arxiv.org",
+  "nature.com", "science.org", "ieee.org", "acm.org", "springer.com", "sciencedirect.com", "jstor.org", "persee.fr", "cairn.info",
+  "openstax.org", "mit.edu", "stanford.edu", "harvard.edu", "inria.fr", "cnrs.fr", "education.gouv.fr", "eduscol.education.fr",
+] as const;
+
+/** Suffixes institutionnels (enseignement supérieur, administrations). */
+const TRUSTED_SUFFIXES = [".edu", ".gov", ".gouv.fr", ".ac.uk", ".edu.au", ".ac.jp", ".ac.in", ".ac.ma", ".edu.sn"];
+
+export function hostOf(url: string): string | null {
+  try {
+    return new URL(url).hostname.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return null;
+  }
+}
+
+export function trustTier(host: string | null): TrustTier {
+  if (!host) return "a_verifier";
+  if (TRUSTED_SUFFIXES.some((s) => host.endsWith(s))) return "reconnue";
+  if (/^univ-[a-z0-9-]+\.fr$/.test(host) || /\.univ-[a-z0-9-]+\.fr$/.test(host)) return "reconnue";
+  return TRUSTED_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`)) ? "reconnue" : "a_verifier";
+}
+
+export const TIER_LABEL: Record<TrustTier, string> = { reconnue: "source reconnue", a_verifier: "source à vérifier" };

@@ -64,6 +64,8 @@ export interface Coverage {
   embeddedPassages: number;
   /** Vrai seulement si chaque page du document a du texte extrait. */
   complete: boolean;
+  /** Vecteurs sémantiques disponibles pour tous les passages (information technique, jamais montrée à l'étudiant). */
+  semanticComplete: boolean;
   warnings: string[];
 }
 
@@ -82,7 +84,6 @@ export function computeCoverage(input: {
   const warnings = [...input.extractWarnings];
   if (input.pages.length === 0) warnings.push("Aucun texte n'a pu être extrait de ce document.");
   else if (empty.length) warnings.push(`${empty.length} page(s) sans texte extrait (scannées ou composées d'images) : ${empty.slice(0, 12).join(", ")}${empty.length > 12 ? "…" : ""}.`);
-  if (input.pages.length > 0 && input.embeddedPassages < input.pages.length) warnings.push("La recherche sémantique n'est pas encore complète : la recherche par mots-clés est utilisée pour le reste.");
   return {
     pageCount: input.pageCount,
     pagesWithText: pageless ? 0 : withText.size,
@@ -90,6 +91,7 @@ export function computeCoverage(input: {
     indexedPassages: input.pages.length,
     embeddedPassages: input.embeddedPassages,
     complete: input.pages.length > 0 && empty.length === 0 && input.extractStatus === "READY",
+    semanticComplete: input.pages.length > 0 && input.embeddedPassages >= input.pages.length,
     warnings,
   };
 }
@@ -103,6 +105,10 @@ export interface Citation {
   page: number | null;
   section: string | null;
   quote: string;
+  /** Absent = passage d'un cours. « web » : source externe (documentName = titre, url renseignée). */
+  kind?: "document" | "web";
+  url?: string;
+  tier?: "reconnue" | "a_verifier";
 }
 
 /**

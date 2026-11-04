@@ -7,11 +7,16 @@ export interface ChatCitation {
   page: number | null;
   section: string | null;
   quote: string;
+  kind?: "document" | "web";
+  url?: string;
+  tier?: "reconnue" | "a_verifier";
 }
 
 export interface ConsultedInfo {
   documents: { id: string; name: string }[];
   passages: number;
+  webSources?: number;
+  web?: boolean;
   pagesRead: number;
   tools: string[];
   coverage: { documentId: string; documentName: string; complete: boolean; warnings: string[] }[];

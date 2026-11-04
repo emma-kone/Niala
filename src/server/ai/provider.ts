@@ -80,7 +80,7 @@ const GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models
 const isAbort = (e: unknown) => ["TimeoutError", "AbortError"].includes((e as { name?: string })?.name ?? "");
 
 /** Appel HTTP Gemini avec reprises (429/5xx). La clé ne figure que dans l'en-tête, jamais dans l'URL ni les erreurs. */
-async function geminiPost(apiKey: string, path: string, body: unknown, signal: AbortSignal): Promise<Record<string, any>> {
+export async function geminiPost(apiKey: string, path: string, body: unknown, signal: AbortSignal): Promise<Record<string, any>> {
   const maxRetries = 2;
   let lastError = "";
   for (let attempt = 0; attempt <= maxRetries; attempt++) {

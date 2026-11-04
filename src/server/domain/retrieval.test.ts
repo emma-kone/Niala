@@ -27,8 +27,10 @@ describe("couverture honnête", () => {
   it("complète seulement si toutes les pages ont du texte et que l'extraction est READY", () => {
     expect(computeCoverage({ pageCount: 2, pages: [1, 2], embeddedPassages: 2, extractWarnings: [], extractStatus: "READY" }).complete).toBe(true);
   });
-  it("vecteurs manquants et document vide sont signalés", () => {
-    expect(computeCoverage({ pageCount: null, pages: [null, null], embeddedPassages: 0, extractWarnings: [], extractStatus: "READY" }).warnings.join(" ")).toContain("sémantique");
+  it("vecteurs manquants : information technique, pas un avertissement pour l'étudiant ; document vide signalé", () => {
+    const c = computeCoverage({ pageCount: null, pages: [null, null], embeddedPassages: 0, extractWarnings: [], extractStatus: "READY" });
+    expect(c.warnings).toEqual([]);
+    expect(c.semanticComplete).toBe(false);
     expect(computeCoverage({ pageCount: 3, pages: [], embeddedPassages: 0, extractWarnings: [], extractStatus: "UNSUPPORTED" }).warnings.join(" ")).toContain("Aucun texte");
   });
 });

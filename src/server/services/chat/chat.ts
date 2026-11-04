@@ -7,6 +7,8 @@ import { checkQuota } from "@/server/ai/structured";
 import { UNTRUSTED_RULES, wrapUntrusted } from "@/server/ai/guard";
 import { resolveCitations, type Citation, type Coverage } from "@/server/domain/retrieval";
 import { embedPending } from "./indexing";
+import { TIER_LABEL } from "@/server/domain/web-trust";
+import { WebSearchUnavailableError, searchWeb, webStatus } from "@/server/ai/web-search";
 import { documentCoverage, outline, readPart, resolveDocs, searchPassages, type DocInfo, type Hit, type Scope } from "./retrieval";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -29,7 +31,7 @@ export const createSchema = z.object({
   documentId: z.string().min(1).optional(),
   subjectId: z.string().min(1).optional(),
 });
-export const messageSchema = z.object({ content: z.string().trim().min(1, "Message vide.").max(MAX_MESSAGE_CHARS, "Message trop long.") });
+export const messageSchema = z.object({ content: z.string().trim().min(1, "Message vide.").max(MAX_MESSAGE_CHARS, "Message trop long."), web: z.boolean().optional() });
 
 // ── Conversations ────────────────────────────────────────────────────────────
 
@@ -103,6 +105,12 @@ const TOOLS: Record<"GLOBAL" | "DOCUMENT", ToolDeclaration[]> = {
   ],
 };
 
+const WEB_TOOL: ToolDeclaration = {
+  name: "search_web",
+  description: "Cherche sur le web (documentation officielle, universités, références) pour compléter ou vérifier un cours, ou répondre à une question hors cours. Chaque source est classée « reconnue » ou « à vérifier ».",
+  parameters: { type: "OBJECT", properties: { query: { type: "STRING", description: "Requête précise (mots-clés, de préférence en anglais pour la documentation technique)" } }, required: ["query"] },
+};
+
 /** Registre des passages consultés pendant un tour : numérote, dédoublonne, et sert à vérifier les citations. */
 class Evidence {
   readonly known = new Map<number, Citation>();
@@ -117,7 +125,7 @@ class Evidence {
     const n = this.known.size + 1;
     this.known.set(n, { n, ...c });
     this.keys.set(key, n);
-    this.docs.set(c.documentId, c.documentName);
+    if (c.kind !== "web") this.docs.set(c.documentId, c.documentName);
     return n;
   }
 }
@@ -138,6 +146,7 @@ interface ToolContext {
   docs: DocInfo[];
   ev: Evidence;
   signal: AbortSignal;
+  web: boolean;
 }
 
 async function runTool(ctx: ToolContext, name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -177,6 +186,23 @@ async function runTool(ctx: ToolContext, name: string, args: Record<string, unkn
           contenu: blocks.length ? wrapUntrusted("pages", blocks.join("\n\n---\n\n")) : "Aucun texte pour cette plage.",
         };
       }
+      case "search_web": {
+        if (!ctx.web) return { erreur: "Recherche web désactivée par l'étudiant." };
+        const query = String(args.query ?? "").slice(0, 300);
+        if (!query.trim()) return { erreur: "Requête vide." };
+        try {
+          const out = await searchWeb(query, ctx.signal);
+          if (!out.results.length) return { resultat: "Aucune source web trouvée. Dis-le franchement à l'étudiant au lieu de deviner." };
+          const lines = out.results.map((r) => {
+            const ref = ctx.ev.register({ kind: "web", url: r.url, tier: r.tier, documentId: "", documentName: `${r.title} (${r.host})`, subjectId: null, versionId: "", page: null, section: null, quote: quoteOf(r.snippet) }, `web:${r.url}`);
+            return `[${ref}] ${r.title} — ${r.host} — ${TIER_LABEL[r.tier]}\n${r.snippet}`;
+          });
+          const body = [out.summary ? `Synthèse du moteur de recherche (à vérifier avec les sources) :\n${out.summary}` : "", ...lines].filter(Boolean).join("\n\n---\n\n");
+          return { extraits_web: wrapUntrusted("extraits web", body), rappel: "Appuie-toi uniquement sur ces extraits. Signale les sources « à vérifier ». Si rien de fiable ne répond à la question, dis-le." };
+        } catch (e) {
+          return { erreur: e instanceof WebSearchUnavailableError ? "La recherche web est momentanément indisponible. Dis-le à l'étudiant et réponds sans prétendre avoir vérifié sur le web." : "Recherche web en échec." };
+        }
+      }
       case "get_outline": {
         if (!known(docId)) return { erreur: "Document inconnu ou non consultable." };
         const o = await outline(ctx.userId, docId!);
@@ -204,17 +230,24 @@ function coverageText(docs: { doc: DocInfo; cov: Coverage }[]): string {
     .join("\n");
 }
 
-function systemPrompt(scope: "GLOBAL" | "DOCUMENT", docs: { doc: DocInfo; cov: Coverage }[], totalDocs: number): string {
-  return `Tu es l'assistant pédagogique de Niala, une plateforme d'apprentissage personnelle. Tu aides un étudiant à comprendre SES cours : explications claires, exemples, comparaisons, approfondissements, exercices d'application. Réponds en français (sauf demande contraire), de façon structurée et concise, en Markdown simple. N'utilise pas LaTeX ni les symboles $ : écris les formules en texte (n! = n × (n-1)!) ou dans un bloc de code.
+function systemPrompt(scope: "GLOBAL" | "DOCUMENT", docs: { doc: DocInfo; cov: Coverage }[], totalDocs: number, web: boolean): string {
+  return `Tu es l'assistant pédagogique de Niala, une plateforme d'apprentissage personnelle. Tu aides un étudiant : comprendre ses cours, répondre à ses questions de connaissances générales, donner des explications, des exemples, des comparaisons, des approfondissements et des exercices d'application. Réponds en français (sauf demande contraire), de façon structurée et concise, en Markdown simple. N'utilise pas LaTeX ni les symboles $ : écris les formules en texte (n! = n × (n-1)!) ou dans un bloc de code.
 
-${scope === "DOCUMENT" ? "Tu discutes d'UN SEUL cours. Tu n'as accès à aucun autre document." : `Tu as accès à la bibliothèque de l'étudiant (${totalDocs} document(s) consultables). Utilise list_documents pour les connaître.`}
+${scope === "DOCUMENT" ? "Tu discutes d'UN SEUL cours. Tu n'as accès à aucun autre document." : `Tu as accès à la bibliothèque de l'étudiant (${totalDocs} document(s) consultables). L'étudiant peut aussi te poser des questions sans rapport avec ses cours : réponds alors directement, sans chercher dans ses documents.`}
 
 Méthode :
-- Pour toute question sur le contenu d'un cours, commence par search_passages (et read_pages / get_outline si la question est large ou si les extraits sont insuffisants). N'affirme jamais ce que dit un cours sans l'avoir consulté dans ce tour de conversation.
+- Pour toute question qui porte sur le contenu d'un cours, commence par search_passages (et read_pages / get_outline si la question est large ou si les extraits sont insuffisants). N'affirme jamais ce que dit un cours sans l'avoir consulté dans ce tour de conversation. Si la question est générale ou indépendante des cours, réponds directement, sans mentionner les documents de l'étudiant ni l'état de leur extraction (sauf s'il pose la question).
 - Cite tes sources avec le numéro entre crochets, par exemple [2] ou [1, 3], placé juste après l'affirmation correspondante. N'utilise QUE des numéros fournis par les outils.
-- Distingue clairement ce qui vient du cours de ce qui vient de tes connaissances générales (annonce-le : « hors du cours : … ») ; ces dernières n'ont pas de numéro.
+- Distingue ce qui vient du cours, ce qui vient du web et ce qui vient de tes connaissances générales (annonce celles-ci : « hors du cours : … ») ; ces dernières n'ont pas de numéro.
 - Si le cours ne traite pas le sujet, dis-le.
-
+${web ? `
+Recherche web (outil search_web) :
+- Utilise-la pour vérifier ou compléter un point d'un cours, pour une information récente ou précise, ou quand l'étudiant le demande. Pas pour ce qui est déjà clair dans le cours.
+- Les sources sont classées par le serveur : « source reconnue » (documentation officielle, universités, références) ou « source à vérifier ». Privilégie les sources reconnues, nomme le site dans ta réponse, et signale clairement toute source à vérifier.
+- N'affirme rien que les extraits web ne soutiennent pas. Si tu ne trouves pas de réponse fiable, écris-le explicitement (« Je n'ai pas trouvé de source fiable pour cela ») et n'invente rien. Si la recherche est indisponible, dis-le.
+` : `
+La recherche web est désactivée : n'affirme pas avoir vérifié quoi que ce soit sur le web.
+`}
 Honnêteté sur la lecture (état réel de l'extraction, calculé par le serveur) :
 ${coverageText(docs) || "- Aucun document consultable."}
 - Ne prétends JAMAIS avoir lu un document en entier : tu n'as lu que les passages renvoyés par les outils. Pour une demande de résumé complet, lis le plan puis les parties utiles, et indique ce que tu as réellement consulté.
@@ -235,7 +268,12 @@ async function logUsage(userId: string, model: string, promptChars: number, resp
   await db.aIUsageLog.create({ data: { userId, op: "chat.turn@1", model, promptChars, respChars, ok, error: error?.slice(0, 500) ?? null, durationMs: Date.now() - started } }).catch(() => undefined);
 }
 
-export async function sendMessage(userId: string, conversationId: string, content: string): Promise<ChatReply> {
+export interface SendOptions {
+  /** Autorise la recherche web (si un moteur est disponible). */
+  web?: boolean;
+}
+
+export async function sendMessage(userId: string, conversationId: string, content: string, options: SendOptions = {}): Promise<ChatReply> {
   const conv = await ownedConversation(userId, conversationId);
   const provider = getProvider();
   if (!provider?.converse) throw new ApiHttpError("Le chat nécessite le service d'IA Gemini, qui n'est pas configuré (variable GEMINI_API_KEY).", 503);
@@ -256,9 +294,11 @@ export async function sendMessage(userId: string, conversationId: string, conten
   if (scope === "DOCUMENT" && docs[0]) await embedPending(userId, docs[0].versionId, 15_000);
   const withCoverage = await Promise.all(docs.slice(0, 12).map(async (doc) => ({ doc, cov: await documentCoverage(userId, doc) })));
 
+  const webOn = options.web !== false && (await webStatus()) !== null;
   const ev = new Evidence();
-  const ctx: ToolContext = { userId, scope, scopeFilter, docs, ev, signal: AbortSignal.timeout(110_000) };
-  const system = systemPrompt(scope, withCoverage, docs.length);
+  const ctx: ToolContext = { userId, scope, scopeFilter, docs, ev, signal: AbortSignal.timeout(110_000), web: webOn };
+  const system = systemPrompt(scope, withCoverage, docs.length, webOn);
+  const tools = webOn ? [...TOOLS[scope], WEB_TOOL] : TOOLS[scope];
   const turns: ChatTurn[] = [
     ...history.reverse().map((m): ChatTurn => ({ role: m.role === "USER" ? "user" : "model", parts: [{ text: m.content }] })),
     { role: "user", parts: [{ text: content }] },
@@ -270,7 +310,7 @@ export async function sendMessage(userId: string, conversationId: string, conten
   try {
     for (let step = 0; step <= MAX_STEPS; step++) {
       const last = step === MAX_STEPS;
-      const res = await provider.converse({ system, turns, tools: last ? undefined : TOOLS[scope], maxTokens: 4000, temperature: 0.3, signal: ctx.signal });
+      const res = await provider.converse({ system, turns, tools: last ? undefined : tools, maxTokens: 4000, temperature: 0.3, signal: ctx.signal });
       model = res.model;
       if (!res.calls.length || last) {
         answer = res.text;
@@ -293,7 +333,9 @@ export async function sendMessage(userId: string, conversationId: string, conten
   const { text, citations } = resolveCitations(answer.trim(), ev.known);
   const consulted = {
     documents: [...ev.docs].map(([id, name]) => ({ id, name })),
-    passages: ev.known.size,
+    passages: [...ev.known.values()].filter((c) => c.kind !== "web").length,
+    webSources: [...ev.known.values()].filter((c) => c.kind === "web").length,
+    web: webOn,
     pagesRead: ev.pagesRead.size,
     tools: ev.toolCalls,
     coverage: withCoverage.map(({ doc, cov }) => ({ documentId: doc.id, documentName: doc.name, ...cov })),

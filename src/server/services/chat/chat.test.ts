@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PGlite } from "@electric-sql/pglite";
 import { PGLiteSocketServer } from "@electric-sql/pglite-socket";
 import type { AiProvider, ChatTurn, ConverseRequest } from "@/server/ai/provider";
+import { WebSearchUnavailableError, __setWebSearcherForTests } from "@/server/ai/web-search";
 
 let server: PGLiteSocketServer;
 let pg: PGlite;
@@ -229,5 +230,55 @@ describe("sans fournisseur", () => {
     };
     await expect(chat.sendMessage(A, c.id, "Une question")).rejects.toMatchObject({ status: 502 });
     expect((await chat.getConversation(A, c.id)).messages.map((m) => m.role)).toEqual(["USER"]);
+  });
+});
+
+describe("recherche web", () => {
+  const web = {
+    async search() {
+      return {
+        backend: "tavily" as const,
+        results: [
+          { title: "Cycle de vie d'une activité", url: "https://developer.android.com/guide/activity-lifecycle", host: "developer.android.com", snippet: "onCreate, onStart, onResume.", tier: "reconnue" as const },
+          { title: "Mon blog", url: "https://blog.example.com/android", host: "blog.example.com", snippet: "Un avis.", tier: "a_verifier" as const },
+        ],
+      };
+    },
+  };
+
+  it("cite les sources web avec leur fiabilité, sans les confondre avec les passages de cours", async () => {
+    __setWebSearcherForTests(web);
+    seen.length = 0;
+    script = (_req, step) => (step === 0 ? { calls: [{ name: "search_web", args: { query: "android activity lifecycle" }}] } : { text: "Trois méthodes clés [1]. Avis personnel [2]. Invention [5]." });
+    const c = await chat.createConversation(A, { scope: "GLOBAL" });
+    const r = await chat.sendMessage(A, c.id, "Cycle de vie Android ?");
+    expect(r.message.citations.map((x) => [x.kind, x.tier])).toEqual([["web", "reconnue"], ["web", "a_verifier"]]);
+    expect(r.message.citations[0].url).toContain("developer.android.com");
+    expect(r.message.content).not.toContain("[5]");
+    const consulted = r.message.consulted as { passages: number; webSources: number };
+    expect([consulted.passages, consulted.webSources]).toEqual([0, 2]);
+    expect(seen[0].tools?.map((t) => t.name)).toContain("search_web");
+    expect(JSON.stringify(seen[1].turns.at(-1))).toContain("source à vérifier");
+    expect(seen[0].system).toContain("Je n'ai pas trouvé de source fiable");
+  });
+
+  it("désactivée par l'étudiant : l'outil n'est pas proposé", async () => {
+    seen.length = 0;
+    script = () => ({ text: "Réponse sans web." });
+    const c = await chat.createConversation(A, { scope: "GLOBAL" });
+    await chat.sendMessage(A, c.id, "Question générale", { web: false });
+    expect(seen[0].tools?.map((t) => t.name)).not.toContain("search_web");
+    expect(seen[0].system).toContain("La recherche web est désactivée");
+  });
+
+  it("moteur indisponible : le modèle reçoit l'information et ne prétend rien avoir vérifié", async () => {
+    __setWebSearcherForTests({ async search() { throw new WebSearchUnavailableError("quota"); } });
+    seen.length = 0;
+    script = (_req, step) => (step === 0 ? { calls: [{ name: "search_web", args: { query: "x" } }] } : { text: "Je n'ai pas pu vérifier sur le web." });
+    const c = await chat.createConversation(A, { scope: "GLOBAL" });
+    const r = await chat.sendMessage(A, c.id, "Vérifie sur le web");
+    expect(JSON.stringify(seen[1].turns.at(-1))).toContain("momentanément indisponible");
+    expect(r.message.citations).toEqual([]);
+    __setWebSearcherForTests(undefined);
   });
 });

@@ -204,7 +204,7 @@ export async function documentCoverage(userId: string, doc: DocInfo): Promise<Co
     pageCount: doc.pageCount,
     pages: chunks.map((c) => c.page),
     embeddedPassages: model ? chunks.filter((c) => c.embeddingModel === model).length : 0,
-    extractWarnings: doc.extractWarnings.filter((w) => !/^Page \d+ illisible/.test(w)),
+    extractWarnings: doc.extractWarnings.filter((w) => !/^Page \d+ illisible/.test(w) && !/^Unrecognised .* style/i.test(w)),
     extractStatus: doc.extractStatus,
   });
 }
