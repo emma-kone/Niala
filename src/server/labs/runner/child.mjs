@@ -257,7 +257,22 @@ async function pyEngine(req) {
 }
 
 // ───────────────────────── SQL (sql.js) ─────────────────────────
+// PRAGMA : liste blanche de lecture seule. Tout autre PRAGMA (max_page_count, writable_schema, query_only…)
+// pourrait lever les limites imposées par l'environnement (mémoire, écriture).
+const SAFE_PRAGMA = /^\s*PRAGMA\s+(table_info|table_xinfo|table_list|foreign_key_list|index_list|index_info|index_xinfo)\b\s*(\(|;|$)/i;
 const DANGEROUS = /^\s*(ATTACH|DETACH|VACUUM\s+INTO)\b|load_extension/i;
+const stripLeadingComments = (sql) => {
+  let s = sql;
+  for (;;) {
+    const t = s.replace(/^\s+/, "").replace(/^--[^\n]*(\n|$)/, "").replace(/^\/\*[\s\S]*?\*\//, "");
+    if (t === s) return t;
+    s = t;
+  }
+};
+const isForbidden = (raw) => {
+  const sql = stripLeadingComments(raw);
+  return DANGEROUS.test(sql) || (/^PRAGMA\b/i.test(sql) && !SAFE_PRAGMA.test(sql));
+};
 const MAX_SHOWN = 500;
 
 function allRows(db, sql) {
@@ -270,7 +285,18 @@ function runScript(SQL, setupSql, script, checks, readOnly) {
   const out = { statements: [], checks: [], schema: [] };
   try {
     db.run("PRAGMA foreign_keys = ON; PRAGMA max_page_count = 5000;");
-    if (setupSql && setupSql.trim()) db.run(setupSql);
+    if (setupSql && setupSql.trim()) {
+      // Le script d'installation (modifiable par l'étudiant) obéit aux mêmes interdictions que ses requêtes.
+      for (const st of db.iterateStatements(setupSql)) {
+        const text = st.getSQL().trim();
+        if (text && isForbidden(text)) {
+          st.free();
+          throw new Error("Instruction non autorisée dans le script d'installation (ATTACH, PRAGMA de configuration, extension).");
+        }
+        st.step();
+        st.free();
+      }
+    }
     if (readOnly) db.run("PRAGMA query_only = 1;");
     let lastSql = null;
     try {
@@ -280,8 +306,8 @@ function runScript(SQL, setupSql, script, checks, readOnly) {
           stmt.free();
           continue;
         }
-        if (DANGEROUS.test(sql)) {
-          out.error = { type: "Interdit", message: "Instruction non autorisée dans l'environnement pédagogique (ATTACH, DETACH, VACUUM INTO, extension)." };
+        if (isForbidden(sql)) {
+          out.error = { type: "Interdit", message: "Instruction non autorisée dans l'environnement pédagogique (ATTACH, DETACH, VACUUM INTO, PRAGMA de configuration, extension)." };
           stmt.free();
           break;
         }

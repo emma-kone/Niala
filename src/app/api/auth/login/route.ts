@@ -11,9 +11,12 @@ const loginSchema = z.object({
 
 export async function POST(req: Request) {
   return handle(async () => {
-    limit("login", 10, 60_000);
+    // Limites par adresse IP ET par compte : une clé globale permettrait à quiconque de bloquer tous les comptes.
+    const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || req.headers.get("x-real-ip") || "inconnue";
+    limit(`login:ip:${ip}`, 30, 60_000);
     const body = await readJson<unknown>(req);
     const { email, password } = loginSchema.parse(body);
+    limit(`login:email:${email.toLowerCase().trim()}`, 10, 60_000);
     const user = await db.user.findUnique({ where: { email: email.toLowerCase().trim() } });
     if (!user || !verifyPassword(password, user.passwordHash)) {
       return jsonError("E-mail ou mot de passe incorrect.", 401);
