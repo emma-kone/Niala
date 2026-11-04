@@ -10,7 +10,7 @@ import {
   descendantIds,
   type FolderNode,
 } from "@/server/domain/folder-tree";
-import { getStorage } from "@/server/storage";
+import { getStorage, withPreviewKeys } from "@/server/storage";
 
 type Tx = Parameters<Parameters<typeof db.$transaction>[0]>[0];
 
@@ -128,6 +128,6 @@ export async function deleteFolder(userId: string, id: string) {
     };
   });
   // Après validation de la transaction : un échec de stockage ne laisse pas de ligne orpheline en base.
-  await getStorage().remove(keys).catch((e) => console.error("[storage] suppression partielle", e));
+  await getStorage().remove(withPreviewKeys(keys)).catch((e) => console.error("[storage] suppression partielle", e));
   return { deletedFolders: folderCount, deletedDocuments: documents };
 }

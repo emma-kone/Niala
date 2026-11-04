@@ -108,7 +108,9 @@ describe("import et documents", () => {
     const { fin } = await importFile(A, subjA, folder, "fonctions.txt", text);
     expect(fin).toMatchObject({ ok: true, status: "READY" });
     docId = fin!.documentId;
-    expect(fileCount()).toBe(1);
+    expect(fileCount()).toBe(2); // original + aperçu PDF
+    expect(await s.docs.ensurePdfPreview(A, docId)).toMatchObject({ available: true, source: "converted" });
+    await expect(s.docs.ensurePdfPreview(B, docId)).rejects.toThrow();
     const chunks = await s.db.documentChunk.count({ where: { userId: A } });
     expect(chunks).toBeGreaterThan(0);
     // l'original est restitué tel quel
@@ -218,14 +220,14 @@ describe("import et documents", () => {
     const before = fileCount();
     const res = await s.folders.deleteFolder(A, folder);
     expect(res).toMatchObject({ deletedFolders: 2, deletedDocuments: 2 });
-    expect(fileCount()).toBe(before - 2);
+    expect(fileCount()).toBe(before - 4);
     expect(await s.db.folder.count({ where: { id: { in: [folder, sub] } } })).toBe(0);
   });
 
   it("supprime les fichiers du stockage avec le document", async () => {
     const before = fileCount();
     await s.docs.deleteDocuments(A, [docId]);
-    expect(fileCount()).toBe(before - 1);
+    expect(fileCount()).toBe(before - 2);
     expect(await s.db.documentChunk.count({ where: { version: { documentId: docId } } })).toBe(0);
   });
 });

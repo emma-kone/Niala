@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { handle, readJson, ApiHttpError } from "@/lib/api-helpers";
 import { normalizeSubjectName } from "@/lib/subjects";
-import { getStorage } from "@/server/storage";
+import { getStorage, withPreviewKeys } from "@/server/storage";
 
 const patchSchema = z.object({
   name: z.string().min(1).max(120).optional(),
@@ -94,7 +94,7 @@ export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string 
       db.subject.delete({ where: { id } }),
     ]);
     const keys = docs.flatMap((d) => d.versions.map((v) => v.storageKey).filter((k): k is string => !!k));
-    await getStorage().remove(keys).catch((e) => console.error("[storage] suppression partielle", e));
+    await getStorage().remove(withPreviewKeys(keys)).catch((e) => console.error("[storage] suppression partielle", e));
     return { ok: true, deleted: subject.name };
   });
 }

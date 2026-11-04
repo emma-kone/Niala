@@ -88,6 +88,9 @@ export default function ReaderView({ subjectId, docId }: { subjectId: string; do
   const [panel, setPanel] = useState(true);
   const [pdfPages, setPdfPages] = useState<number | null>(null);
   const saveReading = useReadingSaver(docId);
+  // Aperçu PDF des formats convertis à l'import (DOCX, PPTX, TXT, MD) : "loading" tant qu'on ne sait pas
+  const [previewResult, setPreviewResult] = useState<{ id: string; ok: boolean } | null>(null);
+  const preview = previewResult?.id === docId ? (previewResult.ok ? "ok" : "failed") : "loading";
 
   // Notes du document + annotations affichées dans le PDF
   const [tab, setTab] = useState<"doc" | "notes" | "analysis">("notes");
@@ -171,6 +174,20 @@ export default function ReaderView({ subjectId, docId }: { subjectId: string; do
     void load();
   }, [load]);
 
+  const docKind = doc?.kind;
+  const docMissing = doc?.originalMissing;
+  useEffect(() => {
+    if (!docKind || docKind === "pdf" || docMissing) return;
+    let cancelled = false;
+    api
+      .get<{ available: boolean }>(`/api/files/${docId}/preview`)
+      .then((r) => !cancelled && setPreviewResult({ id: docId, ok: r.available }))
+      .catch(() => !cancelled && setPreviewResult({ id: docId, ok: false }));
+    return () => {
+      cancelled = true;
+    };
+  }, [docId, docKind, docMissing]);
+
   const back = doc?.folderId ? `${routes.subject(subjectId)}?dossier=${doc.folderId}` : routes.subject(subjectId);
 
   if (error) {
@@ -190,16 +207,24 @@ export default function ReaderView({ subjectId, docId }: { subjectId: string; do
 
   const contentUrl = `/api/files/${docId}/content`;
   const downloadUrl = `${contentUrl}?download=1`;
+  const converted = !!doc && doc.kind !== "pdf" && !doc.originalMissing && preview === "ok";
   const requestedPage = Number(params.get("page"));
   const startPage = requestedPage > 0 ? requestedPage : (doc?.lastPage ?? 1);
   const status = doc ? STATUS_LABEL[doc.status] : null;
 
   let viewer: React.ReactNode = <Skeleton className="m-4 h-[70%] rounded-lg" />;
   if (doc) {
-    if (!doc.originalMissing && doc.kind === "pdf") {
+    if (!doc.originalMissing && doc.kind !== "pdf" && preview === "loading") {
+      viewer = (
+        <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground" role="status">
+          <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Préparation de l&apos;aperçu PDF…
+        </div>
+      );
+    } else if (!doc.originalMissing && (doc.kind === "pdf" || converted)) {
       viewer = (
         <PdfViewer
-          src={contentUrl}
+          key={converted ? "converted" : "original"}
+          src={converted ? `${contentUrl}?format=pdf` : contentUrl}
           downloadUrl={downloadUrl}
           fileName={doc.originalName}
           initialPage={startPage}
@@ -285,6 +310,7 @@ export default function ReaderView({ subjectId, docId }: { subjectId: string; do
           {doc && (
             <p className="typo-meta truncate">
               {doc.kind.toUpperCase()}
+              {converted ? " · converti en PDF" : ""}
               {pdfPages ?? doc.pageCount ? ` · ${pdfPages ?? doc.pageCount} page(s)` : ""}
               {doc.folderPath ? ` · ${doc.folderPath}` : ""}
             </p>

@@ -2,7 +2,8 @@ import { createHash, randomBytes } from "node:crypto";
 import { db } from "@/lib/db";
 import { ApiHttpError } from "@/lib/api-helpers";
 import { chunkText, extractContent } from "@/lib/extraction";
-import { getStorage, newStorageKey } from "@/server/storage";
+import { getStorage, newStorageKey, previewKey, withPreviewKeys } from "@/server/storage";
+import { canConvertToPdf, convertToPdf } from "@/server/pdf/convert";
 import { chunkPages, splitPages, stitchChunks, type PageText } from "@/server/domain/chunking";
 import {
   detectKind,
@@ -207,6 +208,8 @@ export async function finalizeUpload(userId: string, versionId: string): Promise
         },
       });
     });
+    // Aperçu PDF (meilleur effort : un échec n'invalide pas l'import, il sera retenté à l'ouverture)
+    await ensurePdfPreview(userId, doc.id).catch((e) => console.error("[finalizeUpload] aperçu PDF", e));
     return {
       ok: true,
       documentId: doc.id,
@@ -413,7 +416,7 @@ export async function deleteDocuments(userId: string, ids: string[]) {
     db.document.deleteMany({ where: { id: { in: docs.map((d) => d.id) }, userId } }),
   ]);
   const keys = docs.flatMap((d) => d.versions.map((v) => v.storageKey).filter((k): k is string => !!k));
-  await getStorage().remove(keys).catch((e) => console.error("[storage] suppression partielle", e));
+  await getStorage().remove(withPreviewKeys(keys)).catch((e) => console.error("[storage] suppression partielle", e));
   return { deleted: docs.length };
 }
 
@@ -461,4 +464,40 @@ export async function recordReading(userId: string, id: string, page: number) {
     else await tx.learningActivity.create({ data: { userId, type: "READING", refType: "document", refId: id, ...data } });
   });
   return { page: safePage };
+}
+
+// ── Aperçu PDF (lecture seule) ───────────────────────────────────────────────
+
+export interface PdfPreview {
+  available: boolean;
+  /** "original" : le fichier est déjà un PDF ; "converted" : PDF généré à partir du fichier importé. */
+  source?: "original" | "converted";
+  key?: string;
+  reason?: string;
+}
+
+/** Garantit qu'un PDF consultable existe pour la version courante (le génère au besoin, une seule fois). */
+export async function ensurePdfPreview(userId: string, id: string): Promise<PdfPreview> {
+  const doc = await db.document.findFirst({ where: { id, userId }, include: { currentVersion: true } });
+  if (!doc) throw new ApiHttpError("Document introuvable.", 404);
+  const version = doc.currentVersion;
+  if (!version?.storageKey || version.originalMissing) return { available: false, reason: "Original non conservé." };
+  if (doc.type === "pdf") return { available: true, source: "original", key: version.storageKey };
+  if (!canConvertToPdf(doc.type)) return { available: false, reason: `Format ${doc.type.toUpperCase()} non convertible.` };
+
+  const storage = getStorage();
+  const key = previewKey(version.storageKey);
+  if (((await storage.size(key)) ?? 0) > 0) return { available: true, source: "converted", key };
+  try {
+    const result = await convertToPdf(doc.type, await storage.read(version.storageKey));
+    await storage.put(key, result.pdf, "application/pdf");
+    if (version.pageCount == null) {
+      await db.documentVersion.update({ where: { id: version.id }, data: { pageCount: result.pageCount } });
+      await db.document.update({ where: { id }, data: { pageCount: result.pageCount } });
+    }
+    return { available: true, source: "converted", key };
+  } catch (e) {
+    console.error("[ensurePdfPreview]", e);
+    return { available: false, reason: "La conversion en PDF a échoué." };
+  }
 }

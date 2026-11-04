@@ -137,3 +137,13 @@ export function getStorage(): FileStorage {
 export function newStorageKey(userId: string, documentId: string, version: number, rand: string): string {
   return `${userId}/${documentId}/${version}/${rand}`;
 }
+
+/** Clé de l'aperçu PDF dérivé d'un original (même dossier, suffixe « -pdf » : aucune colonne en base). */
+export function previewKey(originalKey: string): string {
+  return `${originalKey}-pdf`;
+}
+
+/** Les clés données + leurs aperçus PDF éventuels (pour les suppressions). */
+export function withPreviewKeys(keys: string[]): string[] {
+  return keys.flatMap((k) => [k, previewKey(k)]);
+}
