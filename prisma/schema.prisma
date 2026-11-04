@@ -54,10 +54,6 @@ model User {
   labRuns          LabRun[]
   conversations    Conversation[]
   chatMessages     ConversationMessage[]
-  exerciseSources  ExerciseSource[]
-  diagnosisReports DiagnosisReport[]
-  skillObservations SkillObservation[]
-  diagnosisFollowups DiagnosisFollowup[]
 }
 
 model UserSettings {
@@ -152,7 +148,6 @@ model Document {
   noteLinks        NoteLink[]
   studyExercises   Exercise[]
   conversations    Conversation[]
-  exerciseSources  ExerciseSource[]
 
   @@index([userId])
   @@index([subjectId])
@@ -463,8 +458,6 @@ enum ErrorCategory {
   INSTRUCTION
   FORGETTING
   CARELESS
-  ALGORITHM // démarche de résolution incohérente ou incomplète
-  ENVIRONMENT // bibliothèque absente, limite d'exécution… : pas une lacune pédagogique
 }
 
 enum ActivityStatus {
@@ -532,7 +525,6 @@ model DocumentVersion {
   analyses  DocumentAnalysis[]
   noteLinks NoteLink[]
   exercises Exercise[]
-  exerciseSources ExerciseSource[]
 
   @@unique([documentId, number])
   @@index([userId])
@@ -823,7 +815,6 @@ model Exercise {
   questions Question[]
   attempts  ExerciseAttempt[]
   labs      LabWorkspace[]
-  sources   ExerciseSource[]
 
   @@index([userId])
   @@index([subjectId, createdAt])
@@ -900,7 +891,6 @@ model Answer {
   user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   attempt   ExerciseAttempt  @relation(fields: [attemptId], references: [id], onDelete: Cascade)
   diagnoses ErrorDiagnosis[]
-  reports   DiagnosisReport[]
 
   @@unique([attemptId, position])
   @@index([userId])
@@ -937,10 +927,6 @@ model ConceptMastery {
   evidenceCount  Int       @default(0)
   lastEvidenceAt DateTime?
   updatedAt      DateTime  @updatedAt
-  /// État de progression (NOT_ASSESSED | TO_DISCOVER | ACQUIRING | FRAGILE | MASTERED | CONFIRMED), recalculé avec la maîtrise
-  state          String    @default("NOT_ASSESSED")
-  needsRecheck   Boolean   @default(false)
-  stateReasons   Json?
 
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   concept Concept @relation(fields: [conceptId], references: [id], onDelete: Cascade)
@@ -1022,7 +1008,6 @@ model LabRun {
   user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   workspace LabWorkspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   diagnoses ErrorDiagnosis[]
-  reports   DiagnosisReport[]
 
   @@index([userId])
   @@index([workspaceId, createdAt])
@@ -1069,8 +1054,6 @@ model ConversationMessage {
   citations      Json?
   /// Ce que l'IA a consulté : { documents, passages, pages, coverage, warnings }
   consulted      Json?
-  /// Pièces jointes du message : [{ kind: library|file|image, name, documentId?, text?, mime?, data? }]
-  attachments    Json?
   model          String?
   createdAt      DateTime @default(now())
 
@@ -1078,120 +1061,4 @@ model ConversationMessage {
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   @@index([conversationId, createdAt])
-}
-
-// ─────────────────────────── Moteur de diagnostic pédagogique ───────────────────────────
-
-enum DiagnosisState {
-  NONE // aucune erreur observée
-  DETERMINED // cause établie par des preuves
-  UNCERTAIN // « impossible de déterminer précisément l'origine » : une vérification est proposée
-}
-
-/// Diagnostic structuré d'UNE tentative (réponse d'exercice ou exécution de laboratoire). Les lignes ErrorDiagnosis
-/// restent les observations par catégorie ; ce rapport est la vue normalisée, commune à toutes les activités.
-model DiagnosisReport {
-  id                String         @id @default(cuid())
-  userId            String
-  activity          String // EXERCISE | CODE | SQL
-  answerId          String?
-  labRunId          String?
-  subjectId         String?
-  language          String?
-  primary           ErrorCategory?
-  secondary         Json // ErrorCategory[]
-  state             DiagnosisState
-  summary           String
-  evidence          Json // string[] : preuves observées (jamais inventées)
-  expected          Json?
-  observed          Json?
-  concepts          Json // [{ id?, name, confidence }]
-  prerequisites     Json // notions prérequises à vérifier : [{ name, reason }]
-  severity          String // none | low | medium | high
-  confidence        Float // 0..1 : solidité des preuves
-  pedagogical       Boolean        @default(true) // false : erreur d'environnement, ne compte pas contre l'étudiant
-  recommendedAction String // none | retry | targeted_explanation | review_prerequisite | clarifying_question | check_environment | verify_understanding
-  needsVerification Boolean        @default(false)
-  source            String // tools | tools+ai
-  engineVersion     String
-  /// Constats techniques au moment du diagnostic (statut, tests, historique) : permettent de valider une interprétation IA plus tard
-  facts             Json?
-  /// Interprétation IA validée, aides données : { interpretation, help[] }
-  ai                Json?
-  createdAt         DateTime       @default(now())
-
-  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  followups DiagnosisFollowup[]
-  answer Answer? @relation(fields: [answerId], references: [id], onDelete: Cascade)
-  labRun LabRun? @relation(fields: [labRunId], references: [id], onDelete: Cascade)
-  skillObservations SkillObservation[]
-
-  @@index([userId, createdAt])
-  @@index([answerId])
-  @@index([labRunId])
-}
-
-/// Observation d'une difficulté sur une COMPÉTENCE abstraite (commune aux langages), tirée d'un diagnostic.
-/// Sert à retrouver les difficultés récurrentes entre activités sans fusionner les règles propres à chaque langage.
-model SkillObservation {
-  id        String         @id @default(cuid())
-  userId    String
-  skill     String // clé de src/server/domain/skills.ts
-  activity  String // EXERCISE | CODE | SQL
-  language  String?
-  category  ErrorCategory?
-  conceptId String?
-  reportId  String?
-  createdAt DateTime       @default(now())
-
-  user   User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  report DiagnosisReport? @relation(fields: [reportId], references: [id], onDelete: Cascade)
-
-  @@index([userId, skill, createdAt])
-  @@index([reportId])
-}
-
-/// Question de vérification posée à l'étudiant après un diagnostic, et sa réponse : elle enrichit le diagnostic
-/// (on ne déduit pas la compréhension d'un code isolé).
-model DiagnosisFollowup {
-  id         String    @id @default(cuid())
-  userId     String
-  reportId   String
-  question   String
-  /// Ce que la question cherche à vérifier (visible : l'étudiant sait pourquoi on lui demande)
-  purpose    String
-  answer     String?
-  /// { understanding: understood | partial | not_understood | unclear | unassessed, justification, source: ai | none }
-  assessment Json?
-  createdAt  DateTime  @default(now())
-  answeredAt DateTime?
-
-  user   User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  report DiagnosisReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
-
-  @@index([reportId])
-  @@index([userId, createdAt])
-}
-
-/// Source d'un exercice : un document (en entier ou certaines sections) dans la VERSION précise utilisée pour générer les questions.
-/// Le nom et le numéro de version sont conservés tels quels : l'historique reste lisible même si le document change ou disparaît.
-model ExerciseSource {
-  id            String  @id @default(cuid())
-  userId        String
-  exerciseId    String
-  position      Int
-  documentId    String?
-  versionId     String?
-  documentName  String
-  versionNumber Int?
-  /// { mode: "all" | "sections" | "concepts" | "hard", sectionIds?, sectionLabels?, conceptIds? }
-  coverage      Json
-
-  user     User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  exercise Exercise          @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
-  document Document?         @relation(fields: [documentId], references: [id], onDelete: SetNull)
-  version  DocumentVersion?  @relation(fields: [versionId], references: [id], onDelete: SetNull)
-
-  @@index([exerciseId, position])
-  @@index([userId])
 }

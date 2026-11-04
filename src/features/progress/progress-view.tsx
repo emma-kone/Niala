@@ -11,17 +11,15 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CATEGORY_LABEL } from "@/features/labs/types";
 import { cn } from "@/lib/utils";
-import { ProfileSection } from "./profile-section";
 import { pct, type ConceptDetail, type ProgressConcept, type ProgressData } from "./types";
 
 const errText = (e: unknown, fb: string) => (e instanceof Error ? e.message : fb);
-const STATE_CLASS: Record<ProgressConcept["state"], string> = {
-  NOT_ASSESSED: "text-muted-foreground",
-  TO_DISCOVER: "text-muted-foreground",
-  FRAGILE: "text-red-700 dark:text-red-400",
-  ACQUIRING: "text-amber-700 dark:text-amber-400",
-  MASTERED: "text-emerald-700 dark:text-emerald-400",
-  CONFIRMED: "text-emerald-700 dark:text-emerald-400 border-emerald-500/50",
+const BAND_CLASS: Record<ProgressConcept["band"], string> = {
+  unknown: "text-muted-foreground",
+  fragile: "text-red-700 dark:text-red-400",
+  developing: "text-amber-700 dark:text-amber-400",
+  to_confirm: "text-emerald-700 dark:text-emerald-400",
+  solid: "text-emerald-700 dark:text-emerald-400",
 };
 const fmt = (d: string | null) => (d ? new Date(d).toLocaleDateString("fr-FR", { day: "2-digit", month: "short" }) : "");
 
@@ -95,8 +93,6 @@ export default function ProgressView() {
         La maîtrise est estimée <strong>par notion</strong> à partir de vos réponses corrigées et de vos tests de laboratoire, avec un niveau de confiance. Une note d&apos;exercice n&apos;est pas une mesure de maîtrise.
       </p>
 
-      <ProfileSection />
-
       <section aria-label="Maîtrise par notion" className="mt-5 space-y-5">
         {data.concepts.length === 0 ? (
           <p className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">Aucune notion pour l&apos;instant. Analysez un cours (onglet Analyse du lecteur) puis faites des exercices : votre maîtrise apparaîtra ici.</p>
@@ -109,7 +105,7 @@ export default function ProgressView() {
                   <li key={c.id}>
                     <button type="button" onClick={() => void toggle(c.id)} aria-expanded={open === c.id} className="flex w-full flex-wrap items-center gap-3 px-4 py-3 text-left text-sm hover:bg-muted/40">
                       <span className="min-w-0 flex-1 font-medium">{c.name}</span>
-                      {c.state === "NOT_ASSESSED" || c.state === "TO_DISCOVER" ? (
+                      {c.band === "unknown" ? (
                         <span className="text-xs text-muted-foreground">{c.evidenceCount} réponse(s) corrigée(s)</span>
                       ) : (
                         <>
@@ -117,15 +113,13 @@ export default function ProgressView() {
                           <span className="w-12 text-right font-semibold">{pct(c.level)}</span>
                         </>
                       )}
-                      <Badge variant="outline" className={cn("font-normal", STATE_CLASS[c.state])}>{c.stateLabel}</Badge>
-                      {c.needsRecheck && <Badge variant="outline" className="font-normal text-amber-700 dark:text-amber-300">à revérifier</Badge>}
+                      <Badge variant="outline" className={cn("font-normal", BAND_CLASS[c.band])}>{c.bandLabel}</Badge>
                       <span className="w-24 text-right text-xs text-muted-foreground">confiance {pct(c.confidence)}</span>
                     </button>
                     {open === c.id && (
                       <div className="border-t bg-muted/30 px-4 py-3 text-sm">
                         {detailError ? <p role="alert" className="text-destructive">{detailError}</p> : !detail ? <Skeleton className="h-16" /> : (
                           <div className="space-y-2">
-                            {c.stateReasons.length > 0 && <ul className="list-disc pl-5 text-xs text-muted-foreground">{c.stateReasons.map((r, i) => <li key={i}>{r}</li>)}</ul>}
                             {c.prerequisites.length > 0 && <p className="text-xs">Prérequis : {c.prerequisites.map((p) => p.name).join(", ")}</p>}
                             {detail.evidence.length === 0 ? <p className="text-muted-foreground">Aucune preuve : aucun exercice corrigé ne porte encore sur cette notion.</p> : (
                               <ul className="space-y-1">

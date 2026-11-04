@@ -3,11 +3,9 @@ import type { ErrorCategory, LabKind, LabMode, Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { ApiHttpError } from "@/lib/api-helpers";
 import { assertFound } from "@/lib/ownership";
-import { classify, editorOnlyLanguage, languageOf, parseCodeTests, sqlErrorReason, sqlSpecSchema, type CodeTest, type Diagnosis, type SqlSpec, type TestOutcome, type TestSummary } from "@/server/domain/lab-tests";
+import { classify, languageOf, parseCodeTests, sqlErrorReason, sqlSpecSchema, type CodeTest, type Diagnosis, type SqlSpec, type TestOutcome, type TestSummary } from "@/server/domain/lab-tests";
 import type { CodeCaseResult } from "@/server/labs/runner/host";
 import { SQL_FIXTURES } from "@/server/labs/fixtures";
-import { analyzeSqlAttempt } from "@/server/diagnosis/analyzers/sql";
-import { loadHistory, recordDiagnosis } from "@/server/diagnosis/record";
 import { capabilities, runCodeFree, runCodeTests, runSqlFree, runSqlTests } from "./execute";
 import { generateHint, type HintLevel } from "./hints";
 import { extractLabExercises } from "./import";
@@ -50,9 +48,6 @@ const DEFAULT_FILE: Record<string, { name: string; content: string }> = {
   javascript: { name: "main.js", content: "// Écrivez votre code JavaScript ici\nconsole.log('Bonjour');\n" },
   typescript: { name: "main.ts", content: "// Écrivez votre code TypeScript ici\nconst message: string = 'Bonjour';\nconsole.log(message);\n" },
   sql: { name: "requete.sql", content: "-- Écrivez votre requête ici\nSELECT 1;\n" },
-  // Éditeur seul (aucune exécution) : modèles de départ
-  c: { name: "main.c", content: '#include <stdio.h>\n\nint main(void) {\n    printf("Bonjour\\n");\n    return 0;\n}\n' },
-  csharp: { name: "Program.cs", content: 'using System;\n\nclass Program\n{\n    static void Main()\n    {\n        Console.WriteLine("Bonjour");\n    }\n}\n' },
 };
 
 // ── DTO : jamais de référence, jamais de test caché ni de contrôle serveur ───────
@@ -143,8 +138,8 @@ export async function createFree(userId: string, raw: unknown) {
   const p = createFreeSchema.safeParse(raw);
   if (!p.success) throw new ApiHttpError(p.error.issues[0]?.message ?? "Demande invalide.", 422);
   const { kind } = p.data;
-  const lang = kind === "SQL" ? "sql" : (languageOf(p.data.language ?? "python") ?? editorOnlyLanguage(p.data.language ?? ""));
-  if (!lang || (kind === "CODE" && lang === "sql")) throw new ApiHttpError("Langage non pris en charge. Choisissez Python, JavaScript, TypeScript, C ou C#.", 422);
+  const lang = kind === "SQL" ? "sql" : languageOf(p.data.language ?? "python");
+  if (!lang || (kind === "CODE" && lang === "sql")) throw new ApiHttpError("Langage non exécutable. Choisissez Python, JavaScript ou TypeScript.", 422);
   const subjectId = await checkSubject(userId, p.data.subjectId);
   const fixture = p.data.fixtureId ? SQL_FIXTURES[p.data.fixtureId] : undefined;
   if (kind === "SQL" && p.data.fixtureId && !fixture) throw new ApiHttpError("Jeu de données inconnu.", 422);
@@ -155,7 +150,7 @@ export async function createFree(userId: string, raw: unknown) {
       subjectId,
       kind,
       mode: "FREE",
-      title: p.data.title ?? (kind === "SQL" ? `Requêtes SQL${fixture ? ` — ${fixture.label}` : ""}` : `Code ${lang === "csharp" ? "C#" : lang === "c" ? "C" : lang}`),
+      title: p.data.title ?? (kind === "SQL" ? `Requêtes SQL${fixture ? ` — ${fixture.label}` : ""}` : `Code ${lang}`),
       files: [{ name: f.name, language: lang, content: f.content }] as unknown as Prisma.InputJsonValue,
       schemaSql: kind === "SQL" ? (p.data.schemaSql ?? fixture?.setupSql ?? SQL_FIXTURES.bibliotheque.setupSql) : null,
     },
@@ -300,13 +295,7 @@ export async function runWorkspace(userId: string, id: string, raw: unknown) {
   if (!content.trim()) throw new ApiHttpError("Le code est vide.", 422);
   const brief = (w.brief as unknown as Brief | null) ?? null;
   const lang = languageOf(files[0].language);
-  if (!lang) {
-    const only = editorOnlyLanguage(files[0].language);
-    throw new ApiHttpError(
-      only ? `Le langage ${only === "csharp" ? "C#" : "C"} n'est pas exécutable ici : l'éditeur offre la coloration et la saisie, mais aucun programme n'est compilé ni simulé.` : "Ce langage n'est pas exécutable ici.",
-      422
-    );
-  }
+  if (!lang) throw new ApiHttpError("Ce langage n'est pas exécutable ici.", 422);
 
   let output: Record<string, unknown> = {};
   let tests: { outcomes: TestOutcome[]; summary: TestSummary; diagnoses: Diagnosis[] } | null = null;
@@ -347,13 +336,6 @@ export async function runWorkspace(userId: string, id: string, raw: unknown) {
 
   if (unavailable) throw new ApiHttpError(`L'exécution isolée est indisponible : ${unavailable}`, 503);
 
-  // SQL : constats spécialisés (agrégat dans WHERE, comparaison à NULL…) ajoutés à la classification des tests
-  const errorInfo = (output as { error?: { type: string; message: string; line?: number } }).error;
-  if (w.kind === "SQL") {
-    const extra = analyzeSqlAttempt(content, errorInfo);
-    diagnoses = [...diagnoses, ...extra.filter((x) => !diagnoses.some((d) => d.kind === x.kind))];
-  }
-
   const run = await db.labRun.create({
     data: {
       userId,
@@ -368,31 +350,9 @@ export async function runWorkspace(userId: string, id: string, raw: unknown) {
       data: diagnoses.map((d) => ({ userId, labRunId: run.id, category: d.category as ErrorCategory, confidence: d.confidence, evidence: { source: tests ? "tests" : "execution", kind: d.kind, label: d.label, tests: d.tests, workspaceId: id } as unknown as Prisma.InputJsonValue })),
     });
   }
-  // Diagnostic unifié : seulement quand il y a quelque chose à diagnostiquer (tests, erreur ou constat) ; une exécution libre sans erreur n'apporte aucune information.
-  let report: Awaited<ReturnType<typeof recordDiagnosis>> | null = null;
-  if (tests || errorInfo || diagnoses.length) {
-    const status = tests?.summary.allPassed ? "pass" : (output as { status?: string }).status === "timeout" ? "timeout" : errorInfo && (!tests || tests.summary.passed === 0) ? "error" : diagnoses.length || tests ? "fail" : "pass";
-    report = await recordDiagnosis({
-      userId,
-      activity: w.kind === "SQL" ? "SQL" : "CODE",
-      labRunId: run.id,
-      subjectId: w.subjectId,
-      language: lang,
-      engine: {
-        activity: w.kind === "SQL" ? "SQL" : "CODE",
-        language: lang,
-        status,
-        diagnoses,
-        error: errorInfo,
-        tests: tests ? { passed: tests.summary.passed, total: tests.summary.total, edgePassed: tests.summary.edgePassed, edgeTotal: tests.summary.edgeTotal } : undefined,
-        concepts: [],
-      },
-      history: (category) => loadHistory({ userId, category, workspaceId: id, excludeLabRunId: run.id }),
-    });
-  }
   await touchActivity(userId, w, tests?.summary.allPassed === true);
   if (tests) await refreshProgress(userId);
-  return { id: run.id, createdAt: run.createdAt, mode: p.data.mode, output, tests, diagnoses, report };
+  return { id: run.id, createdAt: run.createdAt, mode: p.data.mode, output, tests, diagnoses };
 }
 
 export async function listRuns(userId: string, id: string) {

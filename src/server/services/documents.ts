@@ -4,13 +4,11 @@ import { ApiHttpError } from "@/lib/api-helpers";
 import { chunkText, extractContent } from "@/lib/extraction";
 import { getStorage, newStorageKey, previewKey, withPreviewKeys } from "@/server/storage";
 import { canConvertToPdf, convertToPdf } from "@/server/pdf/convert";
-import { extractImage } from "@/server/services/images";
 import { chunkPages, splitPages, stitchChunks, type PageText } from "@/server/domain/chunking";
 import {
   detectKind,
   matchesSignature,
   mimeFor,
-  isImageKind,
   sanitizeName,
   MAX_FILES_PER_IMPORT,
   MAX_UPLOAD_MB_CEILING,
@@ -56,7 +54,7 @@ export async function prepareUploads(userId: string, input: PrepareInput): Promi
     const name = sanitizeName(file.name);
     const kind = detectKind(name);
     if (!kind) {
-      results.push({ name: file.name, ok: false, error: "Format non pris en charge. Formats acceptés : PDF, DOCX, PPTX, TXT, MD, PNG, JPEG, WebP." });
+      results.push({ name: file.name, ok: false, error: "Format non pris en charge. Formats acceptés : PDF, DOCX, PPTX, TXT, MD." });
       continue;
     }
     if (!Number.isInteger(file.size) || file.size <= 0) {
@@ -171,7 +169,7 @@ export async function finalizeUpload(userId: string, versionId: string): Promise
 
   // 2. Extraction + indexation (l'original reste intact quoi qu'il arrive)
   try {
-    const extracted = isImageKind(kind) ? await extractImage(userId, kind, buffer) : await extractContent(kind, buffer);
+    const extracted = await extractContent(kind, buffer);
     const text = extracted.text?.trim() ?? "";
     const warnings = [...extracted.meta.warnings];
     const hasText = text.replace(/\s/g, "").length >= 20;

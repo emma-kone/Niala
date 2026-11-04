@@ -3,9 +3,7 @@ import { db } from "@/lib/db";
 import { ApiHttpError } from "@/lib/api-helpers";
 import { assertFound } from "@/lib/ownership";
 import { BAND_LABEL, DIFFICULTY_EVIDENCE_WEIGHT, MIN_CONFIDENCE, answerEvidenceScore, estimateMastery, masteryBand, type Evidence } from "@/server/domain/mastery";
-import { progressionState, STATE_LABEL, type ProgressState } from "@/server/domain/progression";
-import { buildAdaptations, buildRecommendations, type ConceptView, type ErrorTally } from "@/server/domain/recommend";
-import { recurringDifficulties } from "@/server/domain/skills";
+import { buildRecommendations, type ConceptView, type ErrorTally } from "@/server/domain/recommend";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Progression adaptative. Sources de vérité : les RÉPONSES corrigées et les TESTS de laboratoire.
@@ -73,19 +71,14 @@ export async function recomputeMastery(userId: string) {
   for (const e of evidence) byConcept.set(e.conceptId, [...(byConcept.get(e.conceptId) ?? []), e]);
   const existing = new Set((await db.concept.findMany({ where: { userId, id: { in: [...byConcept.keys()] } }, select: { id: true } })).map((c) => c.id));
   const now = new Date();
-  // Erreurs répétées par notion (hors étourderie possible) sur 60 jours : un des critères de fragilité
-  const recent = await db.errorDiagnosis.groupBy({ by: ["conceptId"], where: { userId, conceptId: { in: [...byConcept.keys()] }, category: { not: "CARELESS" }, createdAt: { gte: new Date(now.getTime() - 60 * 24 * 3600 * 1000) } }, _count: { _all: true } });
-  const repeatedBy = new Map(recent.map((r) => [r.conceptId, r._count._all]));
   let updated = 0;
   for (const [conceptId, list] of byConcept) {
     if (!existing.has(conceptId)) continue;
     const est = estimateMastery(list, now);
-    const prog = progressionState(list.map((e) => ({ ...e, context: `${e.kind}:${e.weight}` })), { now, repeatedErrors: repeatedBy.get(conceptId) ?? 0 });
-    const state = { state: prog.state, needsRecheck: prog.needsRecheck, stateReasons: prog.reasons as unknown as Prisma.InputJsonValue };
     await db.conceptMastery.upsert({
       where: { conceptId },
-      create: { conceptId, userId, level: est.level, confidence: est.confidence, evidenceCount: est.evidenceCount, lastEvidenceAt: est.lastEvidenceAt, ...state },
-      update: { level: est.level, confidence: est.confidence, evidenceCount: est.evidenceCount, lastEvidenceAt: est.lastEvidenceAt, ...state },
+      create: { conceptId, userId, level: est.level, confidence: est.confidence, evidenceCount: est.evidenceCount, lastEvidenceAt: est.lastEvidenceAt },
+      update: { level: est.level, confidence: est.confidence, evidenceCount: est.evidenceCount, lastEvidenceAt: est.lastEvidenceAt },
     });
     updated++;
   }
@@ -138,22 +131,11 @@ const DISMISS_DAYS = 7;
 /** Régénère les recommandations (hors celles que l'étudiant a écartées récemment). */
 export async function refreshRecommendations(userId: string) {
   const concepts = await loadConceptViews(userId);
-  // Adaptation : difficultés récurrentes, confusions répétées, notions maîtrisées (toutes justifiées par des observations)
-  const states = new Map((await db.conceptMastery.findMany({ where: { userId }, select: { conceptId: true, state: true } })).map((m) => [m.conceptId, m.state]));
-  const obsSince = new Date(Date.now() - 45 * 24 * 3600 * 1000);
-  const obs = await db.skillObservation.findMany({ where: { userId, createdAt: { gte: obsSince } }, select: { skill: true, language: true, activity: true, createdAt: true, report: { select: { subjectId: true } } }, take: 2000 });
-  const subjectOfSkill = new Map<string, string | null>();
-  for (const o of obs) if (!subjectOfSkill.get(o.skill) && o.report?.subjectId) subjectOfSkill.set(o.skill, o.report.subjectId);
-  const recurring = recurringDifficulties(obs.map((o) => ({ skill: o.skill, language: o.language, activity: o.activity, at: o.createdAt }))).map((r) => ({ skill: r.skill, label: r.label, occurrences: r.occurrences, subjectId: subjectOfSkill.get(r.skill) ?? null }));
-  const conf = await db.errorDiagnosis.groupBy({ by: ["conceptId"], where: { userId, conceptId: { not: null }, category: "CONCEPT", createdAt: { gte: obsSince } }, _count: { _all: true } });
-  const adaptations = buildAdaptations({ concepts: concepts.map((c) => ({ ...c, state: states.get(c.id) ?? "NOT_ASSESSED" })), recurring, confusions: conf.filter((c) => c.conceptId).map((c) => ({ conceptId: c.conceptId as string, count: c._count._all })) });
-  const recs = [...buildRecommendations(concepts, await errorTallies(userId)), ...adaptations].filter((r, i, all) => all.findIndex((x) => x.key === r.key) === i);
+  const recs = buildRecommendations(concepts, await errorTallies(userId));
   const since = new Date(Date.now() - DISMISS_DAYS * 24 * 3600 * 1000);
-  const dismissed = await db.learningRecommendation.findMany({ where: { userId, status: "DISMISSED", createdAt: { gte: since } }, select: { reason: true, conceptId: true, activityType: true } });
+  const dismissed = await db.learningRecommendation.findMany({ where: { userId, status: "DISMISSED", createdAt: { gte: since } }, select: { reason: true } });
   const dismissedKeys = new Set(dismissed.map((d) => (d.reason as { key?: string } | null)?.key).filter(Boolean));
-  // Écarter un exercice sur une notion écarte aussi, pour la même durée, une variante adaptée sur cette notion
-  const dismissedPairs = new Set(dismissed.filter((d) => d.conceptId).map((d) => `${d.activityType}:${d.conceptId}`));
-  const kept = recs.filter((r) => !dismissedKeys.has(r.key) && !(r.conceptId && dismissedPairs.has(`${r.type}:${r.conceptId}`)));
+  const kept = recs.filter((r) => !dismissedKeys.has(r.key));
 
   const docOf = new Map<string, string>();
   for (const r of kept) {
@@ -276,7 +258,6 @@ export async function dashboard(userId: string) {
 export async function progress(userId: string, subjectId?: string) {
   if (subjectId) assertFound(await db.subject.findFirst({ where: { id: subjectId, userId }, select: { id: true } }), "Matière");
   const concepts = await loadConceptViews(userId, subjectId);
-  const states = new Map((await db.conceptMastery.findMany({ where: { userId, conceptId: { in: concepts.map((c) => c.id) } }, select: { conceptId: true, state: true, needsRecheck: true, stateReasons: true } })).map((m) => [m.conceptId, m]));
   const attempts = await db.exerciseAttempt.findMany({
     where: { userId, status: "GRADED", exerciseId: { not: null }, ...(subjectId ? { exercise: { subjectId } } : {}) },
     orderBy: { finishedAt: "asc" },
@@ -286,19 +267,13 @@ export async function progress(userId: string, subjectId?: string) {
   const since = new Date(Date.now() - 30 * 24 * 3600 * 1000);
   const diag = await db.errorDiagnosis.findMany({ where: { userId, createdAt: { gte: since } }, select: { category: true, evidence: true, conceptId: true } });
   const byCategory = new Map<string, number>();
-  // Les hypothèses (suppositions de l'IA ou lecture d'une réponse fausse) sont comptées à part des erreurs établies par les outils.
-  const isHypothesis = (e: { source?: string; hypothesis?: boolean } | null) => e?.source === "ai" || e?.hypothesis === true;
-  for (const d of diag) if (!isHypothesis(d.evidence as { source?: string; hypothesis?: boolean } | null)) byCategory.set(d.category, (byCategory.get(d.category) ?? 0) + 1);
-  const hypotheses = diag.filter((d) => isHypothesis(d.evidence as { source?: string; hypothesis?: boolean } | null)).length;
+  for (const d of diag) if ((d.evidence as { source?: string } | null)?.source !== "ai") byCategory.set(d.category, (byCategory.get(d.category) ?? 0) + 1);
+  const hypotheses = diag.filter((d) => (d.evidence as { source?: string } | null)?.source === "ai").length;
 
   return {
     concepts: concepts
-      .map((c) => {
-        const st = states.get(c.id);
-        const state: ProgressState = (st?.state as ProgressState | undefined) ?? "NOT_ASSESSED";
-        return { id: c.id, name: c.name, subjectId: c.subjectId, subjectName: c.subjectName, importance: c.importance, level: c.level, confidence: c.confidence, evidenceCount: c.evidenceCount, lastEvidenceAt: c.lastEvidenceAt, band: masteryBand(c.level, c.confidence), bandLabel: BAND_LABEL[masteryBand(c.level, c.confidence)], state, stateLabel: STATE_LABEL[state], needsRecheck: st?.needsRecheck ?? false, stateReasons: (st?.stateReasons as string[] | null) ?? [], prerequisites: c.prerequisites.map((p) => ({ id: p.id, name: p.name })) };
-      })
-      .sort((a, b) => (a.state === "NOT_ASSESSED" ? 1 : 0) - (b.state === "NOT_ASSESSED" ? 1 : 0) || a.level - b.level),
+      .map((c) => ({ id: c.id, name: c.name, subjectId: c.subjectId, subjectName: c.subjectName, importance: c.importance, level: c.level, confidence: c.confidence, evidenceCount: c.evidenceCount, lastEvidenceAt: c.lastEvidenceAt, band: masteryBand(c.level, c.confidence), bandLabel: BAND_LABEL[masteryBand(c.level, c.confidence)], prerequisites: c.prerequisites.map((p) => ({ id: p.id, name: p.name })) }))
+      .sort((a, b) => (a.band === "unknown" ? 1 : 0) - (b.band === "unknown" ? 1 : 0) || a.level - b.level),
     // Les notes sont présentées séparément de la maîtrise : une note d'exercice n'est pas une mesure de maîtrise.
     attempts: attempts.map((a) => ({ id: a.id, title: a.exercise?.title ?? "Exercice", subject: a.exercise?.subject ?? null, at: a.finishedAt, percentage: a.maxScore ? Math.round(((a.score ?? 0) / a.maxScore) * 1000) / 10 : null })),
     errors: [...byCategory.entries()].map(([category, count]) => ({ category, count })).sort((a, b) => b.count - a.count),

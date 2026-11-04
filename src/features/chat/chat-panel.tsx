@@ -3,86 +3,15 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { AlertTriangle, BookOpen, ExternalLink, FileText, Globe, ImageIcon, Library, Loader2, MessageSquarePlus, PanelLeftClose, PanelLeftOpen, Paperclip, Pencil, Send, Trash2, X } from "lucide-react";
-import { api, ApiError } from "@/lib/client-api";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { AlertTriangle, BookOpen, ExternalLink, Globe, Loader2, MessageSquarePlus, PanelLeftClose, PanelLeftOpen, Pencil, Send, Trash2 } from "lucide-react";
+import { api } from "@/lib/client-api";
 import { routes } from "@/config/routes";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import type { ChatAttachmentDto, ChatCitation, ChatMessageDto, ConsultedInfo, ConversationDto } from "./types";
-
-const MAX_ATTACHMENTS = 4;
-const ACCEPT = ".pdf,.docx,.pptx,.txt,.md,.png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp";
-const IMAGE_RE = /\.(png|jpe?g|webp)$/i;
-
-interface LibraryDoc {
-  id: string;
-  name: string;
-  subject: string | null;
-}
-
-/** Envoie un message et lit la réponse en flux : statut des outils, texte au fil de la rédaction, puis message final. */
-async function postMessageStream(
-  url: string,
-  body: FormData | { content: string; web: boolean },
-  on: { status: (t: string) => void; delta: (t: string) => void }
-): Promise<{ message: ChatMessageDto; title: string }> {
-  const isForm = body instanceof FormData;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { Accept: "application/x-ndjson", ...(isForm ? {} : { "Content-Type": "application/json" }) },
-    body: isForm ? body : JSON.stringify(body),
-    credentials: "same-origin",
-  });
-  if (!res.ok || !res.body) {
-    const data = await res.json().catch(() => null);
-    throw new ApiError((data as { error?: string } | null)?.error ?? `Erreur ${res.status}`, res.status);
-  }
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let done: { message: ChatMessageDto; title: string } | null = null;
-  const handleLine = (line: string) => {
-    if (!line.trim()) return;
-    const ev = JSON.parse(line) as { type: string; text?: string; error?: string; status?: number; message?: ChatMessageDto; title?: string };
-    if (ev.type === "status") on.status(ev.text ?? "");
-    else if (ev.type === "delta") on.delta(ev.text ?? "");
-    else if (ev.type === "error") throw new ApiError(ev.error ?? "Envoi impossible.", ev.status ?? 500);
-    else if (ev.type === "done" && ev.message) done = { message: ev.message, title: ev.title ?? "" };
-  };
-  for (;;) {
-    const { done: end, value } = await reader.read();
-    if (end) break;
-    buffer += decoder.decode(value, { stream: true });
-    let i: number;
-    while ((i = buffer.indexOf("\n")) >= 0) {
-      handleLine(buffer.slice(0, i));
-      buffer = buffer.slice(i + 1);
-    }
-  }
-  handleLine(buffer);
-  if (!done) throw new ApiError("La réponse a été interrompue. Votre message est conservé : réessayez.", 502);
-  return done;
-}
-
-function AttachmentChip({ a, onRemove }: { a: { kind: ChatAttachmentDto["kind"] | "pending"; name: string }; onRemove?: () => void }) {
-  const Icon = a.kind === "image" || (a.kind === "pending" && IMAGE_RE.test(a.name)) ? ImageIcon : a.kind === "library" ? Library : FileText;
-  return (
-    <span className="inline-flex max-w-[14rem] items-center gap-1 rounded-md border bg-background/70 px-2 py-0.5 text-xs text-foreground">
-      <Icon className="h-3 w-3 shrink-0" aria-hidden />
-      <span className="truncate" title={a.name}>{a.name}</span>
-      {onRemove && (
-        <button type="button" onClick={onRemove} aria-label={`Retirer ${a.name}`} className="shrink-0 text-muted-foreground hover:text-foreground">
-          <X className="h-3 w-3" aria-hidden />
-        </button>
-      )}
-    </span>
-  );
-}
+import type { ChatCitation, ChatMessageDto, ConsultedInfo, ConversationDto } from "./types";
 
 interface Props {
   scope: "GLOBAL" | "DOCUMENT";
@@ -195,16 +124,7 @@ function Bubble({ m, onCitation, large }: { m: ChatMessageDto; onCitation?: Prop
     <div className={cn("flex", mine ? "justify-end" : "justify-start")}>
       <div className={cn("rounded-xl px-4 py-2.5", large ? "max-w-[85%] text-[15px]" : "max-w-[92%] text-sm", mine ? "bg-primary text-primary-foreground" : "bg-muted/60")}>
         {mine ? (
-          <>
-            {!!m.attachments?.length && (
-              <div className="mb-1.5 flex flex-wrap gap-1 text-foreground">
-                {m.attachments.map((a, i) => (
-                  <AttachmentChip key={i} a={a} />
-                ))}
-              </div>
-            )}
-            <p className="whitespace-pre-wrap break-words">{m.content}</p>
-          </>
+          <p className="whitespace-pre-wrap break-words">{m.content}</p>
         ) : (
           <>
             <div className="space-y-2 break-words leading-relaxed [&_a]:underline [&_code]:rounded [&_code]:bg-background [&_code]:px-1 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold [&_li]:ml-5 [&_ol]:list-decimal [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-background [&_pre]:p-2 [&_ul]:list-disc">
@@ -234,15 +154,7 @@ export default function ChatPanel({ scope, documentId, onCitation, variant = "pa
   const [sidebar, setSidebar] = useState(true);
   const [drawer, setDrawer] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
-  const [files, setFiles] = useState<File[]>([]);
-  const [libDocs, setLibDocs] = useState<{ id: string; name: string }[]>([]);
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [library, setLibrary] = useState<LibraryDoc[] | null>(null);
-  const [live, setLive] = useState<{ status: string; text: string } | null>(null);
-  const [dragging, setDragging] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
-  const attachCount = files.length + libDocs.length;
   const listQuery = scope === "DOCUMENT" ? `scope=DOCUMENT&documentId=${documentId}` : "scope=GLOBAL";
   const aiReady = status ? status.configured && status.chat !== false : null;
   const webAvailable = !!status?.web?.available;
@@ -288,35 +200,7 @@ export default function ChatPanel({ scope, documentId, onCitation, variant = "pa
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
-  }, [messages, sending, live?.text, live?.status]);
-
-  function addFiles(list: File[]) {
-    if (!list.length) return;
-    const ok = list.filter((f) => /\.(pdf|docx|pptx|txt|md|png|jpe?g|webp)$/i.test(f.name));
-    const room = MAX_ATTACHMENTS - attachCount;
-    const problems: string[] = [];
-    if (ok.length < list.length) problems.push("Format non pris en charge (PDF, Word, PowerPoint, texte, Markdown, PNG, JPEG, WebP).");
-    if (ok.length > room) problems.push(`${MAX_ATTACHMENTS} pièces jointes au maximum par message.`);
-    const tooBig = ok.find((f) => f.size > (IMAGE_RE.test(f.name) ? 5 : 10) * 1024 * 1024);
-    if (tooBig) problems.push(`« ${tooBig.name} » est trop volumineux (${IMAGE_RE.test(tooBig.name) ? "5" : "10"} Mo maximum).`);
-    setError(problems.length ? problems.join(" ") : null);
-    setFiles((cur) => [...cur, ...ok.filter((f) => f.size <= (IMAGE_RE.test(f.name) ? 5 : 10) * 1024 * 1024).slice(0, Math.max(0, room))]);
-  }
-
-  async function openPicker() {
-    setPickerOpen(true);
-    if (library) return;
-    try {
-      setLibrary((await api.get<{ documents: LibraryDoc[] }>("/api/chat/documents")).documents);
-    } catch (e) {
-      setLibrary([]);
-      setError(e instanceof Error ? e.message : "Bibliothèque indisponible.");
-    }
-  }
-
-  function toggleLibDoc(d: LibraryDoc) {
-    setLibDocs((cur) => (cur.some((x) => x.id === d.id) ? cur.filter((x) => x.id !== d.id) : attachCount >= MAX_ATTACHMENTS ? cur : [...cur, { id: d.id, name: d.name }]));
-  }
+  }, [messages, sending]);
 
   function toggleWeb(on: boolean) {
     setWeb(on);
@@ -328,21 +212,12 @@ export default function ChatPanel({ scope, documentId, onCitation, variant = "pa
   }
 
   async function send(text: string) {
-    const typed = text.trim();
-    if ((!typed && !attachCount) || sending) return;
-    // Message vide avec pièce jointe : une consigne par défaut
-    const content = typed || "Analyse la pièce jointe et explique-m'en le contenu.";
-    const sentFiles = files;
-    const sentDocs = libDocs;
-    const tmpId = `tmp-${Date.now()}`;
+    const content = text.trim();
+    if (!content || sending) return;
     setSending(true);
     setError(null);
     setInput("");
-    setFiles([]);
-    setLibDocs([]);
-    setLive({ status: "", text: "" });
-    const shown: ChatAttachmentDto[] = [...sentDocs.map((d): ChatAttachmentDto => ({ kind: "library", name: d.name, documentId: d.id })), ...sentFiles.map((f): ChatAttachmentDto => ({ kind: IMAGE_RE.test(f.name) ? "image" : "file", name: f.name }))];
-    setMessages((m) => [...m, { id: tmpId, role: "USER", content, attachments: shown, citations: null, consulted: null, model: null, createdAt: new Date().toISOString() }]);
+    setMessages((m) => [...m, { id: `tmp-${Date.now()}`, role: "USER", content, citations: null, consulted: null, model: null, createdAt: new Date().toISOString() }]);
     try {
       let id = activeId;
       if (!id) {
@@ -355,33 +230,13 @@ export default function ChatPanel({ scope, documentId, onCitation, variant = "pa
         setActiveId(id);
         setConversations((list) => [c.conversation, ...(list ?? [])]);
       }
-      const useWeb = web && webAvailable;
-      let body: FormData | { content: string; web: boolean };
-      if (sentFiles.length || sentDocs.length) {
-        body = new FormData();
-        body.set("content", content);
-        body.set("web", useWeb ? "1" : "0");
-        body.set("libraryDocumentIds", JSON.stringify(sentDocs.map((d) => d.id)));
-        for (const f of sentFiles) body.append("files", f, f.name);
-      } else body = { content, web: useWeb };
-      const r = await postMessageStream(`/api/conversations/${id}/messages`, body, {
-        // Un nouveau statut (recherche, lecture…) annonce une étape : le texte provisoire éventuel est écarté
-        status: (t) => setLive({ status: t, text: "" }),
-        delta: (t) => setLive((l) => ({ status: l?.status ?? "", text: (l?.text ?? "") + t })),
-      });
+      const r = await api.post<{ message: ChatMessageDto; title: string }>(`/api/conversations/${id}/messages`, { content, web: web && webAvailable });
       setMessages((m) => [...m, r.message]);
       setConversations((list) => (list ?? []).map((c) => (c.id === id ? { ...c, title: r.title } : c)));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Envoi impossible.");
-      // Refus avant enregistrement (fichier invalide, limite…) : le brouillon est restitué tel quel
-      if (e instanceof ApiError && [404, 413, 415, 422, 429].includes(e.status)) {
-        setMessages((m) => m.filter((x) => x.id !== tmpId));
-        setInput(typed);
-        setFiles(sentFiles);
-        setLibDocs(sentDocs);
-      } else if (activeId) void open(activeId);
+      if (activeId) void open(activeId);
     } finally {
-      setLive(null);
       setSending(false);
     }
   }
@@ -574,20 +429,10 @@ export default function ChatPanel({ scope, documentId, onCitation, variant = "pa
             {messages.map((m) => (
               <Bubble key={m.id} m={m} onCitation={onCitation} large={page} />
             ))}
-            {sending && live?.text ? (
-              <div className="flex justify-start">
-                <div className={cn("rounded-xl bg-muted/60 px-4 py-2.5", page ? "max-w-[85%] text-[15px]" : "max-w-[92%] text-sm")}>
-                  <div className="space-y-2 break-words leading-relaxed [&_a]:underline [&_code]:rounded [&_code]:bg-background [&_code]:px-1 [&_li]:ml-5 [&_ol]:list-decimal [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-background [&_pre]:p-2 [&_ul]:list-disc">
-                    <ReactMarkdown skipHtml>{live.text}</ReactMarkdown>
-                  </div>
-                </div>
+            {sending && (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground" role="status">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> L&apos;assistant réfléchit…
               </div>
-            ) : (
-              sending && (
-                <div className="flex items-center gap-2 text-xs text-muted-foreground" role="status">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> {live?.status || "L'assistant répond…"}
-                </div>
-              )
             )}
             {error && (
               <p role="alert" className="rounded-lg border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
@@ -599,65 +444,13 @@ export default function ChatPanel({ scope, documentId, onCitation, variant = "pa
         </div>
 
         <form
-          className={cn("border-t", page ? "p-3" : "p-2", dragging && "bg-primary/5 outline-dashed outline-2 -outline-offset-4 outline-primary/50")}
+          className={cn("border-t", page ? "p-3" : "p-2")}
           onSubmit={(e) => {
             e.preventDefault();
             void send(input);
           }}
-          onDragOver={(e) => {
-            if (e.dataTransfer.types.includes("Files")) {
-              e.preventDefault();
-              setDragging(true);
-            }
-          }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={(e) => {
-            if (!e.dataTransfer.files.length) return;
-            e.preventDefault();
-            setDragging(false);
-            addFiles([...e.dataTransfer.files]);
-          }}
         >
-          <input
-            ref={fileRef}
-            type="file"
-            multiple
-            accept={ACCEPT}
-            className="hidden"
-            aria-label="Joindre un fichier ou une image"
-            onChange={(e) => {
-              addFiles([...(e.target.files ?? [])]);
-              e.target.value = "";
-            }}
-          />
-          {attachCount > 0 && (
-            <div className={cn("mb-2 flex flex-wrap gap-1.5", page && "mx-auto max-w-3xl")} aria-label="Pièces jointes">
-              {libDocs.map((d) => (
-                <AttachmentChip key={d.id} a={{ kind: "library", name: d.name }} onRemove={() => setLibDocs((c) => c.filter((x) => x.id !== d.id))} />
-              ))}
-              {files.map((f, i) => (
-                <AttachmentChip key={`${f.name}-${i}`} a={{ kind: "pending", name: f.name }} onRemove={() => setFiles((c) => c.filter((_, j) => j !== i))} />
-              ))}
-            </div>
-          )}
           <div className={cn("flex items-end gap-2", page && "mx-auto max-w-3xl")}>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button type="button" size="icon" variant="outline" className="h-9 w-9 shrink-0" disabled={sending || aiReady === false || attachCount >= MAX_ATTACHMENTS} aria-label="Joindre un document ou une image" title="Joindre un document ou une image">
-                  <Paperclip className="h-4 w-4" aria-hidden />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start">
-                <DropdownMenuItem onSelect={() => fileRef.current?.click()}>
-                  <FileText className="mr-2 h-4 w-4" aria-hidden /> Fichier ou image de l&apos;ordinateur
-                </DropdownMenuItem>
-                {scope === "GLOBAL" && (
-                  <DropdownMenuItem onSelect={() => void openPicker()}>
-                    <Library className="mr-2 h-4 w-4" aria-hidden /> Document de mes cours
-                  </DropdownMenuItem>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
             <Textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -667,13 +460,6 @@ export default function ChatPanel({ scope, documentId, onCitation, variant = "pa
                   void send(input);
                 }
               }}
-              onPaste={(e) => {
-                const pasted = [...e.clipboardData.files];
-                if (pasted.length) {
-                  e.preventDefault();
-                  addFiles(pasted.map((f) => (f.name && /\.\w+$/.test(f.name) ? f : new File([f], `capture-${Date.now()}.${f.type.split("/")[1] === "jpeg" ? "jpg" : (f.type.split("/")[1] ?? "png")}`, { type: f.type }))));
-                }
-              }}
               rows={page ? 3 : 2}
               maxLength={6000}
               placeholder={scope === "DOCUMENT" ? "Votre question sur ce cours…" : "Posez votre question…"}
@@ -681,47 +467,12 @@ export default function ChatPanel({ scope, documentId, onCitation, variant = "pa
               aria-label="Message"
               disabled={aiReady === false}
             />
-            <Button type="submit" size="icon" className="h-9 w-9 shrink-0" disabled={sending || (!input.trim() && !attachCount) || aiReady === false} aria-label="Envoyer">
+            <Button type="submit" size="icon" className="h-9 w-9 shrink-0" disabled={sending || !input.trim() || aiReady === false} aria-label="Envoyer">
               {sending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Send className="h-4 w-4" aria-hidden />}
             </Button>
           </div>
         </form>
       </div>
-
-      <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Joindre un document de mes cours</DialogTitle>
-            <DialogDescription>L&apos;assistant le consultera en priorité et citera ses passages. {MAX_ATTACHMENTS} pièces jointes au maximum.</DialogDescription>
-          </DialogHeader>
-          <div className="max-h-80 space-y-0.5 overflow-y-auto" role="group" aria-label="Documents">
-            {library === null && <Loader2 className="mx-auto h-4 w-4 animate-spin text-muted-foreground" aria-label="Chargement" />}
-            {library?.length === 0 && <p className="text-sm text-muted-foreground">Aucun document prêt à être consulté dans votre bibliothèque.</p>}
-            {(library ?? []).map((d) => {
-              const picked = libDocs.some((x) => x.id === d.id);
-              return (
-                <button
-                  key={d.id}
-                  type="button"
-                  onClick={() => toggleLibDoc(d)}
-                  aria-pressed={picked}
-                  className={cn("flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted", picked && "bg-muted font-medium")}
-                >
-                  <FileText className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-                  <span className="min-w-0 flex-1 truncate">{d.name}</span>
-                  {d.subject && <span className="shrink-0 text-xs text-muted-foreground">{d.subject}</span>}
-                  {picked && <span className="shrink-0 text-xs text-primary">Joint</span>}
-                </button>
-              );
-            })}
-          </div>
-          <div className="flex justify-end">
-            <Button size="sm" onClick={() => setPickerOpen(false)}>
-              Terminé
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

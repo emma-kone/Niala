@@ -1,6 +1,5 @@
 "use client";
 
-import { useAppStore } from "@/store/app-store";
 import { createContext, useCallback, useContext, useEffect, useMemo, useSyncExternalStore } from "react";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -77,10 +76,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   // La préférence enregistrée du compte l'emporte sur la valeur locale (autre appareil, navigateur neuf).
   // Sans session (page de connexion), la requête échoue en silence : on garde le thème par défaut.
-  // Rejouée à chaque changement de compte connecté (la connexion se fait sans rechargement de page).
-  const userId = useAppStore((s) => s.user?.id ?? null);
   useEffect(() => {
-    if (!userId) return;
     let cancelled = false;
     fetch("/api/settings", { credentials: "same-origin" })
       .then((r) => (r.ok ? r.json() : null))
@@ -92,7 +88,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [setTheme, userId]);
+  }, [setTheme]);
 
   const value = useMemo(() => ({ theme, resolvedTheme, setTheme }), [theme, resolvedTheme, setTheme]);
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

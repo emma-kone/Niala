@@ -22,18 +22,10 @@ export interface ConsultedInfo {
   coverage: { documentId: string; documentName: string; complete: boolean; warnings: string[] }[];
 }
 
-export interface ChatAttachmentDto {
-  kind: "library" | "file" | "image";
-  name: string;
-  documentId?: string;
-  truncated?: boolean;
-}
-
 export interface ChatMessageDto {
   id: string;
   role: "USER" | "ASSISTANT";
   content: string;
-  attachments?: ChatAttachmentDto[];
   citations: ChatCitation[] | null;
   consulted: ConsultedInfo | null;
   model: string | null;

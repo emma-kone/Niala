@@ -7,7 +7,7 @@ const querySchema = z.object({
   folderId: z.string().min(1).nullable(),
   q: z.string().max(200).optional(),
   content: z.enum(["0", "1"]).optional(),
-  kind: z.enum(["pdf", "docx", "pptx", "txt", "md", "png", "jpg", "webp"]).optional(),
+  kind: z.enum(["pdf", "docx", "pptx", "txt", "md"]).optional(),
   status: z.enum(["PENDING", "PROCESSING", "READY", "PARTIAL", "FAILED", "UNSUPPORTED"]).optional(),
   sort: z.enum(["name", "date", "size", "type"]).optional(),
   dir: z.enum(["asc", "desc"]).optional(),

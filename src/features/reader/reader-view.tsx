@@ -14,9 +14,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { cn } from "@/lib/utils";
 import { Properties } from "@/features/subject-files/properties";
 import { STATUS_LABEL, type DocumentDetails } from "@/features/subject-files/types";
-import { ExtractedTextViewer, ImageViewer, OriginalTextViewer } from "./text-viewers";
-
-const IMAGE_KINDS = ["png", "jpg", "webp"];
+import { ExtractedTextViewer, OriginalTextViewer } from "./text-viewers";
 import { NotesPanel } from "./notes-panel";
 import { AnalysisPanel } from "./analysis-panel";
 import ChatPanel from "@/features/chat/chat-panel";
@@ -180,7 +178,7 @@ export default function ReaderView({ subjectId, docId }: { subjectId: string; do
   const docKind = doc?.kind;
   const docMissing = doc?.originalMissing;
   useEffect(() => {
-    if (!docKind || docKind === "pdf" || IMAGE_KINDS.includes(docKind) || docMissing) return;
+    if (!docKind || docKind === "pdf" || docMissing) return;
     let cancelled = false;
     api
       .get<{ available: boolean }>(`/api/files/${docId}/preview`)
@@ -217,9 +215,7 @@ export default function ReaderView({ subjectId, docId }: { subjectId: string; do
 
   let viewer: React.ReactNode = <Skeleton className="m-4 h-[70%] rounded-lg" />;
   if (doc) {
-    if (!doc.originalMissing && IMAGE_KINDS.includes(doc.kind)) {
-      viewer = <ImageViewer src={contentUrl} docId={docId} name={doc.name} downloadUrl={downloadUrl} />;
-    } else if (!doc.originalMissing && doc.kind !== "pdf" && preview === "loading") {
+    if (!doc.originalMissing && doc.kind !== "pdf" && preview === "loading") {
       viewer = (
         <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground" role="status">
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Préparation de l&apos;aperçu PDF…

@@ -83,15 +83,7 @@ export default function ExerciseView({ subjectId, exerciseId }: { subjectId: str
       </nav>
       <h1 className="typo-h1">{ex.title}</h1>
       <p className="typo-subtitle mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-        {ex.sources.length > 1 ? (
-          ex.sources.map((src, i) =>
-            src.documentId ? (
-              <Link key={i} href={`${routes.subject(subjectId)}/documents/${src.documentId}`} className="inline-flex items-center gap-1 text-primary hover:underline"><FileText className="h-3.5 w-3.5" aria-hidden /> {src.documentName}{src.versionNumber ? ` (version ${src.versionNumber})` : ""}{src.coverage.mode === "sections" ? " — sections choisies" : ""}</Link>
-            ) : (
-              <span key={i}>{src.documentName} (supprimé)</span>
-            )
-          )
-        ) : ex.document ? (
+        {ex.document ? (
           <Link href={`${routes.subject(subjectId)}/documents/${ex.document.id}`} className="inline-flex items-center gap-1 text-primary hover:underline"><FileText className="h-3.5 w-3.5" aria-hidden /> {ex.document.name}{ex.versionNumber ? ` (version ${ex.versionNumber})` : ""}</Link>
         ) : (
           <span>Document source supprimé</span>

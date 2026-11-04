@@ -14,7 +14,6 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AnswerText, ExpectedText, QuestionInput } from "./question-input";
 import { TestOutcomes } from "@/features/labs/test-outcomes";
-import { DiagnosisCard } from "@/features/labs/diagnosis-card";
 import type { Diagnosis, TestOutcome, TestSummary } from "@/features/labs/types";
 import { VERDICT_LABEL, fmtPoints, type AttemptDetail, type AttemptQuestion } from "./types";
 
@@ -331,12 +330,11 @@ function ResultCard({ q, subjectId, exerciseId, documentId }: { q: AttemptQuesti
         <div className="mt-2 text-sm"><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Ce qui manque</p><ul className="list-disc pl-5">{(r!.detail as { missing: string[] }).missing.map((m, i) => <li key={i}>{m}</li>)}</ul></div>
       )}
       {r?.explanation && <p className="mt-3 rounded-md bg-muted/60 p-3 text-sm"><span className="font-semibold">Explication : </span>{r.explanation}</p>}
-      {r?.diagnosis && <DiagnosisCard report={r.diagnosis} />}
       {q.sourceRefs?.map((s, i) => (
         <p key={i} className="mt-2 border-l-2 border-emerald-500 pl-2 text-xs italic text-muted-foreground">
-          {s.documentName && <span className="not-italic font-medium">{s.documentName} : </span>}« {s.quote} »{" "}
-          {(s.documentId ?? documentId) && s.page && (
-            <Link href={`${routes.subject(subjectId)}/documents/${s.documentId ?? documentId}?page=${s.page}`} className="not-italic text-primary hover:underline">
+          « {s.quote} »{" "}
+          {documentId && s.page && (
+            <Link href={`${routes.subject(subjectId)}/documents/${documentId}?page=${s.page}`} className="not-italic text-primary hover:underline">
               Relire p. {s.page} <ExternalLink className="inline h-3 w-3" aria-hidden />
             </Link>
           )}

@@ -8,9 +8,6 @@ import CodeMirror, { type Extension } from "@uiw/react-codemirror";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { javascript } from "@codemirror/lang-javascript";
 import { python } from "@codemirror/lang-python";
-import { cpp } from "@codemirror/lang-cpp";
-import { StreamLanguage } from "@codemirror/language";
-import { csharp } from "@codemirror/legacy-modes/mode/clike";
 import { sql as sqlLang } from "@codemirror/lang-sql";
 import { ChevronRight, FileText, FlaskConical, Lightbulb, Loader2, Play, Eye, Trash2 } from "lucide-react";
 import { api } from "@/lib/client-api";
@@ -22,10 +19,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { TestOutcomes } from "./test-outcomes";
-import { DiagnosisCard } from "./diagnosis-card";
-import { AnalysisStrip, useLiveAnalysis, useLintMarkers } from "./live-analysis";
-import { lintGutter } from "@codemirror/lint";
-import type { EditorView } from "@codemirror/view";
 import { CATEGORY_LABEL, type Diagnosis, type RunDto, type RunHistoryItem, type RunOutput, type LabWorkspaceDto } from "./types";
 
 const errText = (e: unknown, fb: string) => (e instanceof Error ? e.message : fb);
@@ -54,7 +47,6 @@ export default function LabWorkspace({ id }: { id: string }) {
   const [hintError, setHintError] = useState<string | null>(null);
   const [reference, setReference] = useState<{ reference: string } | null>(null);
   const [tab, setTab] = useState("result");
-  const [view, setView] = useState<EditorView | null>(null);
   const dirty = useRef(false);
   const codeRef = useRef("");
   codeRef.current = code;
@@ -116,16 +108,9 @@ export default function LabWorkspace({ id }: { id: string }) {
 
   const kind = ws?.kind;
   const lang = ws?.files[0]?.language ?? "python";
-  const editorOnly = lang === "c" || lang === "csharp";
-  const live = useLiveAnalysis(lang, code, id);
-  useLintMarkers(view, live.analysis, live.fresh);
-  const extensions = useMemo<Extension[]>(
-    () => [lintGutter(), ...(lang === "sql" ? [sqlLang()] : lang === "python" ? [python()] : lang === "c" ? [cpp()] : lang === "csharp" ? [StreamLanguage.define(csharp)] : [javascript({ typescript: lang === "typescript" })])],
-    [lang]
-  );
+  const extensions = useMemo<Extension[]>(() => (lang === "sql" ? [sqlLang()] : lang === "python" ? [python()] : [javascript({ typescript: lang === "typescript" })]), [lang]);
 
   async function exec(mode: "run" | "tests") {
-    if (editorOnly) return;
     setRunning(mode);
     setRunError(null);
     try {
@@ -250,24 +235,12 @@ export default function LabWorkspace({ id }: { id: string }) {
               theme={resolvedTheme === "dark" ? oneDark : "light"}
               extensions={extensions}
               onChange={(v) => { dirty.current = true; setSaved("idle"); setCode(v); }}
-              onCreateEditor={(v) => setView(v)}
               aria-label="Éditeur de code"
               basicSetup={{ lineNumbers: true, foldGutter: false }}
             />
           </div>
 
-          <AnalysisStrip analysis={live.analysis} fresh={live.fresh} busy={live.busy} error={live.error} />
-
-          {editorOnly && (
-            <Alert>
-              <AlertTitle>Coloration syntaxique seulement</AlertTitle>
-              <AlertDescription>
-                Le langage {lang === "csharp" ? "C#" : "C"} n&apos;est pas exécutable dans Niala : aucun compilateur sûr n&apos;est disponible et rien n&apos;est simulé. Utilisez l&apos;éditeur pour écrire et relire votre code, puis compilez-le sur votre machine.
-              </AlertDescription>
-            </Alert>
-          )}
-
-          {kind === "CODE" && !editorOnly && (
+          {kind === "CODE" && (
             <details className="rounded-md border p-2 text-sm">
               <summary className="cursor-pointer font-medium">Entrée standard (input / readLine)</summary>
               <Textarea aria-label="Entrée standard" value={stdin} onChange={(e) => setStdin(e.target.value)} rows={3} maxLength={4000} className="mt-2 font-mono text-xs" placeholder="Une ligne par appel à input() (Python) ou readLine() (JS/TS)" />
@@ -275,7 +248,7 @@ export default function LabWorkspace({ id }: { id: string }) {
           )}
 
           <div className="flex flex-wrap gap-2">
-            <Button className="gap-2" onClick={() => void exec("run")} disabled={running !== null || !code.trim() || editorOnly} title={editorOnly ? "Exécution indisponible pour ce langage" : undefined}>
+            <Button className="gap-2" onClick={() => void exec("run")} disabled={running !== null || !code.trim()}>
               {running === "run" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Play className="h-4 w-4" aria-hidden />} Exécuter <kbd className="ml-1 hidden rounded border px-1 text-[10px] sm:inline">Ctrl+↵</kbd>
             </Button>
             {hasTests && (
@@ -289,7 +262,7 @@ export default function LabWorkspace({ id }: { id: string }) {
             {ws.canReveal && !ws.brief?.revealedAt && <Button variant="ghost" className="gap-2" onClick={() => void reveal()}><Eye className="h-4 w-4" aria-hidden /> Voir la solution</Button>}
             {ws.brief?.revealedAt && <Button variant="ghost" className="gap-2" onClick={() => void reveal()}><Eye className="h-4 w-4" aria-hidden /> Revoir la solution</Button>}
           </div>
-          {!run && !editorOnly && <p className="text-xs text-muted-foreground">Exécutez d&apos;abord votre code : les indices s&apos;appuient sur le résultat réel.</p>}
+          {!run && <p className="text-xs text-muted-foreground">Exécutez d&apos;abord votre code : les indices s&apos;appuient sur le résultat réel.</p>}
           {runError && <Alert variant="destructive"><AlertTitle>Exécution impossible</AlertTitle><AlertDescription>{runError}</AlertDescription></Alert>}
         </div>
 
@@ -303,12 +276,12 @@ export default function LabWorkspace({ id }: { id: string }) {
           </TabsList>
 
           <TabsContent value="result" className="mt-3 rounded-xl border bg-card p-4">
-            {running === "run" ? <p className="flex items-center gap-2 text-sm text-muted-foreground" aria-busy><Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Exécution isolée en cours (le premier lancement Python peut prendre quelques secondes)…</p> : !out ? <p className="text-sm text-muted-foreground">Aucune exécution pour l&apos;instant. Lancez votre code pour voir son résultat ici.</p> : <><OutputView out={out} diagnoses={run?.tests ? [] : diagnoses} />{run?.report && <DiagnosisCard report={run.report} />}</>}
+            {running === "run" ? <p className="flex items-center gap-2 text-sm text-muted-foreground" aria-busy><Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Exécution isolée en cours (le premier lancement Python peut prendre quelques secondes)…</p> : !out ? <p className="text-sm text-muted-foreground">Aucune exécution pour l&apos;instant. Lancez votre code pour voir son résultat ici.</p> : <OutputView out={out} diagnoses={run?.tests ? [] : diagnoses} />}
           </TabsContent>
 
           {hasTests && (
             <TabsContent value="tests" className="mt-3 rounded-xl border bg-card p-4">
-              {running === "tests" ? <p className="flex items-center gap-2 text-sm text-muted-foreground" aria-busy><Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Tests en cours…</p> : run?.tests ? <><TestOutcomes outcomes={run.tests.outcomes} summary={run.tests.summary} diagnoses={run.tests.diagnoses} />{run.report && <DiagnosisCard report={run.report} />}</> : (
+              {running === "tests" ? <p className="flex items-center gap-2 text-sm text-muted-foreground" aria-busy><Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Tests en cours…</p> : run?.tests ? <TestOutcomes outcomes={run.tests.outcomes} summary={run.tests.summary} diagnoses={run.tests.diagnoses} /> : (
                 <div className="space-y-2 text-sm">
                   <p className="text-muted-foreground">Les tests s&apos;exécutent dans un environnement isolé et comparent votre résultat à celui d&apos;une solution de référence.</p>
                   <ul className="list-disc space-y-1 pl-5">

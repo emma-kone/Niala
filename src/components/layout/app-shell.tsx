@@ -3,7 +3,6 @@
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/client-api";
 import { routes } from "@/config/routes";
-import { DEFAULT_THEME, useTheme } from "@/components/theme/theme-provider";
 import { useAppStore } from "@/store/app-store";
 import { AuthGuard } from "@/components/layout/auth-guard";
 import { SidebarNav } from "@/components/layout/sidebar-nav";
@@ -12,14 +11,12 @@ import { AppFooter } from "@/components/layout/app-footer";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const { setTheme } = useTheme();
   const user = useAppStore((s) => s.user);
   const setAuthenticated = useAppStore((s) => s.setAuthenticated);
 
   async function logout() {
     await api.post("/api/auth/logout");
     setAuthenticated(false, null);
-    setTheme(DEFAULT_THEME); // la préférence du compte ne doit pas rester sur le navigateur
     router.replace(routes.login);
   }
 

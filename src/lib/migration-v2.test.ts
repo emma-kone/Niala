@@ -44,11 +44,6 @@ beforeAll(async () => {
   await pg.exec(sql("20261101000300_v2_rls"));
   await pg.exec(sql("20261104000000_niala_theme_default"));
   await pg.exec(sql("20261104000100_niala_chat"));
-  await pg.exec(sql("20261105000000_niala_diagnosis"));
-  await pg.exec(sql("20261106000000_niala_progression"));
-  await pg.exec(sql("20261107000000_niala_followups"));
-  await pg.exec(sql("20261108000000_niala_exercise_sources"));
-  await pg.exec(sql("20261109000000_niala_chat_attachments"));
 });
 
 describe("migration V1 → V2", () => {

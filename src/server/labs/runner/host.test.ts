@@ -118,24 +118,6 @@ describe("runner SQL (sql.js)", () => {
     expect(r.results[1].user?.error?.type).toBe("Interdit");
   }, 60_000);
 
-  it("refuse les PRAGMA de configuration (plafond mémoire non contournable), y compris après un commentaire ou dans l'installation", async () => {
-    const blob = "CREATE TABLE b(x); INSERT INTO b VALUES (zeroblob(40000000));";
-    const r = await runSqlCases(
-      [
-        { id: "a", setupSql: setup, script: "PRAGMA max_page_count=1000000; " + blob },
-        { id: "b", setupSql: setup, script: "/* x */ PRAGMA max_page_count=1000000; " + blob },
-        { id: "c", setupSql: "PRAGMA max_page_count=1000000;", script: blob },
-        { id: "d", setupSql: setup, script: "PRAGMA table_info(t);" },
-      ],
-      fast,
-    );
-    expect(r.results[0].user?.error?.type).toBe("Interdit");
-    expect(r.results[1].user?.error?.type).toBe("Interdit");
-    expect(r.results[2].status).toBe("error");
-    expect(r.results[2].error?.message).toMatch(/installation/);
-    expect(r.results[3].user?.error).toBeUndefined();
-  }, 60_000);
-
   it("interrompt une requête infinie (récursion) sans bloquer le serveur", async () => {
     const r = await runSqlCases(
       [{ id: "a", setupSql: setup, script: "WITH RECURSIVE r(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM r) SELECT count(*) FROM r;" }, { id: "b", setupSql: setup, script: "SELECT count(*) FROM t;" }],

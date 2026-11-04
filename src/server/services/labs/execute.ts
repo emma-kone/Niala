@@ -2,7 +2,6 @@ import {
   classify,
   codeCasesFor,
   languageOf,
-  EDITOR_ONLY_LANGUAGES,
   outcomeOfCode,
   outcomeOfSql,
   sqlCasesFor,
@@ -33,14 +32,7 @@ export const execLanguage = (l: string) => languageOf(l);
 
 export function capabilities() {
   const a = runnerAvailable();
-  return {
-    available: a.ok,
-    reason: a.reason,
-    languages: LANGUAGES,
-    /** Éditeur seul : coloration et saisie, aucune exécution. */
-    editorOnly: EDITOR_ONLY_LANGUAGES,
-    note: "C et C# s'écrivent dans l'éditeur (coloration) mais ne sont pas exécutables ici : aucun compilateur sûr n'est disponible, et rien n'est jamais simulé. Java, C++… ne sont pas proposés.",
-  };
+  return { available: a.ok, reason: a.reason, languages: LANGUAGES, note: "Les autres langages (Java, C, C++…) ne sont pas exécutables ici : ils ne sont jamais simulés." };
 }
 
 export interface FreeCodeRun {

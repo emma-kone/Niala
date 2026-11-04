@@ -11,7 +11,6 @@
 | `STORAGE_DIR` | non | Dossier du stockage local (défaut `./storage`) |
 | `GEMINI_API_KEY` | pour les fonctions IA | Clé Google Gemini (fournisseur principal). **Serveur uniquement** : jamais dans le code, le client ou Git. Sans elle : plan issu de la numérotation seulement, les autres fonctions IA sont indisponibles et le disent |
 | `GEMINI_MODEL` | non | Modèle Gemini (défaut `gemini-3.5-flash-lite`, vérifié disponible ; `gemini-3.6-flash` et `gemini-3.8-flash` existent mais répondaient très lentement ou en 503 lors des essais) |
-| `GEMINI_THINKING` | non | `default` rétablit la réflexion native du modèle ; par défaut elle est coupée pour accélérer le chat (essai « budget 0 », puis « niveau minimal », selon le modèle) |
 | `TAVILY_API_KEY` | non | Recherche web du chat (https://tavily.com, offre gratuite). Cherche d'abord sur des domaines de référence (documentation officielle, universités, revues), puis élargit. **Serveur uniquement.** Sans elle, Niala essaie Google Search via Gemini, qui exige un plan Gemini payant (sinon quota refusé : la recherche web est alors indiquée « indisponible ») |
 | `GEMINI_EMBEDDING_MODEL` | non | Modèle de vecteurs sémantiques (défaut `gemini-embedding-001`, 768 dimensions normalisées) |
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | non | Repli, utilisé uniquement si `GEMINI_API_KEY` est absente |

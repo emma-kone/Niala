@@ -1,4 +1,3 @@
-import type { DiagnosisReportDto } from "@/features/labs/types";
 import type { QuestionType } from "@/server/domain/exercise-types";
 
 export interface ExerciseListItem {
@@ -23,8 +22,6 @@ export interface ExerciseDetail {
   subject: { id: string; name: string; color: string };
   document: { id: string; name: string } | null;
   versionNumber: number | null;
-  /** Sources de l'exercice avec la version exacte utilisée pour générer les questions. */
-  sources: { documentId: string | null; documentName: string; versionNumber: number | null; coverage: { mode: string; labels?: string[] } }[];
   createdAt: string;
   totalPoints: number;
   notice: string | null;
@@ -44,7 +41,6 @@ export interface QuestionResult {
   detail?: Record<string, unknown>;
   explanation: string | null;
   questionExplanation: string | null;
-  diagnosis?: DiagnosisReportDto | null;
   method: "rule" | "keywords" | "ai" | "tests";
 }
 
@@ -56,7 +52,7 @@ export interface AttemptQuestion {
   payload: Record<string, unknown>;
   answer: unknown;
   result?: QuestionResult | null;
-  sourceRefs?: { quote: string; page: number | null; documentId?: string; documentName?: string }[];
+  sourceRefs?: { quote: string; page: number | null }[];
   concepts?: { id: string; name: string }[];
 }
 

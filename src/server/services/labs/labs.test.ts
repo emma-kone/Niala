@@ -69,7 +69,7 @@ async function makeQuestion(position: number, type: "code" | "sql", payload: obj
 
 beforeAll(async () => {
   pg = await PGlite.create();
-  for (const n of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261105000000_niala_diagnosis", "20261106000000_niala_progression", "20261107000000_niala_followups", "20261108000000_niala_exercise_sources", "20261109000000_niala_chat_attachments"]) {
+  for (const n of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat"]) {
     await pg.exec(readFileSync(path.join(process.cwd(), "prisma", "migrations", n, "migration.sql"), "utf8"));
   }
   const port = 55000 + Math.floor(Math.random() * 4000);
@@ -137,18 +137,6 @@ describe("mode libre", () => {
     const name = await labs.runWorkspace(A, w.id, { content: "SELECT prenom FROM employes;" });
     expect(name.diagnoses[0]).toMatchObject({ category: "INSTRUCTION", kind: "schema_name" });
   }, 60_000);
-
-  it("C et C# : espace d'écriture avec modèle, mais jamais d'exécution ni de résultat simulé", async () => {
-    for (const [language, file, marker, label] of [["c", "main.c", "#include <stdio.h>", "C"], ["C#", "Program.cs", "Console.WriteLine", "C#"]] as const) {
-      const w = await labs.createFree(A, { kind: "CODE", language });
-      expect(w.files[0]).toMatchObject({ name: file, language: language === "C#" ? "csharp" : "c" });
-      expect(w.files[0].content).toContain(marker);
-      await expect(labs.runWorkspace(A, w.id, { mode: "run", content: w.files[0].content })).rejects.toMatchObject({ status: 422, message: expect.stringContaining(`Le langage ${label} n'est pas exécutable`) });
-      expect(await db.labRun.count({ where: { workspaceId: w.id } })).toBe(0);
-    }
-    await expect(labs.createFree(A, { kind: "CODE", language: "cobol" })).rejects.toMatchObject({ status: 422 });
-    expect(labs.labCapabilities().editorOnly.map((l) => l.id)).toEqual(["c", "csharp"]);
-  });
 
   it("Python libre", async () => {
     const w = await labs.createFree(A, { kind: "CODE", language: "python" });

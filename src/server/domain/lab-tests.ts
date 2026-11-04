@@ -222,8 +222,8 @@ export function summarize(outcomes: TestOutcome[]): TestSummary {
 
 // ── Classification des erreurs ───────────────────────────────────────────────
 /** Catégories de la base (ErrorCategory) ; `kind` précise la nature observée. */
-export type Category = "SYNTAX" | "LOGIC" | "CONCEPT" | "METHOD" | "INSTRUCTION" | "FORGETTING" | "CARELESS" | "ALGORITHM" | "ENVIRONMENT";
-export type DiagnosisKind = "syntax" | "runtime" | "timeout" | "wrong_output" | "edge_case" | "format" | "instructions" | "schema_name" | "partial" | "sql_where_having" | "sql_null_comparison" | "environment" | "numeric";
+export type Category = "SYNTAX" | "LOGIC" | "CONCEPT" | "METHOD" | "INSTRUCTION" | "FORGETTING" | "CARELESS";
+export type DiagnosisKind = "syntax" | "runtime" | "timeout" | "wrong_output" | "edge_case" | "format" | "instructions" | "schema_name" | "partial";
 
 export interface Diagnosis {
   category: Category;
@@ -273,20 +273,5 @@ export function languageOf(l: string): "javascript" | "typescript" | "python" | 
   if (v === "ts" || v === "typescript") return "typescript";
   if (v === "py" || v === "python") return "python";
   if (v === "sql" || v === "sqlite") return "sql";
-  return null;
-}
-
-/** Langages proposés dans l'éditeur SANS exécution : aucun compilateur sûr n'est disponible, rien n'est jamais simulé. */
-export const EDITOR_ONLY_LANGUAGES = [
-  { id: "c", label: "C" },
-  { id: "csharp", label: "C#" },
-] as const;
-
-export type EditorOnlyLanguage = (typeof EDITOR_ONLY_LANGUAGES)[number]["id"];
-
-export function editorOnlyLanguage(l: string): EditorOnlyLanguage | null {
-  const v = l.toLowerCase().trim();
-  if (v === "c") return "c";
-  if (v === "c#" || v === "cs" || v === "csharp") return "csharp";
   return null;
 }

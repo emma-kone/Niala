@@ -116,7 +116,6 @@ const rateBuckets = new Map<string, { count: number; reset: number }>();
 
 export function rateLimit(key: string, max: number, windowMs: number): boolean {
   const now = Date.now();
-  if (rateBuckets.size > 5000) for (const [k, b] of rateBuckets) if (b.reset < now) rateBuckets.delete(k);
   const bucket = rateBuckets.get(key);
   if (!bucket || bucket.reset < now) {
     rateBuckets.set(key, { count: 1, reset: now + windowMs });

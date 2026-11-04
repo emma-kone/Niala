@@ -152,7 +152,7 @@ export async function extractContent(type: string, buffer: Buffer): Promise<Extr
   }
 }
 
-export const SUPPORTED_EXTENSIONS = ["pdf", "docx", "txt", "md", "pptx", "png", "jpg", "jpeg", "webp"] as const;
+export const SUPPORTED_EXTENSIONS = ["pdf", "docx", "txt", "md", "pptx"] as const;
 
 export function detectExtension(filename: string): string | null {
   const ext = filename.split(".").pop()?.toLowerCase() ?? "";

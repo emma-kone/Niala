@@ -4,8 +4,6 @@ import { db } from "@/lib/db";
 import { ApiHttpError } from "@/lib/api-helpers";
 import type { QuestionType } from "@/server/domain/exercise-model";
 import { gradeAnswer } from "./evaluation";
-import { loadHistory, loadPrerequisites, recordDiagnosis } from "@/server/diagnosis/record";
-import { analyzeExerciseAnswer } from "@/server/diagnosis/analyzers/exercise";
 import { refreshProgress } from "@/server/services/progress/progress";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -21,19 +19,11 @@ interface SnapshotQuestion {
   payload: Record<string, unknown>;
   answerKey: Record<string, unknown>;
   explanation: string | null;
-  sourceRefs: SourceRef[];
+  sourceRefs: { quote: string; page: number | null }[];
   concepts: { id: string; name: string }[];
 }
-/** Passage cité : `documentId` et `documentName` identifient le cours (exercices multi-sources), absents des anciens exercices. */
-export interface SourceRef {
-  quote: string;
-  page: number | null;
-  documentId?: string;
-  documentName?: string;
-  versionId?: string;
-}
 interface Snapshot {
-  exercise: { id: string; title: string; totalPoints: number; documentId: string | null; documentName: string | null; versionId: string | null; versionNumber: number | null; subjectId: string; sources?: { documentId: string | null; documentName: string; versionNumber: number | null }[] };
+  exercise: { id: string; title: string; totalPoints: number; documentId: string | null; documentName: string | null; versionId: string | null; versionNumber: number | null; subjectId: string };
   questions: SnapshotQuestion[];
 }
 
@@ -65,7 +55,6 @@ export async function startAttempt(userId: string, exerciseId: string, opts: { f
       versionId: exercise.versionId,
       versionNumber: exercise.version?.number ?? null,
       subjectId: exercise.subjectId,
-      sources: (await db.exerciseSource.findMany({ where: { exerciseId: exercise.id, userId }, orderBy: { position: "asc" } })).map((s) => ({ documentId: s.documentId, documentName: s.documentName, versionNumber: s.versionNumber })),
     },
     questions: exercise.questions.map((q) => ({
       position: q.position,
@@ -112,14 +101,9 @@ export interface AttemptQuestionDto {
   payload: Record<string, unknown>;
   answer: unknown;
   /** Présents uniquement une fois la tentative corrigée. */
-  result?: (FeedbackJson & { questionExplanation: string | null; diagnosis?: unknown }) | null;
-  sourceRefs?: SourceRef[];
+  result?: (FeedbackJson & { questionExplanation: string | null }) | null;
+  sourceRefs?: { quote: string; page: number | null }[];
   concepts?: { id: string; name: string }[];
-}
-
-/** Version publique d'un diagnostic enregistré. */
-function toReportDto(r: Awaited<ReturnType<typeof db.diagnosisReport.findMany>>[number]) {
-  return { id: r.id, state: r.state, primary: r.primary, secondary: r.secondary, summary: r.summary, evidence: r.evidence, prerequisites: r.prerequisites, severity: r.severity, confidence: r.confidence, pedagogical: r.pedagogical, recommendedAction: r.recommendedAction, needsVerification: r.needsVerification };
 }
 
 export async function getAttempt(userId: string, id: string) {
@@ -127,8 +111,6 @@ export async function getAttempt(userId: string, id: string) {
   const snap = a.snapshot as unknown as Snapshot;
   const graded = a.status === "GRADED";
   const answerOf = new Map(a.answers.map((x) => [x.position, x]));
-  const reports = graded ? await db.diagnosisReport.findMany({ where: { userId, answerId: { in: a.answers.map((x) => x.id) } } }) : [];
-  const reportOf = new Map(reports.map((r) => [r.answerId, r]));
 
   const questions: AttemptQuestionDto[] = snap.questions.map((q) => {
     const ans = answerOf.get(q.position);
@@ -144,7 +126,7 @@ export async function getAttempt(userId: string, id: string) {
     const fb = (ans?.feedback as FeedbackJson | null) ?? null;
     return {
       ...base,
-      result: fb ? { ...fb, explanation: fb.explanation ?? q.explanation, questionExplanation: q.explanation, diagnosis: ans && reportOf.get(ans.id) ? toReportDto(reportOf.get(ans.id)!) : null } : null,
+      result: fb ? { ...fb, explanation: fb.explanation ?? q.explanation, questionExplanation: q.explanation } : null,
       sourceRefs: q.sourceRefs,
       concepts: q.concepts,
     };
@@ -226,58 +208,12 @@ async function gradePositions(userId: string, a: Awaited<ReturnType<typeof owned
       create: { userId, attemptId: a.id, position: q.position, ...data, value: (prev?.value ?? "") as Prisma.InputJsonValue },
       update: data,
     });
-    // Diagnostic d'erreur : remplacé à chaque correction. Code/SQL exécutés : constats des tests. Autres types : constats de la
-    // correction (réponse attendue vs donnée, critères manqués, valeur numérique), présentés comme des hypothèses de confiance modérée.
-    const executed = (q.type === "code" || q.type === "sql") && g.detail?.executed;
-    const classic = !executed && !(q.type === "code" || q.type === "sql" || q.type === "practical") && (g.verdict === "partial" || g.verdict === "incorrect");
-    const observation = classic ? analyzeExerciseAnswer(q.type, q.answerKey as Record<string, unknown>, prev?.value ?? null, g) : null;
-    const diagnoses = (observation ? observation.diagnoses : (g.detail?.diagnoses ?? [])) as { category: ErrorCategory; kind: string; confidence: number; label: string; tests: string[] }[];
+    // Diagnostic d'erreur (code/SQL exécutés) : remplacé à chaque correction, justifié par les tests concernés.
+    const diagnoses = (g.detail?.diagnoses ?? []) as { category: ErrorCategory; kind: string; confidence: number; label: string; tests: string[] }[];
     await db.errorDiagnosis.deleteMany({ where: { userId, answerId: saved.id } });
     if (diagnoses.length) {
       await db.errorDiagnosis.createMany({
-        data: diagnoses.map((d) => ({ userId, answerId: saved.id, conceptId: q.concepts[0]?.id ?? null, category: d.category, confidence: d.confidence, evidence: { source: observation ? "rules" : "tests", ...(observation ? { hypothesis: true } : {}), kind: d.kind, label: d.label, tests: d.tests, questionPosition: q.position } as unknown as Prisma.InputJsonValue })),
-      });
-    }
-    // Diagnostic unifié des questions de code et de SQL exécutées (les autres types viendront avec leur analyseur).
-    await db.diagnosisReport.deleteMany({ where: { userId, answerId: saved.id } });
-    if (observation) {
-      await recordDiagnosis({
-        userId,
-        activity: "EXERCISE",
-        answerId: saved.id,
-        subjectId: snap.exercise.subjectId,
-        engine: {
-          activity: "EXERCISE",
-          status: "fail",
-          diagnoses: observation.diagnoses,
-          expected: g.expected,
-          observed: observation.observed,
-          // faits observés (réponse attendue vs donnée, critères manqués…) : seules preuves avancées
-          error: undefined,
-          concepts: q.concepts.map((c) => ({ id: c.id, name: c.name })),
-          extraEvidence: observation.facts,
-          prerequisites: await loadPrerequisites(userId, q.concepts[0]?.id),
-        },
-        history: (category) => loadHistory({ userId, category, conceptId: q.concepts[0]?.id ?? null, excludeAnswerId: saved.id }),
-      });
-    } else if ((q.type === "code" || q.type === "sql") && g.detail?.executed) {
-      const summary = g.detail.summary as { passed: number; total: number; edgePassed: number; edgeTotal: number } | undefined;
-      await recordDiagnosis({
-        userId,
-        activity: q.type === "sql" ? "SQL" : "CODE",
-        answerId: saved.id,
-        subjectId: snap.exercise.subjectId,
-        language: String(q.payload.language ?? (q.type === "sql" ? "sql" : "")),
-        engine: {
-          activity: q.type === "sql" ? "SQL" : "CODE",
-          language: String(q.payload.language ?? ""),
-          status: g.verdict === "correct" ? "pass" : "fail",
-          diagnoses: diagnoses as never,
-          tests: summary ? { passed: summary.passed, total: summary.total, edgePassed: summary.edgePassed, edgeTotal: summary.edgeTotal } : undefined,
-          concepts: q.concepts.map((c) => ({ id: c.id, name: c.name })),
-          prerequisites: await loadPrerequisites(userId, q.concepts[0]?.id),
-        },
-        history: (category) => loadHistory({ userId, category, conceptId: q.concepts[0]?.id ?? null, excludeAnswerId: saved.id }),
+        data: diagnoses.map((d) => ({ userId, answerId: saved.id, conceptId: q.concepts[0]?.id ?? null, category: d.category, confidence: d.confidence, evidence: { source: "tests", kind: d.kind, label: d.label, tests: d.tests, questionPosition: q.position } as unknown as Prisma.InputJsonValue })),
       });
     }
   }
@@ -376,7 +312,6 @@ export async function getExercise(userId: string, id: string) {
       subject: { select: { id: true, name: true, color: true } },
       document: { select: { id: true, name: true } },
       version: { select: { number: true } },
-      sources: { orderBy: { position: "asc" } },
     },
   });
   if (!e) throw new ApiHttpError("Exercice introuvable.", 404);
@@ -387,7 +322,6 @@ export async function getExercise(userId: string, id: string) {
     subject: e.subject,
     document: e.document,
     versionNumber: e.version?.number ?? null,
-    sources: e.sources.map((x) => ({ documentId: x.documentId, documentName: x.documentName, versionNumber: x.versionNumber, coverage: x.coverage as { mode: string; labels?: string[] } })),
     createdAt: e.createdAt,
     totalPoints: e.totalPoints,
     notice: cfg.notice ?? null,

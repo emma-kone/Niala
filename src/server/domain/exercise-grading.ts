@@ -1,6 +1,5 @@
 import { foldText } from "@/server/ai/guard";
 import type { QuestionType } from "./exercise-model";
-import { bestNumericRelation } from "./numeric";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Correction OBJECTIVE (déterministe, sans IA) : QCM, vrai/faux, textes à trous, réponse courte,
@@ -74,12 +73,6 @@ export function gradeObjective(type: QuestionType, key: Key, value: unknown, max
       return { ...fromRatio(ok / Object.keys(answers).length, max), expected: answers, detail: { blanks: per }, method: "rule" };
     }
     case "short_answer": {
-      // Réponse numérique : on compare des VALEURS (virgule, fraction, pourcentage, arrondi), pas des chaînes
-      const num = bestNumericRelation(String(value), key.accepted as string[]);
-      if (num) {
-        const ok = num.relation === "equal" || num.relation === "rounded";
-        return { ...fromRatio(ok ? 1 : 0, max), expected: key.accepted, detail: { numeric: { relation: num.relation, expected: num.expected } }, method: "rule" };
-      }
       const ok = sameText(String(value), key.accepted as string[]);
       return { ...fromRatio(ok ? 1 : 0, max), expected: key.accepted, method: "rule" };
     }
