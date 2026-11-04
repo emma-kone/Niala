@@ -65,7 +65,7 @@ export function buildRecommendations(concepts: ConceptView[], errors: ErrorTally
           priority: 110 + (0.5 - weakPre.level) * 100 + c.importance * 5,
           title: `Consolider « ${weakPre.name} »`,
           text: `« ${weakPre.name} » est un prérequis de « ${c.name} », et votre maîtrise estimée de ce prérequis est fragile (${pct(weakPre.level)}, d'après ${weakPre.evidenceCount} réponse(s)). Mieux vaut le consolider avant de continuer.`,
-          evidence: { concept: weakPre.name, level: weakPre.level, confidence: weakPre.confidence, evidenceCount: weakPre.evidenceCount, blocks: c.name },
+          evidence: { concept: weakPre.name, level: weakPre.level, confidence: weakPre.confidence, evidenceCount: weakPre.evidenceCount, blocks: c.name, adaptation: "prerequisite" },
           key: `EXERCISE:${weakPre.id}`,
         });
         continue;
@@ -126,4 +126,68 @@ export function buildRecommendations(concepts: ConceptView[], errors: ErrorTally
     .filter((r) => (seen.has(r.key) ? false : (seen.add(r.key), true)))
     .slice(0, max)
     .map((r) => ({ ...r, priority: Math.round(r.priority) }));
+}
+
+// ── Adaptation fondée sur le diagnostic ──────────────────────────────────────
+
+export interface AdaptationInput {
+  concepts: (ConceptView & { state: string })[];
+  /** Difficultés récurrentes (compétences) observées, avec leur sujet quand il est connu. */
+  recurring: { skill: string; label: string; occurrences: number; subjectId: string | null }[];
+  /** Notions sur lesquelles au moins deux diagnostics de CONFUSION (hypothèse) ont été posés. */
+  confusions: { conceptId: string; count: number }[];
+}
+
+/**
+ * Recommandations d'exercices ADAPTÉS, chacune justifiée par ses observations :
+ *  - raisonnement et cas limites quand la logique pose problème de façon répétée (la syntaxe n'est pas en cause) ;
+ *  - comparaison de notions quand des confusions se répètent ;
+ *  - difficulté supérieure quand une notion est maîtrisée sur plusieurs observations sûres.
+ * Le renvoi vers un prérequis fragile est déjà géré par `buildRecommendations`.
+ */
+export function buildAdaptations(input: AdaptationInput, max = 4): Rec[] {
+  const out: Rec[] = [];
+  const reasoning = new Set(["cas-limites", "logique-resultat", "conditions-arret"]);
+  for (const r of input.recurring) {
+    if (!reasoning.has(r.skill) || !r.subjectId || r.occurrences < 3) continue;
+    out.push({
+      type: "LAB",
+      subjectId: r.subjectId,
+      conceptId: null,
+      priority: 75 + Math.min(r.occurrences, 8),
+      title: "S'entraîner au raisonnement et aux cas limites",
+      text: `La difficulté « ${r.label} » s'est répétée ${r.occurrences} fois, alors que la syntaxe n'est pas en cause : des exercices de raisonnement (vide, zéro, bornes) sont plus utiles que de réécrire du code.`,
+      evidence: { adaptation: "edge_cases", skill: r.skill, count: r.occurrences },
+      key: `ADAPT:edge:${r.skill}:${r.subjectId}`,
+    });
+  }
+  const byId = new Map(input.concepts.map((c) => [c.id, c]));
+  for (const f of input.confusions) {
+    const c = byId.get(f.conceptId);
+    if (!c || f.count < 2) continue;
+    out.push({
+      type: "EXERCISE",
+      subjectId: c.subjectId,
+      conceptId: c.id,
+      priority: 85 + Math.min(f.count, 5),
+      title: `Distinguer des notions voisines autour de « ${c.name} »`,
+      text: `Des réponses fausses se répètent (${f.count}) sur « ${c.name} » d'une façon qui évoque une confusion possible : un exercice de comparaison permet de le vérifier.`,
+      evidence: { adaptation: "compare", concept: c.name, count: f.count },
+      key: `ADAPT:compare:${c.id}`,
+    });
+  }
+  for (const c of input.concepts) {
+    if ((c.state !== "MASTERED" && c.state !== "CONFIRMED") || c.evidenceCount < 3 || c.importance < 2) continue;
+    out.push({
+      type: "EXERCISE",
+      subjectId: c.subjectId,
+      conceptId: c.id,
+      priority: 40 + c.importance * 2,
+      title: `Passer à la difficulté supérieure sur « ${c.name} »`,
+      text: `Vous maîtrisez « ${c.name} » sur ${c.evidenceCount} observations : des situations plus difficiles ou combinant plusieurs notions confirmeraient et approfondiraient cet acquis.`,
+      evidence: { adaptation: "harder", concept: c.name, level: c.level, evidenceCount: c.evidenceCount },
+      key: `ADAPT:harder:${c.id}`,
+    });
+  }
+  return out.sort((a, b) => b.priority - a.priority).slice(0, max);
 }

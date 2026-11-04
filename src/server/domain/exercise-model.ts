@@ -37,6 +37,8 @@ export const exerciseConfigSchema = z
       conceptIds: z.array(id).max(100).optional(),
     }),
     difficulty: z.enum(DIFFICULTIES),
+    /** Adaptation décidée par le diagnostic : oriente les questions sans changer le barème ni le nombre de questions. */
+    adaptation: z.enum(["edge_cases", "compare", "harder", "prerequisite"]).optional(),
   })
   .superRefine((c, ctx) => {
     if (c.questionCount > maxQuestions()) ctx.addIssue({ code: "custom", path: ["questionCount"], message: `Maximum ${maxQuestions()} questions.` });

@@ -7,6 +7,7 @@ import { checkQuota } from "@/server/ai/structured";
 import { UNTRUSTED_RULES, wrapUntrusted } from "@/server/ai/guard";
 import { resolveCitations, type Citation, type Coverage } from "@/server/domain/retrieval";
 import { embedPending } from "./indexing";
+import { learningProfile, profileForPrompt } from "@/server/services/progress/profile";
 import { TIER_LABEL } from "@/server/domain/web-trust";
 import { WebSearchUnavailableError, searchWeb, webStatus } from "@/server/ai/web-search";
 import { documentCoverage, outline, readPart, resolveDocs, searchPassages, type DocInfo, type Hit, type Scope } from "./retrieval";
@@ -230,7 +231,7 @@ function coverageText(docs: { doc: DocInfo; cov: Coverage }[]): string {
     .join("\n");
 }
 
-function systemPrompt(scope: "GLOBAL" | "DOCUMENT", docs: { doc: DocInfo; cov: Coverage }[], totalDocs: number, web: boolean): string {
+function systemPrompt(scope: "GLOBAL" | "DOCUMENT", docs: { doc: DocInfo; cov: Coverage }[], totalDocs: number, web: boolean, profile = ""): string {
   return `Tu es l'assistant pédagogique de Niala, une plateforme d'apprentissage personnelle. Tu aides un étudiant : comprendre ses cours, répondre à ses questions de connaissances générales, donner des explications, des exemples, des comparaisons, des approfondissements et des exercices d'application. Réponds en français (sauf demande contraire), de façon structurée et concise, en Markdown simple. N'utilise pas LaTeX ni les symboles $ : écris les formules en texte (n! = n × (n-1)!) ou dans un bloc de code.
 
 ${scope === "DOCUMENT" ? "Tu discutes d'UN SEUL cours. Tu n'as accès à aucun autre document." : `Tu as accès à la bibliothèque de l'étudiant (${totalDocs} document(s) consultables). L'étudiant peut aussi te poser des questions sans rapport avec ses cours : réponds alors directement, sans chercher dans ses documents.`}
@@ -248,7 +249,12 @@ Recherche web (outil search_web) :
 ` : `
 La recherche web est désactivée : n'affirme pas avoir vérifié quoi que ce soit sur le web.
 `}
-Honnêteté sur la lecture (état réel de l'extraction, calculé par le serveur) :
+${profile ? `Profil pédagogique de l'étudiant (observations MESURÉES par Niala ; ce sont des pistes, pas des certitudes) :
+${profile}
+- Sers-t'en seulement pour adapter ton niveau d'explication ou suggérer une révision pertinente, et uniquement si cela a un rapport avec la question.
+- Ne dis jamais à l'étudiant qu'il « ne comprend pas » : formule des pistes (« il semble que… », « on pourrait vérifier… ») et propose de vérifier par une question.
+
+` : ""}Honnêteté sur la lecture (état réel de l'extraction, calculé par le serveur) :
 ${coverageText(docs) || "- Aucun document consultable."}
 - Ne prétends JAMAIS avoir lu un document en entier : tu n'as lu que les passages renvoyés par les outils. Pour une demande de résumé complet, lis le plan puis les parties utiles, et indique ce que tu as réellement consulté.
 - Si une extraction est partielle ou si des pages n'ont pas de texte, signale-le dès que cela peut affecter la réponse.
@@ -297,7 +303,9 @@ export async function sendMessage(userId: string, conversationId: string, conten
   const webOn = options.web !== false && (await webStatus()) !== null;
   const ev = new Evidence();
   const ctx: ToolContext = { userId, scope, scopeFilter, docs, ev, signal: AbortSignal.timeout(110_000), web: webOn };
-  const system = systemPrompt(scope, withCoverage, docs.length, webOn);
+  // Mémoire pédagogique : observations mesurées (jamais bloquant pour la conversation)
+  const profile = await learningProfile(userId, scope === "GLOBAL" ? (conv.subjectId ?? undefined) : (docs[0]?.subjectId ?? undefined)).then(profileForPrompt).catch(() => "");
+  const system = systemPrompt(scope, withCoverage, docs.length, webOn, profile);
   const tools = webOn ? [...TOOLS[scope], WEB_TOOL] : TOOLS[scope];
   const turns: ChatTurn[] = [
     ...history.reverse().map((m): ChatTurn => ({ role: m.role === "USER" ? "user" : "model", parts: [{ text: m.content }] })),

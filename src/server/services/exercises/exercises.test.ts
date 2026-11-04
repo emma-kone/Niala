@@ -179,6 +179,25 @@ describe("génération", () => {
     expect(calls.some((c) => c.user.includes("bloc de code reutilisable"))).toBe(true);
   });
 
+  it("exercice adapté : orientation demandée, barème et nombre de questions inchangés, questions déjà travaillées non reposées", async () => {
+    const first = await gen.generateExercise(A, cfg());
+    expect(first.created).toBeGreaterThan(0);
+    const done = (await db.question.findFirst({ where: { exerciseId: first.id } }))!;
+    const statement = String((done.payload as { statement: string }).statement);
+    calls = [];
+    const r = await gen.generateExercise(A, cfg({ adaptation: "edge_cases" }));
+    expect(sumPoints(await db.question.findMany({ where: { exerciseId: r.id }, select: { points: true } }))).toBe(20);
+    const sent = calls.map((c) => c.user).join("\n");
+    expect(sent).toContain("ADAPTATION");
+    expect(sent).toContain("cas limites");
+    expect(sent).toContain("Ne repose PAS");
+    expect(sent).toContain(statement.slice(0, 40));
+    calls = [];
+    await gen.generateExercise(A, cfg());
+    expect(calls.map((c) => c.user).join("\n")).not.toContain("ADAPTATION");
+    await expect(gen.generateExercise(A, cfg({ adaptation: "inconnue" }))).rejects.toMatchObject({ status: 422 });
+  });
+
   it("n'invente pas pour atteindre le nombre demandé : moins de questions, barème redistribué, signalement", async () => {
     mode = "partial";
     const r = await gen.generateExercise(A, cfg({ questionCount: 8, totalPoints: 10 }));

@@ -4,7 +4,8 @@ import { ApiHttpError } from "@/lib/api-helpers";
 import { assertFound } from "@/lib/ownership";
 import { BAND_LABEL, DIFFICULTY_EVIDENCE_WEIGHT, MIN_CONFIDENCE, answerEvidenceScore, estimateMastery, masteryBand, type Evidence } from "@/server/domain/mastery";
 import { progressionState, STATE_LABEL, type ProgressState } from "@/server/domain/progression";
-import { buildRecommendations, type ConceptView, type ErrorTally } from "@/server/domain/recommend";
+import { buildAdaptations, buildRecommendations, type ConceptView, type ErrorTally } from "@/server/domain/recommend";
+import { recurringDifficulties } from "@/server/domain/skills";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Progression adaptative. Sources de vérité : les RÉPONSES corrigées et les TESTS de laboratoire.
@@ -137,11 +138,22 @@ const DISMISS_DAYS = 7;
 /** Régénère les recommandations (hors celles que l'étudiant a écartées récemment). */
 export async function refreshRecommendations(userId: string) {
   const concepts = await loadConceptViews(userId);
-  const recs = buildRecommendations(concepts, await errorTallies(userId));
+  // Adaptation : difficultés récurrentes, confusions répétées, notions maîtrisées (toutes justifiées par des observations)
+  const states = new Map((await db.conceptMastery.findMany({ where: { userId }, select: { conceptId: true, state: true } })).map((m) => [m.conceptId, m.state]));
+  const obsSince = new Date(Date.now() - 45 * 24 * 3600 * 1000);
+  const obs = await db.skillObservation.findMany({ where: { userId, createdAt: { gte: obsSince } }, select: { skill: true, language: true, activity: true, createdAt: true, report: { select: { subjectId: true } } }, take: 2000 });
+  const subjectOfSkill = new Map<string, string | null>();
+  for (const o of obs) if (!subjectOfSkill.get(o.skill) && o.report?.subjectId) subjectOfSkill.set(o.skill, o.report.subjectId);
+  const recurring = recurringDifficulties(obs.map((o) => ({ skill: o.skill, language: o.language, activity: o.activity, at: o.createdAt }))).map((r) => ({ skill: r.skill, label: r.label, occurrences: r.occurrences, subjectId: subjectOfSkill.get(r.skill) ?? null }));
+  const conf = await db.errorDiagnosis.groupBy({ by: ["conceptId"], where: { userId, conceptId: { not: null }, category: "CONCEPT", createdAt: { gte: obsSince } }, _count: { _all: true } });
+  const adaptations = buildAdaptations({ concepts: concepts.map((c) => ({ ...c, state: states.get(c.id) ?? "NOT_ASSESSED" })), recurring, confusions: conf.filter((c) => c.conceptId).map((c) => ({ conceptId: c.conceptId as string, count: c._count._all })) });
+  const recs = [...buildRecommendations(concepts, await errorTallies(userId)), ...adaptations].filter((r, i, all) => all.findIndex((x) => x.key === r.key) === i);
   const since = new Date(Date.now() - DISMISS_DAYS * 24 * 3600 * 1000);
-  const dismissed = await db.learningRecommendation.findMany({ where: { userId, status: "DISMISSED", createdAt: { gte: since } }, select: { reason: true } });
+  const dismissed = await db.learningRecommendation.findMany({ where: { userId, status: "DISMISSED", createdAt: { gte: since } }, select: { reason: true, conceptId: true, activityType: true } });
   const dismissedKeys = new Set(dismissed.map((d) => (d.reason as { key?: string } | null)?.key).filter(Boolean));
-  const kept = recs.filter((r) => !dismissedKeys.has(r.key));
+  // Écarter un exercice sur une notion écarte aussi, pour la même durée, une variante adaptée sur cette notion
+  const dismissedPairs = new Set(dismissed.filter((d) => d.conceptId).map((d) => `${d.activityType}:${d.conceptId}`));
+  const kept = recs.filter((r) => !dismissedKeys.has(r.key) && !(r.conceptId && dismissedPairs.has(`${r.type}:${r.conceptId}`)));
 
   const docOf = new Map<string, string>();
   for (const r of kept) {

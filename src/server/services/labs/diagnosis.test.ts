@@ -10,6 +10,8 @@ import { PGLiteSocketServer } from "@electric-sql/pglite-socket";
 let db: typeof import("@/lib/db").db;
 let labs: typeof import("./labs");
 let analyze: typeof import("./analyze");
+let progress: typeof import("@/server/services/progress/progress");
+let profile: typeof import("@/server/services/progress/profile");
 let server: PGLiteSocketServer;
 let pg: PGlite;
 let dir: string;
@@ -32,6 +34,8 @@ beforeAll(async () => {
   db = (await import("@/lib/db")).db;
   labs = await import("./labs");
   analyze = await import("./analyze");
+  progress = await import("@/server/services/progress/progress");
+  profile = await import("@/server/services/progress/profile");
   A = (await db.user.create({ data: { email: "a@x.fr", passwordHash: "x" } })).id;
   B = (await db.user.create({ data: { email: "b@x.fr", passwordHash: "x" } })).id;
 }, 90_000);
@@ -156,6 +160,32 @@ describe("observations par compétence", () => {
     const total = await db.skillObservation.count({ where: { userId: A } });
     await labs.runWorkspace(A, js.id, { mode: "run", content: "console.log(2)" });
     expect(await db.skillObservation.count({ where: { userId: A } })).toBe(total);
+  });
+});
+
+describe("profil pédagogique et recommandations adaptées", () => {
+  it("une difficulté de raisonnement répétée sur plusieurs jours devient une recommandation justifiée ; la syntaxe seule n'en produit pas", async () => {
+    const subject = await db.subject.create({ data: { userId: A, name: "Algo profil" } });
+    const mk = async (skill: string, language: string, days: number) => {
+      const rep = await db.diagnosisReport.create({ data: { userId: A, activity: "CODE", subjectId: subject.id, language, primary: "LOGIC", secondary: [], state: "DETERMINED", summary: "x", evidence: ["e"], concepts: [], prerequisites: [], severity: "medium", confidence: 0.8, recommendedAction: "retry", source: "tools", engineVersion: "1" } });
+      await db.skillObservation.create({ data: { userId: A, skill, activity: "CODE", language, reportId: rep.id, category: "LOGIC", createdAt: new Date(Date.now() - days * 24 * 3600 * 1000) } });
+    };
+    for (const [d, lang] of [[6, "python"], [3, "javascript"], [1, "python"]] as const) await mk("cas-limites", lang, d);
+    for (const d of [5, 3, 1, 0]) await mk("syntaxe", "python", d);
+    await progress.refreshRecommendations(A);
+    const recs = await progress.listRecommendations(A, subject.id);
+    const adaptive = recs.filter((r) => (r.evidence as { adaptation?: string }).adaptation);
+    expect(adaptive.map((r) => (r.evidence as { skill?: string }).skill)).toEqual(["cas-limites"]);
+    expect(adaptive[0]).toMatchObject({ type: "LAB", subjectId: subject.id });
+    expect(adaptive[0].text).toContain("la syntaxe n'est pas en cause");
+    const p = await profile.learningProfile(A, subject.id);
+    expect(p.hasData).toBe(true);
+    expect(p.recurring.map((r) => r.skill).sort()).toEqual(["cas-limites", "syntaxe"]);
+    expect(p.recurring.find((r) => r.skill === "cas-limites")!.statement).toContain("À vérifier");
+    expect(p.recent.length).toBeGreaterThan(0);
+    await expect(profile.learningProfile(B, subject.id)).rejects.toMatchObject({ status: 404 });
+    expect((await profile.learningProfile(B)).hasData).toBe(false);
+    expect(profile.profileForPrompt(p)).toContain("hypothèses à vérifier");
   });
 });
 

@@ -25,7 +25,16 @@ const HINT: Partial<Record<QuestionType, string>> = {
   practical: "À proposer seulement si le cours contient des exercices ou des procédures.",
 };
 
-export default function CreateExerciseView({ subjectId, documentId, presetConcepts = [] }: { subjectId: string; documentId: string | null; presetConcepts?: string[] }) {
+export type Adaptation = "edge_cases" | "compare" | "harder" | "prerequisite";
+export const ADAPTATIONS = new Set<string>(["edge_cases", "compare", "harder", "prerequisite"]);
+const ADAPTATION_TEXT: Record<Adaptation, string> = {
+  edge_cases: "Exercice adapté : questions de raisonnement qui testent les cas limites (vide, zéro, bornes).",
+  compare: "Exercice adapté : questions qui font distinguer et comparer des notions voisines.",
+  harder: "Exercice adapté : difficulté supérieure, situations nouvelles ou combinant plusieurs notions.",
+  prerequisite: "Exercice adapté : questions de base pour consolider un prérequis fragile.",
+};
+
+export default function CreateExerciseView({ subjectId, documentId, presetConcepts = [], adaptation }: { subjectId: string; documentId: string | null; presetConcepts?: string[]; adaptation?: Adaptation }) {
   const router = useRouter();
   const [opts, setOpts] = useState<ExerciseOptions | null>(null);
   const [error, setError] = useState<{ message: string; status?: number } | null>(null);
@@ -99,6 +108,7 @@ export default function CreateExerciseView({ subjectId, documentId, presetConcep
         types: [...types],
         coverage: { mode: coverage, ...(coverage === "sections" ? { sectionIds: [...sectionIds] } : {}), ...(coverage === "concepts" ? { conceptIds: [...conceptIds] } : {}) },
         difficulty,
+        ...(adaptation ? { adaptation } : {}),
       });
       router.push(`${routes.subject(subjectId)}/exercices/${r.id}`);
     } catch (err) {
@@ -128,7 +138,8 @@ export default function CreateExerciseView({ subjectId, documentId, presetConcep
       <h1 className="typo-h1">Créer un exercice</h1>
       <p className="typo-subtitle mt-1">Source unique : <strong>{opts.document.name}</strong>. Les autres documents de la matière ne sont pas utilisés.</p>
 
-      {!opts.aiConfigured && <p role="alert" className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">Le service d&apos;IA n&apos;est pas configuré (variable <code>ANTHROPIC_API_KEY</code>) : la génération d&apos;exercices est indisponible.</p>}
+      {adaptation && <p role="note" className="mt-4 rounded-lg border border-violet-500/40 bg-violet-500/5 p-3 text-sm">{ADAPTATION_TEXT[adaptation]} Le barème et le nombre de questions restent ceux que vous choisissez ci-dessous ; les questions déjà travaillées ne sont pas reposées.</p>}
+      {!opts.aiConfigured && <p role="alert" className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">Le service d&apos;IA n&apos;est pas configuré (variable <code>GEMINI_API_KEY</code>) : la génération d&apos;exercices est indisponible.</p>}
       {!opts.document.ready && <p role="alert" className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">Le texte de ce document n&apos;a pas pu être extrait : impossible de créer un exercice.</p>}
 
       <div className="mt-6 space-y-6">

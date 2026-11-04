@@ -328,3 +328,27 @@ describe("import d'images", () => {
     expect((await db.document.findUniqueOrThrow({ where: { id: r.fin!.documentId } })).type).toBe("jpg");
   });
 });
+
+describe("mémoire pédagogique dans le chat", () => {
+  it("le profil mesuré est fourni au modèle comme pistes ; il est propre à chaque utilisateur", async () => {
+    const concept = await db.concept.create({ data: { userId: A, subjectId: subj, name: "Récursivité terminale", normalizedName: "recursivite terminale", importance: 3 } });
+    await db.conceptMastery.create({ data: { conceptId: concept.id, userId: A, level: 0.2, confidence: 0.6, evidenceCount: 4, state: "FRAGILE", stateReasons: ["4 observation(s) : 0 réussie(s), 3 échec(s), sur 1 situation(s) différente(s)."] } });
+    const day = (n: number) => new Date(Date.now() - n * 24 * 3600 * 1000);
+    await db.skillObservation.createMany({ data: [{ userId: A, skill: "cas-limites", activity: "CODE", language: "python", createdAt: day(5) }, { userId: A, skill: "cas-limites", activity: "SQL", language: "sql", createdAt: day(3) }, { userId: A, skill: "cas-limites", activity: "CODE", language: "javascript", createdAt: day(1) }] });
+    script = () => ({ text: "ok" });
+    seen.length = 0;
+    const c = await chat.createConversation(A, { scope: "GLOBAL" });
+    await chat.sendMessage(A, c.id, "Bonjour");
+    expect(seen[0].system).toContain("Profil pédagogique");
+    expect(seen[0].system).toContain("« Récursivité terminale »");
+    expect(seen[0].system).toContain("hypothèses à vérifier");
+    expect(seen[0].system).toContain("Ne dis jamais à l'étudiant qu'il « ne comprend pas »");
+    // un autre utilisateur n'en voit rien
+    seen.length = 0;
+    const cb = await chat.createConversation(B, { scope: "GLOBAL" });
+    await chat.sendMessage(B, cb.id, "Bonjour");
+    expect(seen[0].system).not.toContain("Profil pédagogique");
+    expect(seen[0].system).not.toContain("Récursivité terminale");
+  });
+});
+

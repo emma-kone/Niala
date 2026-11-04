@@ -46,7 +46,32 @@ export interface ProgressConcept {
   lastEvidenceAt: string | null;
   band: "unknown" | "fragile" | "developing" | "solid" | "to_confirm";
   bandLabel: string;
+  state: "NOT_ASSESSED" | "TO_DISCOVER" | "ACQUIRING" | "FRAGILE" | "MASTERED" | "CONFIRMED";
+  stateLabel: string;
+  needsRecheck: boolean;
+  stateReasons: string[];
   prerequisites: { id: string; name: string }[];
+}
+
+export interface ProfileConceptDto {
+  id: string;
+  name: string;
+  subjectName: string;
+  stateLabel: string;
+  needsRecheck: boolean;
+  reasons: string[];
+}
+
+export interface LearningProfileDto {
+  fragile: ProfileConceptDto[];
+  recheck: ProfileConceptDto[];
+  acquiring: ProfileConceptDto[];
+  mastered: ProfileConceptDto[];
+  overcome: ProfileConceptDto[];
+  toDiscoverCount: number;
+  recurring: { skill: string; label: string; note?: string; occurrences: number; languages: string[]; statement: string }[];
+  recent: { id: string; at: string; activity: string; category: string | null; categoryLabel: string | null; summary: string; needsVerification: boolean; uncertain: boolean }[];
+  hasData: boolean;
 }
 
 export interface ProgressData {
@@ -74,6 +99,8 @@ export function recommendationHref(r: Recommendation): string | null {
     if (!r.documentId) return routes.subject(r.subjectId);
     const q = new URLSearchParams({ document: r.documentId });
     if (r.conceptId) q.set("concepts", r.conceptId);
+    const adapt = (r.evidence as { adaptation?: string }).adaptation;
+    if (adapt) q.set("adapt", adapt);
     return `${routes.subject(r.subjectId)}/exercices/nouveau?${q.toString()}`;
   }
   return r.documentId ? `${routes.subject(r.subjectId)}/documents/${r.documentId}` : routes.subject(r.subjectId);

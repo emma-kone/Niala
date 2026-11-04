@@ -118,12 +118,19 @@ function pageOfQuote(quote: string, pages: PageText[]): number | null {
 
 export class GenerationFailure extends Error {}
 
-async function askWindow(userId: string, w: Window, slots: (Slot & { focus?: string })[], knownConcepts: string[]) {
+export const ADAPTATION_PROMPT: Record<string, string> = {
+  edge_cases: "ADAPTATION : l'étudiant réussit la syntaxe mais se trompe sur la logique. Privilégie des questions de RAISONNEMENT qui testent les cas limites (vide, zéro, valeurs absentes, bornes) plutôt que la mémorisation.",
+  compare: "ADAPTATION : l'étudiant confond des notions voisines. Privilégie des questions qui font DISTINGUER et COMPARER deux notions de l'extrait (différences, cas où l'une s'applique et pas l'autre).",
+  harder: "ADAPTATION : l'étudiant maîtrise cette notion. Augmente la difficulté : situations nouvelles, combinaison de plusieurs notions de l'extrait.",
+  prerequisite: "ADAPTATION : l'étudiant est fragile sur cette base. Reste sur des questions de BASE (définition, exemple simple, application directe) pour consolider avant de continuer.",
+};
+
+async function askWindow(userId: string, w: Window, slots: (Slot & { focus?: string })[], knownConcepts: string[], extra = "") {
   const spec = [...new Set(slots.map((s) => s.type))].map((t) => `- ${t} (${TYPE_LABEL[t]}) : ${FORMAT[t]}`).join("\n");
   const wanted = slots.map((s) => ({ slot: s.slot, type: s.type, difficulty: s.difficulty, niveau: DIFFICULTY_HINT[s.difficulty], ...(s.focus ? { notion_visee: s.focus } : {}) }));
   const user = `Créneaux à remplir :\n${JSON.stringify(wanted)}\n\nFormat des champs spécifiques :\n${spec}\n\n${
     knownConcepts.length ? `Notions connues du cours : ${knownConcepts.slice(0, 40).join(" ; ")}\n\n` : ""
-  }Extrait du cours (${w.label}) :\n${wrapUntrusted("cours", w.text)}`;
+  }${extra ? `${extra}\n\n` : ""}Extrait du cours (${w.label}) :\n${wrapUntrusted("cours", w.text)}`;
   return generateStructured({ userId, op: "exercise.generate", promptVersion: GENERATION_PROMPT_VERSION, system: SYSTEM, user, schema: responseSchema, maxTokens: 7000, temperature: 0.3 });
 }
 
@@ -200,6 +207,13 @@ export async function generateExercise(userId: string, rawConfig: unknown) {
   let failures = 0;
   let fatal: Error | null = null;
   const seenStatements = new Set<string>();
+  // Adaptation : orientation demandée + énoncés DÉJÀ travaillés sur ce document (pour ne pas faire répéter les mêmes questions)
+  let extra = "";
+  if (config.adaptation) {
+    const prior = await db.question.findMany({ where: { userId, exercise: { documentId: config.documentId } }, orderBy: { id: "desc" }, take: 15, select: { payload: true } });
+    const statements = prior.map((q) => String((q.payload as { statement?: string }).statement ?? "")).filter(Boolean);
+    extra = `${ADAPTATION_PROMPT[config.adaptation]}${statements.length ? `\nNe repose PAS ces questions déjà travaillées (reformule ou change de situation) :\n${statements.map((t) => `- ${t.slice(0, 160)}`).join("\n")}` : ""}`;
+  }
 
   outer: for (const [w, list] of byWindow) {
     for (let i = 0; i < list.length; i += MAX_SLOTS_PER_CALL) {
@@ -207,7 +221,7 @@ export async function generateExercise(userId: string, rawConfig: unknown) {
       calls++;
       let result: z.infer<typeof responseSchema>;
       try {
-        result = (await askWindow(userId, w, group, knownConcepts)).data;
+        result = (await askWindow(userId, w, group, knownConcepts, extra)).data;
       } catch (e) {
         failures++;
         if (e instanceof AiQuotaError || e instanceof AiUnavailableError) {
