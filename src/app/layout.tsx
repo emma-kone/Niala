@@ -39,7 +39,7 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: [
-    { color: "#0c0a09" },
+    { color: "#ffffff" },
   ],
 };
 
@@ -52,10 +52,10 @@ export default function RootLayout({
     <html
       lang="fr"
       suppressHydrationWarning
-      className={`${bricolageGrotesque.variable} ${jetbrainsMono.variable} dark`}
+      className={`${bricolageGrotesque.variable} ${jetbrainsMono.variable}`}
     >
       <head>
-        {/* Thème appliqué avant le premier rendu : sombre par défaut, sans flash */}
+        {/* Thème appliqué avant le premier rendu : clair par défaut, sans flash */}
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>
       <body className="antialiased bg-background text-foreground">

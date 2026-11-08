@@ -25,7 +25,7 @@ async function attempt(answers: boolean[]) {
 
 beforeAll(async () => {
   pg = await PGlite.create();
-  for (const n of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat"]) {
+  for (const n of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261110000000_niala_agenda"]) {
     await pg.exec(readFileSync(path.join(process.cwd(), "prisma", "migrations", n, "migration.sql"), "utf8"));
   }
   const port = 50000 + Math.floor(Math.random() * 4000);
@@ -110,7 +110,7 @@ describe("maîtrise recalculée depuis les réponses corrigées", () => {
 
 describe("tableau de bord et progression", () => {
   it("répond aux trois questions avec des données réelles", async () => {
-    const d = await prog.dashboard(A);
+    const d = await prog.dashboard(A, { date: "2026-11-09", minutes: 600 });
     expect(d.hasData).toBe(true);
     const s = d.subjects.find((x) => x.id === subj)!;
     expect(s).toMatchObject({ name: "Algo", exercises: 2 });
@@ -123,7 +123,7 @@ describe("tableau de bord et progression", () => {
 
   it("reprise : une tentative en cours devient « prochaine activité »", async () => {
     const { id } = await att.startAttempt(A, exId, { fresh: true });
-    const d = await prog.dashboard(A);
+    const d = await prog.dashboard(A, { date: "2026-11-09", minutes: 600 });
     expect(d.resume).toMatchObject({ type: "EXERCISE", href: expect.stringContaining(id) });
   }, 60_000);
 
@@ -152,7 +152,7 @@ describe("tableau de bord et progression", () => {
 
 describe("isolation entre utilisateurs", () => {
   it("B ne voit rien de A", async () => {
-    const d = await prog.dashboard(B);
+    const d = await prog.dashboard(B, { date: "2026-11-09", minutes: 600 });
     expect(d).toMatchObject({ hasData: false, subjects: [], recent: [], next: null, resume: null });
     expect((await prog.progress(B)).concepts).toEqual([]);
     await expect(prog.conceptDetail(B, cMain)).rejects.toMatchObject({ status: 404 });

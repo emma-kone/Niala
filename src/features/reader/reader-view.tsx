@@ -301,7 +301,7 @@ export default function ReaderView({ subjectId, docId }: { subjectId: string; do
   );
 
   return (
-    <div className="flex h-[calc(100dvh-4rem)] min-h-[28rem] flex-col md:h-[calc(100dvh-3.25rem)]">
+    <div className="flex h-[calc(100dvh-4rem)] min-h-[28rem] flex-col md:h-[calc(100dvh-4.75rem)]">
       <header className="flex items-center gap-3 border-b bg-background px-3 py-2">
         <Button asChild variant="ghost" size="icon" className="h-8 w-8 shrink-0">
           <Link href={back} aria-label="Retour aux fichiers">

@@ -11,7 +11,7 @@ export function MobileNav({ onLogout }: { onLogout: () => void }) {
   const pathname = usePathname();
 
   return (
-    <header className="md:hidden sticky top-0 z-20 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/75">
+    <header className="sticky top-0 z-20 bg-sidebar text-sidebar-foreground md:hidden">
       <div className="flex items-center justify-between px-4 py-2.5">
         <div className="flex items-center gap-2">
           <GraduationCap className="h-5 w-5" aria-hidden />
@@ -31,7 +31,7 @@ export function MobileNav({ onLogout }: { onLogout: () => void }) {
               href={item.href}
               className={cn(
                 "flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium",
-                active ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground",
+                active ? "bg-white font-medium text-black" : "bg-sidebar-accent text-sidebar-foreground/80",
               )}
             >
               <Icon className="h-3.5 w-3.5" aria-hidden /> {item.label}

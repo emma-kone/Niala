@@ -1,6 +1,6 @@
 export function AppFooter() {
   return (
-    <footer className="mt-auto border-t bg-muted/40">
+    <footer className="mt-auto">
       <div className="flex flex-col sm:flex-row items-center justify-between gap-1 px-6 py-3">
         <p className="typo-meta">
           Niala — plateforme personnelle d&apos;apprentissage assistée par IA

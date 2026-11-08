@@ -45,7 +45,13 @@
 }
 
 :root {
-  --radius: 0.625rem;
+  --radius: 0.875rem;
+  --shell: oklch(0.95 0.008 90);
+  --accent-sun: #f4c95d;
+  --accent-sky: #b8cbea;
+  --accent-lilac: #e7c6f5;
+  --accent-mint: #b7e4c7;
+  --accent-rose: #f6b8c8;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -69,13 +75,13 @@
   --chart-3: oklch(0.398 0.07 227.392);
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
+  --sidebar: oklch(0.16 0.004 286);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.985 0 0);
+  --sidebar-primary-foreground: oklch(0.16 0 0);
+  --sidebar-accent: oklch(0.26 0.004 286);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 12%);
   --sidebar-ring: oklch(0.708 0 0);
 
   /* ── TYPOGRAPHIE GLOBALE ────────────────────────────────────────────────
@@ -93,6 +99,7 @@
 }
 
 .dark {
+  --shell: oklch(0.08 0 0);
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
@@ -116,11 +123,11 @@
   --chart-3: oklch(0.769 0.188 70.08);
   --chart-4: oklch(0.627 0.265 303.9);
   --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
+  --sidebar: oklch(0.11 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.488 0.243 264.376);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent: oklch(0.22 0 0);
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
@@ -264,3 +271,40 @@ samp,
 .sf-prose th { background: var(--muted); font-weight: 600; text-align: left; }
 .sf-prose p.is-editor-empty:first-child::before { content: attr(data-placeholder); color: var(--muted-foreground); float: left; height: 0; pointer-events: none; }
 .sf-prose .selectedCell { background: color-mix(in srgb, var(--primary) 12%, transparent); }
+
+/* ── Indicateurs en pointe (agenda, navigation, liens entre éléments) ───── */
+.niala-pointer-right {
+  display: block;
+  width: 0;
+  height: 0;
+  border-block: 5px solid transparent;
+  border-left: 7px solid var(--foreground);
+}
+.niala-nav-active::after {
+  content: "";
+  position: absolute;
+  right: -11px;
+  top: 50%;
+  translate: 0 -50%;
+  border-block: 6px solid transparent;
+  border-left: 7px solid #fff;
+}
+.niala-connector {
+  position: absolute;
+  left: 50%;
+  bottom: -12px;
+  width: 1px;
+  height: 12px;
+  background-image: linear-gradient(to bottom, var(--foreground) 50%, transparent 50%);
+  background-size: 1px 4px;
+  opacity: 0.45;
+}
+.niala-break {
+  background-image: repeating-linear-gradient(135deg, color-mix(in srgb, var(--foreground) 7%, transparent) 0 6px, transparent 6px 12px);
+}
+@media (prefers-reduced-motion: reduce) {
+  .niala-toolbar a,
+  .group {
+    transition: none;
+  }
+}

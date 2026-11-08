@@ -156,7 +156,7 @@ export default function SettingsView() {
       .then((res) => {
         if (cancelled) return;
         const settings = res.settings;
-        setTheme(isThemeChoice(settings.theme) ? settings.theme : "dark");
+        setTheme(isThemeChoice(settings.theme) ? settings.theme : "light");
         setDefaultMode(settings.defaultMode);
         setHintsEnabled(settings.hintsEnabled);
         setMaxUploadInput(String(settings.maxUploadMB));

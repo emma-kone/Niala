@@ -4,6 +4,9 @@ import { ApiHttpError } from "@/lib/api-helpers";
 import { assertFound } from "@/lib/ownership";
 import { BAND_LABEL, DIFFICULTY_EVIDENCE_WEIGHT, MIN_CONFIDENCE, answerEvidenceScore, estimateMastery, masteryBand, type Evidence } from "@/server/domain/mastery";
 import { buildRecommendations, type ConceptView, type ErrorTally } from "@/server/domain/recommend";
+import { buildSuggestions, pickHighlight, type CourseToday } from "@/server/domain/dashboard";
+import { addDays } from "@/server/domain/schedule";
+import { occurrencesBetween } from "@/server/services/agenda/agenda";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Progression adaptative. Sources de vérité : les RÉPONSES corrigées et les TESTS de laboratoire.
@@ -203,7 +206,24 @@ async function activityHref(userId: string, a: { type: string; refType: string |
   return null;
 }
 
-export async function dashboard(userId: string) {
+/** Agenda indisponible : le tableau de bord reste utilisable, sans cours affichés. */
+async function courseWindow(userId: string, from: string, to: string): Promise<CourseToday[]> {
+  try {
+    const { occurrences } = await occurrencesBetween(userId, from, to);
+    return occurrences.map((o) => ({ key: o.key, date: o.date, title: o.title, startMinutes: o.startMinutes, endMinutes: o.endMinutes, room: o.room, subjectId: o.subjectId, subjectName: o.subject?.name ?? null }));
+  } catch (e) {
+    console.warn("[dashboard] agenda indisponible :", e instanceof Error ? e.message : e);
+    return [];
+  }
+}
+
+export async function dashboard(userId: string, clock: { date: string; minutes: number }) {
+  const tomorrow = addDays(clock.date, 1);
+  const [courses, recentDocs, unopened] = await Promise.all([
+    courseWindow(userId, clock.date, tomorrow),
+    db.document.findMany({ where: { userId, lastOpenedAt: { not: null }, subjectId: { not: null } }, orderBy: { lastOpenedAt: "desc" }, take: 3, select: { id: true, name: true, type: true, subjectId: true, lastOpenedAt: true, lastPage: true, pageCount: true, subject: { select: { name: true, color: true } } } }),
+    db.document.findMany({ where: { userId, lastOpenedAt: null, subjectId: { not: null } }, orderBy: { createdAt: "desc" }, take: 2, select: { id: true, name: true, subjectId: true, subject: { select: { name: true } } } }),
+  ]);
   const [subjects, concepts, activities, recs, failedDocs, attempts, labRuns] = await Promise.all([
     db.subject.findMany({ where: { userId }, orderBy: { createdAt: "asc" }, select: { id: true, name: true, color: true, _count: { select: { documents: true, studyExercises: true, notes: true } } } }),
     loadConceptViews(userId),
@@ -250,7 +270,24 @@ export async function dashboard(userId: string) {
     .sort((a, b) => (b.at?.getTime() ?? 0) - (a.at?.getTime() ?? 0))
     .slice(0, 6);
 
-  return { resume, next: recs[0] ?? null, recommendations: recs.slice(0, 5), attention, subjects: perSubject, recent, hasData: subjects.length > 0 };
+  const documentHref = (d: { id: string; subjectId: string | null; lastPage?: number | null }) => `/matieres/${d.subjectId}/documents/${d.id}${d.lastPage ? `?page=${d.lastPage}` : ""}`;
+  const recentDocuments = recentDocs.map((d) => ({ id: d.id, name: d.name, type: d.type, lastOpenedAt: d.lastOpenedAt, lastPage: d.lastPage, pageCount: d.pageCount, subjectName: d.subject?.name ?? "", subjectColor: d.subject?.color ?? "#8b5cf6", href: documentHref(d) }));
+  const measuredSubjects = perSubject.filter((s) => s.mastery !== null);
+  const overallMastery = measuredSubjects.length ? Math.round((measuredSubjects.reduce((t, s) => t + s.mastery!, 0) / measuredSubjects.length) * 100) / 100 : null;
+  const highlight = pickHighlight({ date: clock.date, nowMinutes: clock.minutes, today: courses, resume, recommendation: recs[0] ?? null, mastery: overallMastery, hasSubjects: subjects.length > 0 });
+  const suggestions = buildSuggestions({
+    date: clock.date,
+    nowMinutes: clock.minutes,
+    upcoming: courses,
+    weakConcepts: concepts.filter((c) => c.confidence >= MIN_CONFIDENCE && c.level < 0.5).map((c) => ({ name: c.name, subjectId: c.subjectId, level: c.level })),
+    recentDocuments: recentDocuments.flatMap((d, i) => (recentDocs[i].subjectId ? [{ name: d.name, subjectId: recentDocs[i].subjectId, href: d.href }] : [])),
+    newDocuments: unopened.map((d) => ({ id: d.id, name: d.name, subjectName: d.subject?.name ?? "", href: documentHref(d) })),
+    resume,
+    recommendations: recs,
+    highlight,
+  });
+
+  return { resume, next: recs[0] ?? null, recommendations: recs.slice(0, 5), attention, subjects: perSubject, recent, hasData: subjects.length > 0, recentDocuments, today: courses, highlight, suggestions, overallMastery };
 }
 
 // ── Page Progression ─────────────────────────────────────────────────────────

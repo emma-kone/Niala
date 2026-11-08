@@ -1,9 +1,11 @@
 import {
   BookOpen,
+  CalendarDays,
   Database,
   FilePlus2,
   Home,
   MessageSquare,
+  NotebookPen,
   Settings,
   Terminal,
   TrendingUp,
@@ -19,21 +21,30 @@ export interface NavItem {
   alsoActiveFor?: string[];
 }
 
-export const APP_NAV: NavItem[] = [
-  { href: routes.home, label: "Tableau de bord", icon: Home, match: "exact" },
-  { href: routes.subjects, label: "Mes matières", icon: BookOpen, match: "prefix" },
-  { href: routes.assistant, label: "Assistant IA", icon: MessageSquare, match: "prefix" },
+export const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
   {
-    href: routes.exercises,
-    label: "Exercices",
-    icon: FilePlus2,
-    match: "prefix",
+    label: "Général",
+    items: [
+      { href: routes.home, label: "Tableau de bord", icon: Home, match: "exact" },
+      { href: routes.subjects, label: "Matières", icon: BookOpen, match: "prefix" },
+      { href: routes.agenda, label: "Agenda", icon: CalendarDays, match: "prefix" },
+      { href: routes.exercises, label: "Exercices", icon: FilePlus2, match: "prefix" },
+      { href: routes.code, label: "Labo de code", icon: Terminal, match: "prefix" },
+      { href: routes.sql, label: "Labo SQL", icon: Database, match: "prefix" },
+      { href: routes.assistant, label: "Assistant IA", icon: MessageSquare, match: "prefix" },
+    ],
   },
-  { href: routes.code, label: "Éditeur de code", icon: Terminal, match: "prefix" },
-  { href: routes.sql, label: "Laboratoire SQL", icon: Database, match: "prefix" },
-  { href: routes.progress, label: "Progression", icon: TrendingUp, match: "prefix" },
-  { href: routes.settings, label: "Réglages", icon: Settings, match: "prefix" },
+  {
+    label: "Outils",
+    items: [
+      { href: routes.notes, label: "Notes", icon: NotebookPen, match: "prefix" },
+      { href: routes.progress, label: "Progression", icon: TrendingUp, match: "prefix" },
+      { href: routes.settings, label: "Paramètres", icon: Settings, match: "prefix" },
+    ],
+  },
 ];
+
+export const APP_NAV: NavItem[] = NAV_GROUPS.flatMap((g) => g.items);
 
 export function isNavActive(pathname: string, item: NavItem): boolean {
   if (item.match === "exact") {

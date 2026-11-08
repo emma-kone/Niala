@@ -32,6 +32,11 @@ export interface DashboardData {
   }[];
   recent: { kind: string; title: string; at: string | null; detail: string | null; href: string | null }[];
   hasData: boolean;
+  recentDocuments: { id: string; name: string; type: string; lastOpenedAt: string; lastPage: number | null; pageCount: number | null; subjectName: string; subjectColor: string; href: string }[];
+  today: { key: string; date: string; title: string; startMinutes: number; endMinutes: number; room: string | null; subjectId: string | null; subjectName: string | null }[];
+  highlight: { kind: string; eyebrow: string; title: string; detail: string; href: string | null; cta: string | null };
+  suggestions: { id: string; kind: string; title: string; text: string; href: string | null; recommendationId?: string }[];
+  overallMastery: number | null;
 }
 
 export interface ProgressConcept {

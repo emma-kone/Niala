@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useSyncExternalStore } from "react";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Thème de Niala : SOMBRE par défaut, appliqué dès le premier chargement.
+// Thème de Niala : CLAIR par défaut, appliqué dès le premier chargement.
 //  1. THEME_INIT_SCRIPT (dans <head>, avant le premier rendu) lit la préférence mémorisée localement
 //     et pose la classe « dark » : aucun flash clair, aucune dépendance à la page des réglages.
 //  2. Le fournisseur reste synchronisé avec la préférence ENREGISTRÉE sur le serveur (prioritaire sur
@@ -11,7 +11,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useSyncExte
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type ThemeChoice = "light" | "dark" | "system";
-export const DEFAULT_THEME: ThemeChoice = "dark";
+export const DEFAULT_THEME: ThemeChoice = "light";
 const STORAGE_KEY = "niala-theme";
 const EVENT = "niala-theme-change";
 

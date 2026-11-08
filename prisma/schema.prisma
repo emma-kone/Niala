@@ -44,6 +44,8 @@ model User {
   mindMapRevisions MindMapRevision[]
   studyExercises   Exercise[]
   verificationRuns VerificationRun[]
+  scheduleEvents   ScheduleEvent[]
+  scheduleImports  ScheduleImport[]
   questions        Question[]
   attempts         ExerciseAttempt[]
   answers          Answer[]
@@ -60,7 +62,8 @@ model User {
 model UserSettings {
   id            String  @id @default(cuid())
   userId        String  @unique
-  theme         String  @default("dark") // light | dark | system
+  theme         String  @default("light") // light | dark | system
+  scheduleWeekSwap Boolean @default(false) // inverse la convention semaine A / semaine B
   defaultMode   String  @default("apprentissage")
   maxUploadMB   Int     @default(20)
   hintsEnabled  Boolean @default(true)
@@ -97,6 +100,7 @@ model Subject {
   learningRecs   LearningRecommendation[]
   labWorkspaces  LabWorkspace[]
   conversations  Conversation[]
+  scheduleEvents ScheduleEvent[]
 
   @@index([userId])
 }
@@ -1143,4 +1147,76 @@ model ClaimEvidence {
 
   @@index([claimId])
   @@index([sourceId])
+}
+
+/// Cours ou événement de l'emploi du temps. Date « AAAA-MM-JJ » et minutes depuis minuit : heure locale de l'établissement.
+model ScheduleEvent {
+  id           String    @id @default(cuid())
+  userId       String
+  subjectId    String?
+  importId     String?
+  title        String
+  kind         String    @default("COURSE") // COURSE | REVISION | EVENT
+  date         String // première séance
+  startMinutes Int
+  endMinutes   Int
+  recurrence   String    @default("NONE") // NONE | WEEKLY
+  until        String?
+  weekPattern  String    @default("ALL") // ALL | A | B
+  room         String?
+  teacher      String?
+  groupName    String?
+  description  String?
+  confidence   String? // niveau de confiance de l'extraction, pour un cours importé
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject   Subject?           @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+  import    ScheduleImport?    @relation(fields: [importId], references: [id], onDelete: SetNull)
+  overrides ScheduleOverride[]
+
+  @@index([userId, date])
+  @@index([importId])
+}
+
+/// Modification ou annulation d'une seule séance d'une série.
+model ScheduleOverride {
+  id           String  @id @default(cuid())
+  eventId      String
+  date         String // date d'origine de la séance
+  cancelled    Boolean @default(false)
+  newDate      String?
+  startMinutes Int?
+  endMinutes   Int?
+  subjectId    String?
+  title        String?
+  room         String?
+  teacher      String?
+  description  String?
+
+  event ScheduleEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, date])
+}
+
+/// Import d'un emploi du temps : fichier d'origine et brouillon soumis à la validation de l'étudiant.
+model ScheduleImport {
+  id          String    @id @default(cuid())
+  userId      String
+  fileName    String
+  mime        String
+  size        Int
+  sha256      String
+  storageKey  String
+  status      String    @default("REVIEW") // REVIEW | CONFIRMED
+  draft       Json
+  warnings    Json
+  createdAt   DateTime  @default(now())
+  confirmedAt DateTime?
+
+  user   User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  events ScheduleEvent[]
+
+  @@index([userId, createdAt])
 }

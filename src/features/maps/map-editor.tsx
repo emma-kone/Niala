@@ -384,7 +384,7 @@ function Editor({ map: initial }: { map: MapDetail }) {
   const sel = useMemo(() => nodes.some((n) => n.selected) || edges.some((e) => e.selected), [nodes, edges]);
 
   return (
-    <div className="flex h-[calc(100dvh-4rem)] min-h-[30rem] flex-col md:h-[calc(100dvh-3.25rem)]">
+    <div className="flex h-[calc(100dvh-4rem)] min-h-[30rem] flex-col md:h-[calc(100dvh-4.75rem)]">
       <header className="flex flex-wrap items-center gap-2 border-b bg-background px-3 py-2">
         <Button asChild variant="ghost" size="icon" className="h-8 w-8">
           <Link href={`${routes.subject(initial.subjectId)}/cartes`} aria-label="Retour aux cartes"><ArrowLeft className="h-4 w-4" aria-hidden /></Link>

@@ -24,6 +24,8 @@ export interface StructuredRequest<T> {
   maxTokens?: number;
   temperature?: number;
   timeoutMs?: number;
+  /** Fichier joint à lire par le modèle. */
+  attachment?: { mime: string; data: string };
 }
 
 export interface StructuredResult<T> {
@@ -68,6 +70,7 @@ export async function generateStructured<T>(req: StructuredRequest<T>): Promise<
         maxTokens: req.maxTokens ?? 6000,
         temperature: req.temperature ?? 0.1,
         json: true,
+        attachment: req.attachment,
         signal: AbortSignal.timeout(req.timeoutMs ?? DEFAULT_TIMEOUT_MS),
       });
       text = res.text;

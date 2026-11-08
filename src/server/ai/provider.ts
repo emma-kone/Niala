@@ -14,6 +14,8 @@ export interface CompletionRequest {
   signal: AbortSignal;
   /** Demande une sortie JSON (mode JSON natif de Gemini). */
   json?: boolean;
+  /** Fichier joint (PDF ou image), lu directement par le modèle. Gemini uniquement. */
+  attachment?: { mime: string; data: string };
 }
 
 export interface CompletionResult {
@@ -187,13 +189,13 @@ export function geminiProvider(apiKey: string, model: string, embeddingModel = D
     name: "gemini",
     model,
     embeddingModel,
-    async complete({ system, user, maxTokens, temperature, signal, json }) {
+    async complete({ system, user, maxTokens, temperature, signal, json, attachment }) {
       const data = await geminiPost(
         apiKey,
         `${encodeURIComponent(model)}:generateContent`,
         {
           systemInstruction: { parts: [{ text: system }] },
-          contents: [{ role: "user", parts: [{ text: user }] }],
+          contents: [{ role: "user", parts: [...(attachment ? [{ inlineData: { mimeType: attachment.mime, data: attachment.data } }] : []), { text: user }] }],
           generationConfig: { maxOutputTokens: maxTokens, temperature, ...(json ? { responseMimeType: "application/json" } : {}) },
         },
         signal
@@ -269,7 +271,8 @@ export function anthropicProvider(apiKey: string, model: string): AiProvider {
   return {
     name: "anthropic",
     model,
-    async complete({ system, user, maxTokens, temperature, signal }) {
+    async complete({ system, user, maxTokens, temperature, signal, attachment }) {
+      if (attachment) throw new AiCallError("La lecture de fichiers nécessite Gemini.");
       const maxRetries = 2;
       let lastError = "";
       for (let attempt = 0; attempt <= maxRetries; attempt++) {

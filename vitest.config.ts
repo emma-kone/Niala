@@ -11,6 +11,7 @@ export default defineConfig({
     testTimeout: 60_000,
     maxWorkers: 4,
     // Les tests ne contactent jamais un vrai fournisseur IA, même si .env contient des clés (Prisma le charge).
-    env: { GEMINI_API_KEY: "", ANTHROPIC_API_KEY: "" },
+    // Même garde pour la base : sans cette adresse fictive, un client Prisma créé trop tôt lirait celle de production dans .env.
+    env: { GEMINI_API_KEY: "", ANTHROPIC_API_KEY: "", DATABASE_URL: "postgresql://test:test@127.0.0.1:1/garde_tests", DIRECT_URL: "postgresql://test:test@127.0.0.1:1/garde_tests" },
   },
 });

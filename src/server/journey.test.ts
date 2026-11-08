@@ -86,7 +86,7 @@ const fake: AiProvider = {
 
 beforeAll(async () => {
   pg = await PGlite.create();
-  for (const n of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat"]) {
+  for (const n of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261110000000_niala_agenda"]) {
     await pg.exec(readFileSync(path.join(process.cwd(), "prisma", "migrations", n, "migration.sql"), "utf8"));
   }
   const port = 45000 + Math.floor(Math.random() * 4000);
@@ -230,7 +230,7 @@ describe("parcours complet d'un étudiant", () => {
   }, 120_000);
 
   it("9. tableau de bord : où j'en suis, ce qui demande attention, prochaine activité", async () => {
-    const d = await m.prog.dashboard(A);
+    const d = await m.prog.dashboard(A, { date: "2026-11-09", minutes: 600 });
     expect(d.subjects[0]).toMatchObject({ name: "Algorithmique", documents: 1, exercises: 1 });
     expect(d.subjects[0].concepts.measured).toBe(1);
     expect(d.recent.length).toBeGreaterThan(0);
@@ -238,7 +238,7 @@ describe("parcours complet d'un étudiant", () => {
   });
 
   it("10. isolation : un autre étudiant ne voit et ne touche rien", async () => {
-    const d = await m.prog.dashboard(B);
+    const d = await m.prog.dashboard(B, { date: "2026-11-09", minutes: 600 });
     expect(d).toMatchObject({ hasData: false, recent: [], next: null });
     await expect(m.docs.openOriginal(B, docId)).rejects.toMatchObject({ status: 404 });
     await expect(m.att.startAttempt(B, exerciseId)).rejects.toMatchObject({ status: 404 });

@@ -98,6 +98,12 @@ export interface ListFilter {
   q?: string;
 }
 
+/** Toutes les notes de l'étudiant, regroupées par matière (matières sans note comprises). */
+export async function listAllNotes(userId: string) {
+  const subjects = await db.subject.findMany({ where: { userId }, orderBy: { name: "asc" }, select: { id: true, name: true, color: true, notes: { where: { userId }, orderBy: { updatedAt: "desc" }, take: 8, select: { id: true, title: true, updatedAt: true } } } });
+  return { groups: subjects.map(({ notes, ...subject }) => ({ subject, notes })) };
+}
+
 export async function listNotes(userId: string, filter: ListFilter) {
   await requireSubject(userId, filter.subjectId);
   const notes = await db.note.findMany({
