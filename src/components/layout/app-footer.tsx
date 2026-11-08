@@ -5,7 +5,6 @@ export function AppFooter() {
         <p className="typo-meta">
           Niala — plateforme personnelle d&apos;apprentissage assistée par IA
         </p>
-        <p className="typo-meta">Police : Bricolage Grotesque · Code : JetBrains Mono</p>
       </div>
     </footer>
   );

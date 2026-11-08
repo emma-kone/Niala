@@ -35,6 +35,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { NOTE_KIND_LABEL, type NoteDetail } from "./types";
+import { confirmAction } from "@/components/notifications";
 
 type SaveState = "saved" | "dirty" | "saving" | "error" | "conflict";
 const SAVE_DELAY_MS = 800;
@@ -222,7 +223,7 @@ function EditorInner({ noteId, subjectId, compact, onOpenLink, onSaved, onChange
     onChanged?.(r.note);
   }
   async function remove() {
-    if (!window.confirm("Supprimer définitivement cette note ?")) return;
+    if (!(await confirmAction("Supprimer définitivement cette note ?", { confirmLabel: "Supprimer" }))) return;
     dirty.current = { title: false, content: false };
     await api.del(`/api/notes/${noteId}`);
     onDeleted?.();

@@ -33,6 +33,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { NameDialog } from "@/features/subject-files/dialogs";
 import { routes } from "@/config/routes";
+import { confirmAction } from "@/components/notifications";
 
 type Origin = "DOCUMENT" | "AI_INFERRED" | "USER";
 interface Section {
@@ -129,7 +130,7 @@ export function AnalysisPanel({ docId, subjectId, onGoToPage }: { docId: string;
   }, [status, running, data, load, selectedId]);
 
   async function start(force: boolean) {
-    if (force && !window.confirm("Relancer l'analyse complète ? L'analyse actuelle est conservée dans l'historique, mais vos corrections ne sont pas reportées sur la nouvelle.")) return;
+    if (force && !(await confirmAction("Relancer l'analyse complète ? L'analyse actuelle est conservée dans l'historique, mais vos corrections ne sont pas reportées sur la nouvelle.", { confirmLabel: "Relancer", danger: false }))) return;
     setRunning(true);
     setActionError(null);
     try {
@@ -244,7 +245,7 @@ export function AnalysisPanel({ docId, subjectId, onGoToPage }: { docId: string;
                 className="text-destructive focus:text-destructive"
                 onSelect={() => {
                   const n = (tree.get(s.id) ?? []).length;
-                  if (window.confirm(`Supprimer « ${s.label} »${n ? ` et ses ${n} sous-section(s)` : ""}, avec leurs notions ?`)) void act(s.id, () => api.del(`/api/analysis/sections/${s.id}`));
+                  void confirmAction(`Supprimer « ${s.label} »${n ? ` et ses ${n} sous-section(s)` : ""}, avec leurs notions ?`, { confirmLabel: "Supprimer" }).then((ok) => { if (ok) void act(s.id, () => api.del(`/api/analysis/sections/${s.id}`)); });
                 }}
               >
                 <Trash2 className="mr-2 h-4 w-4" aria-hidden /> Supprimer
@@ -266,7 +267,7 @@ export function AnalysisPanel({ docId, subjectId, onGoToPage }: { docId: string;
                     </button>
                     <OriginTag origin={c.origin} />
                     <button type="button" aria-label={`Modifier ${c.name}`} className="rounded p-0.5 hover:bg-muted" onClick={() => setConceptDialog({ section: s, concept: c })}><Pencil className="h-3 w-3" aria-hidden /></button>
-                    <button type="button" aria-label={`Supprimer ${c.name}`} className="rounded p-0.5 text-destructive hover:bg-muted" onClick={() => { if (window.confirm(`Supprimer la notion « ${c.name} » ?`)) void act(c.id, () => api.del(`/api/analysis/concepts/${c.id}`)); }}><Trash2 className="h-3 w-3" aria-hidden /></button>
+                    <button type="button" aria-label={`Supprimer ${c.name}`} className="rounded p-0.5 text-destructive hover:bg-muted" onClick={() => { void confirmAction(`Supprimer la notion « ${c.name} » ?`, { confirmLabel: "Supprimer" }).then((ok) => { if (ok) void act(c.id, () => api.del(`/api/analysis/concepts/${c.id}`)); }); }}><Trash2 className="h-3 w-3" aria-hidden /></button>
                   </div>
                   {(expanded || c.definition) && c.definition && <p className="mt-1 text-muted-foreground">{c.definition}</p>}
                   {expanded && c.refs.map((r, i) => (

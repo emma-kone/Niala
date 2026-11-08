@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Bricolage_Grotesque, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
-import { Toaster } from "@/components/ui/toaster";
+import { Notifications } from "@/components/notifications";
 import { ThemeProvider, THEME_INIT_SCRIPT } from "@/components/theme/theme-provider";
 
 /**
@@ -61,7 +61,7 @@ export default function RootLayout({
       <body className="antialiased bg-background text-foreground">
         <ThemeProvider>
           {children}
-          <Toaster />
+          <Notifications />
         </ThemeProvider>
       </body>
     </html>

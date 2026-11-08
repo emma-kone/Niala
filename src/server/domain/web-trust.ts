@@ -34,3 +34,29 @@ export function trustTier(host: string | null): TrustTier {
 }
 
 export const TIER_LABEL: Record<TrustTier, string> = { reconnue: "source reconnue", a_verifier: "source à vérifier" };
+
+/**
+ * Niveau de fiabilité d'un ensemble de sources web, calculé par le serveur (jamais par l'IA) :
+ *  - « verifiee »     : au moins une source reconnue (officielle, universitaire, référence) ;
+ *  - « non_verifiee » : seulement des sources à vérifier (blogs, forums, sites commerciaux…) ;
+ *  - « aucune »       : aucune source trouvée.
+ * `independent` compte les domaines distincts : deux sites différents qui concordent valent mieux qu'un.
+ */
+export type WebReliability = "verifiee" | "non_verifiee" | "aucune";
+
+export function assessReliability(sources: { host: string; tier: TrustTier }[]): { level: WebReliability; recognized: number; independent: number } {
+  const hosts = new Set(sources.map((s) => s.host));
+  const recognized = new Set(sources.filter((s) => s.tier === "reconnue").map((s) => s.host)).size;
+  const level: WebReliability = !sources.length ? "aucune" : recognized > 0 ? "verifiee" : "non_verifiee";
+  return { level, recognized, independent: hosts.size };
+}
+
+/** Consigne transmise à l'IA avec les résultats, selon le niveau calculé. */
+export const RELIABILITY_RULE: Record<WebReliability, string> = {
+  verifiee:
+    "Au moins une source reconnue a été trouvée. Ne présente comme vérifié QUE ce que ces sources reconnues affirment explicitement, en les citant. Tout ce qui ne repose que sur une source « à vérifier » doit être signalé comme non officiel.",
+  non_verifiee:
+    "AUCUNE source officielle ou reconnue n'a été trouvée : seulement des sources « à vérifier ». Tu peux donner l'information, mais tu DOIS écrire clairement qu'elle n'est pas officielle ni vérifiée (ex. « ⚠️ Information non officielle, à vérifier : … ») et citer la source.",
+  aucune:
+    "Aucune source n'a été trouvée. Dis clairement à l'étudiant que tu n'as pas trouvé l'information (« ❌ Je n'ai pas trouvé de source fiable sur … »). Ne la reconstitue pas de mémoire en la faisant passer pour vérifiée.",
+};

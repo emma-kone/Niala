@@ -17,6 +17,10 @@ export interface ConsultedInfo {
   passages: number;
   webSources?: number;
   web?: boolean;
+  /** Recherches web lancées pendant la réponse. */
+  webSearches?: number;
+  /** Fiabilité des sources web citées, calculée par le serveur (null : pas de recherche web). */
+  webReliability?: "verifiee" | "non_verifiee" | "aucune" | "indisponible" | null;
   pagesRead: number;
   tools: string[];
   coverage: { documentId: string; documentName: string; complete: boolean; warnings: string[] }[];

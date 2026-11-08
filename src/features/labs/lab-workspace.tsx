@@ -20,6 +20,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { TestOutcomes } from "./test-outcomes";
 import { CATEGORY_LABEL, type Diagnosis, type RunDto, type RunHistoryItem, type RunOutput, type LabWorkspaceDto } from "./types";
+import { confirmAction } from "@/components/notifications";
 
 const errText = (e: unknown, fb: string) => (e instanceof Error ? e.message : fb);
 const fmtDate = (d: string) => new Date(d).toLocaleString("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
@@ -155,7 +156,7 @@ export default function LabWorkspace({ id }: { id: string }) {
   }
 
   async function remove() {
-    if (!window.confirm("Supprimer cet espace de travail et son historique d'exécutions ?")) return;
+    if (!(await confirmAction("Supprimer cet espace de travail et son historique d'exécutions ?", { confirmLabel: "Supprimer" }))) return;
     try {
       await api.del(`/api/labs/${id}`);
       router.push(kind === "SQL" ? routes.sql : routes.code);

@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { routes } from "@/config/routes";
 import type { LabKind, LabListItem } from "./types";
+import { confirmAction } from "@/components/notifications";
 
 const errText = (e: unknown, fb: string) => (e instanceof Error ? e.message : fb);
 const CODE_LANGS = [
@@ -102,7 +103,7 @@ export default function LabsHome({ kind }: { kind: LabKind }) {
   }
 
   async function remove(id: string) {
-    if (!window.confirm("Supprimer cet espace de travail et son historique ?")) return;
+    if (!(await confirmAction("Supprimer cet espace de travail et son historique ?", { confirmLabel: "Supprimer" }))) return;
     try {
       await api.del(`/api/labs/${id}`);
       void load();

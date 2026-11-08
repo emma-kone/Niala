@@ -259,7 +259,29 @@ describe("recherche web", () => {
     expect([consulted.passages, consulted.webSources]).toEqual([0, 2]);
     expect(seen[0].tools?.map((t) => t.name)).toContain("search_web");
     expect(JSON.stringify(seen[1].turns.at(-1))).toContain("source à vérifier");
-    expect(seen[0].system).toContain("Je n'ai pas trouvé de source fiable");
+    expect(seen[0].system).toContain("Je n'ai pas trouvé d'information fiable");
+    expect(JSON.stringify(seen[1].turns.at(-1))).toContain('"fiabilite":"verifiee"');
+    expect((r.message.consulted as { webReliability: string }).webReliability).toBe("verifiee");
+  });
+
+  it("seules des sources à vérifier sont citées : réponse marquée non vérifiée", async () => {
+    __setWebSearcherForTests(web);
+    script = (_req, step) => (step === 0 ? { calls: [{ name: "search_web", args: { query: "android" } }] } : { text: "⚠️ Information non officielle / non vérifiée : un avis [2]." });
+    const c = await chat.createConversation(A, { scope: "GLOBAL" });
+    const r = await chat.sendMessage(A, c.id, "Avis sur Android ?");
+    expect((r.message.consulted as { webReliability: string }).webReliability).toBe("non_verifiee");
+  });
+
+  it("aucun résultat : le modèle reçoit la consigne de le dire clairement", async () => {
+    __setWebSearcherForTests({ async search() { return { backend: "tavily" as const, results: [] }; } });
+    seen.length = 0;
+    script = (_req, step) => (step === 0 ? { calls: [{ name: "search_web", args: { query: "sujet introuvable" } }] } : { text: "❌ Je n'ai pas trouvé d'information fiable sur ce sujet." });
+    const c = await chat.createConversation(A, { scope: "GLOBAL" });
+    const r = await chat.sendMessage(A, c.id, "Sujet introuvable ?");
+    const toolTurn = JSON.stringify(seen[1].turns.at(-1));
+    expect(toolTurn).toContain('"fiabilite":"aucune"');
+    expect(toolTurn).toContain("Je n'ai pas trouvé de source fiable");
+    expect((r.message.consulted as { webReliability: string }).webReliability).toBe("aucune");
   });
 
   it("désactivée par l'étudiant : l'outil n'est pas proposé", async () => {
@@ -279,6 +301,7 @@ describe("recherche web", () => {
     const r = await chat.sendMessage(A, c.id, "Vérifie sur le web");
     expect(JSON.stringify(seen[1].turns.at(-1))).toContain("momentanément indisponible");
     expect(r.message.citations).toEqual([]);
+    expect((r.message.consulted as { webReliability: string }).webReliability).toBe("indisponible");
     __setWebSearcherForTests(undefined);
   });
 });

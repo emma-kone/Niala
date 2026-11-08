@@ -16,6 +16,7 @@ import { AnswerText, ExpectedText, QuestionInput } from "./question-input";
 import { TestOutcomes } from "@/features/labs/test-outcomes";
 import type { Diagnosis, TestOutcome, TestSummary } from "@/features/labs/types";
 import { VERDICT_LABEL, fmtPoints, type AttemptDetail, type AttemptQuestion } from "./types";
+import { confirmAction } from "@/components/notifications";
 
 type SaveState = "saved" | "saving" | "error";
 const errText = (e: unknown, fb: string) => (e instanceof Error ? e.message : fb);
@@ -113,7 +114,7 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
   async function submit() {
     if (!attempt) return;
     const missing = attempt.questions.filter((q) => !isFilled(answers[q.position])).length;
-    if (missing > 0 && !window.confirm(`${missing} question(s) sans réponse. Terminer et corriger quand même ?`)) return;
+    if (missing > 0 && !(await confirmAction(`${missing} question(s) sans réponse. Terminer et corriger quand même ?`, { confirmLabel: "Terminer", danger: false }))) return;
     setSubmitting(true);
     setActionError(null);
     try {

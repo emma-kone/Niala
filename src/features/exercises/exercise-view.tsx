@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fmtPoints, type ExerciseDetail } from "./types";
+import { confirmAction } from "@/components/notifications";
 
 const errText = (e: unknown, fb: string) => (e instanceof Error ? e.message : fb);
 const STATUS = { IN_PROGRESS: "En cours", SUBMITTED: "En correction", GRADED: "Corrigée" } as const;
@@ -49,7 +50,7 @@ export default function ExerciseView({ subjectId, exerciseId }: { subjectId: str
   }
 
   async function remove() {
-    if (!window.confirm("Supprimer cet exercice ? Vos tentatives passées restent consultables.")) return;
+    if (!(await confirmAction("Supprimer cet exercice ? Vos tentatives passées restent consultables.", { confirmLabel: "Supprimer" }))) return;
     try {
       await api.del(`/api/exercises/${exerciseId}`);
       router.push(`${routes.subject(subjectId)}/exercices`);

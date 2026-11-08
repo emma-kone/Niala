@@ -13,6 +13,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { SubjectTabs } from "@/features/subject-files/tabs";
 import { NameDialog } from "@/features/subject-files/dialogs";
 import type { MapListItem } from "@/features/maps/types";
+import { confirmAction } from "@/components/notifications";
 
 const errText = (e: unknown, fb: string) => (e instanceof Error ? e.message : fb);
 
@@ -41,7 +42,7 @@ export default function SubjectMapsView({ subjectId }: { subjectId: string }) {
   }, [subjectId, load]);
 
   async function remove(m: MapListItem) {
-    if (!window.confirm(`Supprimer la carte « ${m.title} » ? Cette action est irréversible.`)) return;
+    if (!(await confirmAction(`Supprimer la carte « ${m.title} » ? Cette action est irréversible.`, { confirmLabel: "Supprimer" }))) return;
     try {
       await api.del(`/api/maps/${m.id}`);
       await load();

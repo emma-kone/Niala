@@ -9,7 +9,6 @@
 // - Import : taille maximale par fichier (1–50 Mo).
 // - Compte : informations en lecture seule (e-mail, nom, identifiant, modèle
 //   IA, langue, conservation des données).
-// - Charte typographique : spécimens Bricolage Grotesque + JetBrains Mono.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useCallback, useEffect, useState } from "react";
@@ -32,7 +31,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { Loader2, Palette, PenLine, Type, Upload, User, XCircle } from "lucide-react";
+import { Loader2, Palette, PenLine, Upload, User, XCircle } from "lucide-react";
 
 // ── Types de l'API ───────────────────────────────────────────────────────────
 
@@ -75,18 +74,7 @@ const MODE_OPTIONS: ModeOption[] = [
   { value: "personnalise", label: "Personnalisé" },
 ];
 
-const WEIGHT_SPECIMENS: { weight: number; className: string }[] = [
-  { weight: 200, className: "font-extralight text-lg" },
-  { weight: 400, className: "font-normal text-lg" },
-  { weight: 500, className: "font-medium text-lg" },
-  { weight: 600, className: "font-semibold text-lg" },
-  { weight: 700, className: "font-bold text-lg" },
-  { weight: 800, className: "font-extrabold text-lg" },
-];
 
-const TYPE_SPECIMEN = "Niala — typographie expressive et lisible";
-
-const CODE_SPECIMEN = "const mastery = 0.87; // JetBrains Mono — réservée au code et à la console";
 
 // ── Utilitaires ──────────────────────────────────────────────────────────────
 
@@ -508,43 +496,6 @@ export default function SettingsView() {
               />
             </dl>
           )}
-        </CardContent>
-      </Card>
-
-      {/* ── Charte typographique ── */}
-      <Card>
-        <CardHeader className="pb-4">
-          <CardTitle className="typo-h2 flex items-center gap-2">
-            <Type className="h-4 w-4 text-muted-foreground" aria-hidden />
-            Charte typographique
-          </CardTitle>
-          <CardDescription>
-            Spécimens des polices utilisées dans l&apos;interface.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <p className="typo-meta">
-            Police principale de l&apos;interface : Bricolage Grotesque. Police de code : JetBrains
-            Mono (éditeurs, console, SQL).
-          </p>
-          <div className="space-y-3">
-            {WEIGHT_SPECIMENS.map((specimen) => (
-              <div
-                key={specimen.weight}
-                className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5"
-              >
-                <p className={cn(specimen.className, "min-w-0 truncate")}>{TYPE_SPECIMEN}</p>
-                <span className="typo-meta tnum shrink-0">
-                  Bricolage Grotesque — {specimen.weight}
-                </span>
-              </div>
-            ))}
-          </div>
-          <Separator />
-          <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5">
-            <p className="font-code min-w-0 truncate text-sm">{CODE_SPECIMEN}</p>
-            <span className="typo-meta tnum shrink-0">JetBrains Mono — 400</span>
-          </div>
         </CardContent>
       </Card>
     </section>

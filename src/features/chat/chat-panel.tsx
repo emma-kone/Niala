@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { AlertTriangle, BookOpen, ExternalLink, Globe, Loader2, MessageSquarePlus, PanelLeftClose, PanelLeftOpen, Pencil, Send, Trash2 } from "lucide-react";
+import { AlertTriangle, BookOpen, ExternalLink, Globe, Loader2, MessageSquarePlus, PanelLeftClose, PanelLeftOpen, Pencil, SearchX, Send, ShieldCheck, Trash2 } from "lucide-react";
 import { api } from "@/lib/client-api";
 import { routes } from "@/config/routes";
 import { cn } from "@/lib/utils";
@@ -12,6 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { ChatCitation, ChatMessageDto, ConsultedInfo, ConversationDto } from "./types";
+import { confirmAction } from "@/components/notifications";
 
 interface Props {
   scope: "GLOBAL" | "DOCUMENT";
@@ -27,7 +28,7 @@ interface Props {
 interface AiStatus {
   configured: boolean;
   chat?: boolean;
-  web?: { available: boolean; backend: "tavily" | "gemini" | null };
+  web?: { available: boolean; backend: "tavily" | "gemini" | "wikipedia" | null };
 }
 
 const STARTERS: Record<"GLOBAL" | "DOCUMENT", string[]> = {
@@ -93,6 +94,14 @@ function CitationList({ citations, onCitation }: { citations: ChatCitation[]; on
   );
 }
 
+/** Bandeau de fiabilité des informations web (niveau calculé par le serveur, pas par l'IA). */
+const WEB_RELIABILITY: Record<NonNullable<ConsultedInfo["webReliability"]>, { text: string; cls: string; Icon: typeof ShieldCheck }> = {
+  verifiee: { text: "Web : informations appuyées par au moins une source reconnue (officielle, universitaire ou de référence).", cls: "text-emerald-700 dark:text-emerald-400", Icon: ShieldCheck },
+  non_verifiee: { text: "Web : aucune source officielle — informations non vérifiées, à recouper avant de les utiliser.", cls: "text-amber-700 dark:text-amber-300", Icon: AlertTriangle },
+  aucune: { text: "Web : aucune source fiable n'a été trouvée pour cette question.", cls: "text-muted-foreground", Icon: SearchX },
+  indisponible: { text: "Web : la recherche n'a pas pu aboutir ; la réponse n'a pas été vérifiée en ligne.", cls: "text-amber-700 dark:text-amber-300", Icon: AlertTriangle },
+};
+
 /** Ce que l'IA a consulté. N'affiche rien quand aucune source n'a été utilisée (question libre), et ne signale que les limites utiles. */
 function Consulted({ info }: { info: ConsultedInfo | null }) {
   if (!info) return null;
@@ -100,9 +109,16 @@ function Consulted({ info }: { info: ConsultedInfo | null }) {
   const consulted = info.coverage.filter((c) => used.has(c.documentId));
   const warnings = consulted.flatMap((c) => c.warnings.map((w) => (consulted.length > 1 ? `${c.documentName} : ${w}` : w)));
   const parts = [info.passages > 0 ? `${info.passages} passage(s) de cours${info.pagesRead ? `, ${info.pagesRead} page(s) lue(s)` : ""}` : null, info.webSources ? `${info.webSources} source(s) web` : null].filter(Boolean);
-  if (!parts.length && !warnings.length) return null;
+  const reliability = info.webReliability ? WEB_RELIABILITY[info.webReliability] : null;
+  if (!parts.length && !warnings.length && !reliability) return null;
   return (
     <div className="mt-2 space-y-1 text-[11px] text-muted-foreground">
+      {reliability && (
+        <p className={cn("flex items-start gap-1", reliability.cls)}>
+          <reliability.Icon className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
+          <span>{reliability.text}</span>
+        </p>
+      )}
       {parts.length > 0 && (
         <p className="flex items-center gap-1">
           <BookOpen className="h-3 w-3" aria-hidden /> Consulté : {parts.join(" · ")}
@@ -242,7 +258,7 @@ export default function ChatPanel({ scope, documentId, onCitation, variant = "pa
   }
 
   async function remove(id: string) {
-    if (!window.confirm("Supprimer cette conversation ?")) return;
+    if (!(await confirmAction("Supprimer cette conversation ?", { confirmLabel: "Supprimer" }))) return;
     try {
       await api.del(`/api/conversations/${id}`);
       const rest = (conversations ?? []).filter((c) => c.id !== id);
@@ -283,7 +299,7 @@ export default function ChatPanel({ scope, documentId, onCitation, variant = "pa
           <Globe className="h-3.5 w-3.5" aria-hidden /> Recherche web
         </span>
         <span className="block text-xs text-muted-foreground">
-          {webAvailable ? "Sources officielles et universitaires en priorité ; chaque source est classée." : "Indisponible : aucun moteur de recherche web n'est configuré pour ce site."}
+          {webAvailable ? status?.web?.backend === "wikipedia" ? "Recherche dans Wikipédia (aucun moteur web complet configuré) ; chaque information est marquée vérifiée ou non." : "Sources officielles et universitaires en priorité ; chaque information est marquée vérifiée ou non." : "Indisponible : aucun moteur de recherche web n'est configuré pour ce site."}
         </span>
       </span>
     </label>

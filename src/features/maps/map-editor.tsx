@@ -38,6 +38,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { ORIGIN_LABEL, RELATION_LABEL, type MapDetail, type MapEdgeDto, type MapNodeDto, type Origin, type RelationType } from "./types";
+import { confirmAction } from "@/components/notifications";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Éditeur de carte (React Flow) : un GRAPHE éditable — ajout/suppression/édition de nœuds,
@@ -354,7 +355,7 @@ function Editor({ map: initial }: { map: MapDetail }) {
     setRevisions(r.map.revisions);
   }
   async function restore(n: number) {
-    if (!window.confirm("Revenir à cette version ? L'état actuel est conservé comme version.")) return;
+    if (!(await confirmAction("Revenir à cette version ? L'état actuel est conservé comme version.", { confirmLabel: "Restaurer", danger: false }))) return;
     await flush();
     const r = await api.post<{ map: MapDetail }>(`/api/maps/${initial.id}/revisions/${n}/restore`);
     dirty.current = false;

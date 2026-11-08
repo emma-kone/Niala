@@ -7,7 +7,7 @@ import { checkQuota } from "@/server/ai/structured";
 import { UNTRUSTED_RULES, wrapUntrusted } from "@/server/ai/guard";
 import { resolveCitations, type Citation, type Coverage } from "@/server/domain/retrieval";
 import { embedPending } from "./indexing";
-import { TIER_LABEL } from "@/server/domain/web-trust";
+import { RELIABILITY_RULE, TIER_LABEL, assessReliability, hostOf } from "@/server/domain/web-trust";
 import { WebSearchUnavailableError, searchWeb, webStatus } from "@/server/ai/web-search";
 import { documentCoverage, outline, readPart, resolveDocs, searchPassages, type DocInfo, type Hit, type Scope } from "./retrieval";
 
@@ -118,6 +118,8 @@ class Evidence {
   readonly docs = new Map<string, string>();
   readonly pagesRead = new Set<string>();
   readonly toolCalls: string[] = [];
+  /** Recherches web lancées pendant ce tour, avec le nombre de résultats (0 = rien trouvé, -1 = moteur en échec). */
+  readonly webSearches: { query: string; found: number }[] = [];
 
   register(c: Omit<Citation, "n">, key: string): number {
     const existing = this.keys.get(key);
@@ -192,15 +194,24 @@ async function runTool(ctx: ToolContext, name: string, args: Record<string, unkn
         if (!query.trim()) return { erreur: "Requête vide." };
         try {
           const out = await searchWeb(query, ctx.signal);
-          if (!out.results.length) return { resultat: "Aucune source web trouvée. Dis-le franchement à l'étudiant au lieu de deviner." };
+          const reliability = assessReliability(out.results);
+          ctx.ev.webSearches.push({ query, found: out.results.length });
+          if (!out.results.length) return { fiabilite: reliability.level, resultat: "Aucune source web trouvée.", consigne: RELIABILITY_RULE.aucune };
           const lines = out.results.map((r) => {
             const ref = ctx.ev.register({ kind: "web", url: r.url, tier: r.tier, documentId: "", documentName: `${r.title} (${r.host})`, subjectId: null, versionId: "", page: null, section: null, quote: quoteOf(r.snippet) }, `web:${r.url}`);
             return `[${ref}] ${r.title} — ${r.host} — ${TIER_LABEL[r.tier]}\n${r.snippet}`;
           });
-          const body = [out.summary ? `Synthèse du moteur de recherche (à vérifier avec les sources) :\n${out.summary}` : "", ...lines].filter(Boolean).join("\n\n---\n\n");
-          return { extraits_web: wrapUntrusted("extraits web", body), rappel: "Appuie-toi uniquement sur ces extraits. Signale les sources « à vérifier ». Si rien de fiable ne répond à la question, dis-le." };
+          const body = [out.summary ? `Synthèse du moteur de recherche (NON vérifiée : ne retiens que ce que les sources numérotées confirment) :\n${out.summary}` : "", ...lines].filter(Boolean).join("\n\n---\n\n");
+          return {
+            fiabilite: reliability.level,
+            sources_reconnues: reliability.recognized,
+            sites_distincts: reliability.independent,
+            extraits_web: wrapUntrusted("extraits web", body),
+            consigne: `${RELIABILITY_RULE[reliability.level]} Vérifie aussi que les extraits répondent VRAIMENT à la question : une source fiable sur un autre sujet ne prouve rien. Si aucun extrait ne répond, dis que tu n'as pas trouvé.`,
+          };
         } catch (e) {
-          return { erreur: e instanceof WebSearchUnavailableError ? "La recherche web est momentanément indisponible. Dis-le à l'étudiant et réponds sans prétendre avoir vérifié sur le web." : "Recherche web en échec." };
+          ctx.ev.webSearches.push({ query, found: -1 });
+          return { erreur: e instanceof WebSearchUnavailableError ? "La recherche web est momentanément indisponible. Dis-le à l'étudiant et réponds sans prétendre avoir vérifié sur le web (marque ta réponse « non vérifiée en ligne »)." : "Recherche web en échec." };
         }
       }
       case "get_outline": {
@@ -242,9 +253,15 @@ Méthode :
 - Si le cours ne traite pas le sujet, dis-le.
 ${web ? `
 Recherche web (outil search_web) :
-- Utilise-la pour vérifier ou compléter un point d'un cours, pour une information récente ou précise, ou quand l'étudiant le demande. Pas pour ce qui est déjà clair dans le cours.
-- Les sources sont classées par le serveur : « source reconnue » (documentation officielle, universités, références) ou « source à vérifier ». Privilégie les sources reconnues, nomme le site dans ta réponse, et signale clairement toute source à vérifier.
-- N'affirme rien que les extraits web ne soutiennent pas. Si tu ne trouves pas de réponse fiable, écris-le explicitement (« Je n'ai pas trouvé de source fiable pour cela ») et n'invente rien. Si la recherche est indisponible, dis-le.
+- Utilise-la pour vérifier ou compléter un point d'un cours, pour toute information factuelle précise (date, chiffre, version, nom, définition officielle, loi, règlement, actualité) dont tu n'es pas certain, ou quand l'étudiant le demande. Pas pour ce qui est déjà clair dans le cours. Si une première requête ne donne rien d'utile, reformule une fois (par exemple en anglais) avant de conclure.
+- Le serveur classe chaque source (« source reconnue » = documentation officielle, universités, administrations, références ; sinon « source à vérifier ») et calcule un niveau de fiabilité. Respecte la consigne renvoyée avec les résultats.
+- Règle de présentation, OBLIGATOIRE pour toute information issue du web :
+  • Information confirmée par une source reconnue : donne-la normalement, nomme le site et cite-le [n].
+  • Information trouvée seulement sur des sources à vérifier, ou dont tu n'es pas sûr : donne-la précédée de « ⚠️ Information non officielle / non vérifiée : », cite la source [n] et invite l'étudiant à la recouper.
+  • Rien de fiable trouvé : écris clairement « ❌ Je n'ai pas trouvé d'information fiable sur … ». N'invente pas, ne comble pas avec tes souvenirs. Tu peux ensuite proposer une piste (où chercher), sans la présenter comme une réponse.
+- Si des sources se contredisent, dis-le et indique laquelle est officielle.
+- N'affirme rien que les extraits web ne soutiennent pas. La « synthèse du moteur » n'est pas une source : seules les sources numérotées comptent. Si la recherche est indisponible, dis-le.
+- Si tu réponds de mémoire à une question factuelle précise sans vérification en ligne, précise « (d'après mes connaissances, non vérifié en ligne) ».
 ` : `
 La recherche web est désactivée : n'affirme pas avoir vérifié quoi que ce soit sur le web.
 `}
@@ -331,7 +348,12 @@ export async function sendMessage(userId: string, conversationId: string, conten
   }
 
   const { text, citations } = resolveCitations(answer.trim(), ev.known);
+  // Fiabilité calculée sur les sources web RÉELLEMENT citées dans la réponse (pas sur tout ce qui a été lu).
+  const citedWeb = citations.filter((c) => c.kind === "web" && c.url).map((c) => ({ host: hostOf(c.url!) ?? c.url!, tier: c.tier ?? "a_verifier" }));
+  const webReliability = ev.webSearches.length === 0 ? null : citedWeb.length ? assessReliability(citedWeb).level : ev.webSearches.every((s) => s.found < 0) ? "indisponible" : "aucune";
   const consulted = {
+    webReliability,
+    webSearches: ev.webSearches.length,
     documents: [...ev.docs].map(([id, name]) => ({ id, name })),
     passages: [...ev.known.values()].filter((c) => c.kind !== "web").length,
     webSources: [...ev.known.values()].filter((c) => c.kind === "web").length,
