@@ -3,14 +3,15 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { AlertTriangle, BookOpen, ExternalLink, Globe, Loader2, MessageSquarePlus, PanelLeftClose, PanelLeftOpen, Pencil, SearchX, Send, ShieldCheck, Trash2 } from "lucide-react";
-import { api } from "@/lib/client-api";
+import { AlertTriangle, BookOpen, ExternalLink, Globe, Loader2, MessageSquarePlus, PanelLeftClose, PanelLeftOpen, Pencil, Search, Send, Trash2 } from "lucide-react";
+import { api, postStream } from "@/lib/client-api";
 import { routes } from "@/config/routes";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ReliabilityPanel } from "./reliability-panel";
 import type { ChatCitation, ChatMessageDto, ConsultedInfo, ConversationDto } from "./types";
 import { confirmAction } from "@/components/notifications";
 
@@ -37,9 +38,18 @@ const STARTERS: Record<"GLOBAL" | "DOCUMENT", string[]> = {
 };
 
 const WEB_KEY = "niala-chat-web";
+const VERIFICATION_POLL_MS = 1500;
+const VERIFICATION_MAX_POLLS = 100;
 const ALL = "__all__";
 
-function CitationList({ citations, onCitation }: { citations: ChatCitation[]; onCitation?: Props["onCitation"] }) {
+const LEVEL_BADGE: Record<1 | 2 | 3 | 4, { label: string; cls: string }> = {
+  1: { label: "source primaire", cls: "border-emerald-500/50 text-emerald-600 dark:text-emerald-400" },
+  2: { label: "source secondaire", cls: "border-sky-500/50 text-sky-700 dark:text-sky-400" },
+  3: { label: "forum ou communauté", cls: "border-amber-500/50 text-amber-700 dark:text-amber-300" },
+  4: { label: "source non vérifiée", cls: "border-amber-500/50 text-amber-700 dark:text-amber-300" },
+};
+
+function CitationList({ citations, onCitation, onVerify }: { citations: ChatCitation[]; onCitation?: Props["onCitation"]; onVerify?: (c: ChatCitation) => void }) {
   if (!citations.length) return null;
   return (
     <ul className="mt-3 space-y-1 border-t pt-2" aria-label="Sources">
@@ -53,14 +63,17 @@ function CitationList({ citations, onCitation }: { citations: ChatCitation[]; on
                 {num}
                 <span className="font-medium">{c.documentName}</span>
                 <ExternalLink className="ml-1 inline h-3 w-3 text-muted-foreground" aria-hidden />
-                <span
-                  className={cn(
-                    "ml-2 rounded-full border px-1.5 py-px text-[10px]",
-                    c.tier === "reconnue" ? "border-emerald-500/50 text-emerald-600 dark:text-emerald-400" : "border-amber-500/50 text-amber-700 dark:text-amber-300"
-                  )}
-                >
-                  {c.tier === "reconnue" ? "source reconnue" : "source à vérifier"}
-                </span>
+                {c.level ? (
+                  <span className={cn("ml-2 rounded-full border px-1.5 py-px text-[10px]", LEVEL_BADGE[c.level].cls)}>{LEVEL_BADGE[c.level].label}</span>
+                ) : (
+                  <span className={cn("ml-2 rounded-full border px-1.5 py-px text-[10px]", c.tier === "reconnue" ? LEVEL_BADGE[1].cls : LEVEL_BADGE[4].cls)}>{c.tier === "reconnue" ? "source reconnue" : "source à vérifier"}</span>
+                )}
+                {c.retrievedAt && (
+                  <span className="block pl-7 text-[11px] text-muted-foreground">
+                    {c.organization ?? ""}
+                    {c.publishedAt ? ` · publié : ${c.publishedAt}` : " · date de publication inconnue"} · consulté le {new Date(c.retrievedAt).toLocaleDateString("fr-FR")}
+                  </span>
+                )}
               </a>
             </li>
           );
@@ -76,6 +89,11 @@ function CitationList({ citations, onCitation }: { citations: ChatCitation[]; on
         );
         return (
           <li key={c.n}>
+            {onVerify && (
+              <button type="button" className="float-right ml-2 mt-0.5 inline-flex items-center gap-1 rounded px-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground" onClick={() => onVerify(c)} title="Rechercher une confirmation dans des sources externes">
+                <Search className="h-3 w-3" aria-hidden /> Vérifier ce point
+              </button>
+            )}
             {onCitation ? (
               <button type="button" className={cls} onClick={() => onCitation(c)}>
                 {label}
@@ -94,14 +112,6 @@ function CitationList({ citations, onCitation }: { citations: ChatCitation[]; on
   );
 }
 
-/** Bandeau de fiabilité des informations web (niveau calculé par le serveur, pas par l'IA). */
-const WEB_RELIABILITY: Record<NonNullable<ConsultedInfo["webReliability"]>, { text: string; cls: string; Icon: typeof ShieldCheck }> = {
-  verifiee: { text: "Web : informations appuyées par au moins une source reconnue (officielle, universitaire ou de référence).", cls: "text-emerald-700 dark:text-emerald-400", Icon: ShieldCheck },
-  non_verifiee: { text: "Web : aucune source officielle — informations non vérifiées, à recouper avant de les utiliser.", cls: "text-amber-700 dark:text-amber-300", Icon: AlertTriangle },
-  aucune: { text: "Web : aucune source fiable n'a été trouvée pour cette question.", cls: "text-muted-foreground", Icon: SearchX },
-  indisponible: { text: "Web : la recherche n'a pas pu aboutir ; la réponse n'a pas été vérifiée en ligne.", cls: "text-amber-700 dark:text-amber-300", Icon: AlertTriangle },
-};
-
 /** Ce que l'IA a consulté. N'affiche rien quand aucune source n'a été utilisée (question libre), et ne signale que les limites utiles. */
 function Consulted({ info }: { info: ConsultedInfo | null }) {
   if (!info) return null;
@@ -109,16 +119,9 @@ function Consulted({ info }: { info: ConsultedInfo | null }) {
   const consulted = info.coverage.filter((c) => used.has(c.documentId));
   const warnings = consulted.flatMap((c) => c.warnings.map((w) => (consulted.length > 1 ? `${c.documentName} : ${w}` : w)));
   const parts = [info.passages > 0 ? `${info.passages} passage(s) de cours${info.pagesRead ? `, ${info.pagesRead} page(s) lue(s)` : ""}` : null, info.webSources ? `${info.webSources} source(s) web` : null].filter(Boolean);
-  const reliability = info.webReliability ? WEB_RELIABILITY[info.webReliability] : null;
-  if (!parts.length && !warnings.length && !reliability) return null;
+  if (!parts.length && !warnings.length) return null;
   return (
     <div className="mt-2 space-y-1 text-[11px] text-muted-foreground">
-      {reliability && (
-        <p className={cn("flex items-start gap-1", reliability.cls)}>
-          <reliability.Icon className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
-          <span>{reliability.text}</span>
-        </p>
-      )}
       {parts.length > 0 && (
         <p className="flex items-center gap-1">
           <BookOpen className="h-3 w-3" aria-hidden /> Consulté : {parts.join(" · ")}
@@ -134,7 +137,7 @@ function Consulted({ info }: { info: ConsultedInfo | null }) {
   );
 }
 
-function Bubble({ m, onCitation, large }: { m: ChatMessageDto; onCitation?: Props["onCitation"]; large: boolean }) {
+function Bubble({ m, onCitation, onVerify, large }: { m: ChatMessageDto; onCitation?: Props["onCitation"]; onVerify?: (c: ChatCitation) => void; large: boolean }) {
   const mine = m.role === "USER";
   return (
     <div className={cn("flex", mine ? "justify-end" : "justify-start")}>
@@ -146,7 +149,8 @@ function Bubble({ m, onCitation, large }: { m: ChatMessageDto; onCitation?: Prop
             <div className="space-y-2 break-words leading-relaxed [&_a]:underline [&_code]:rounded [&_code]:bg-background [&_code]:px-1 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold [&_li]:ml-5 [&_ol]:list-decimal [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-background [&_pre]:p-2 [&_ul]:list-disc">
               <ReactMarkdown skipHtml>{m.content}</ReactMarkdown>
             </div>
-            <CitationList citations={m.citations ?? []} onCitation={onCitation} />
+            <CitationList citations={m.citations ?? []} onCitation={onCitation} onVerify={onVerify} />
+            <ReliabilityPanel info={m.consulted} citations={m.citations ?? []} />
             <Consulted info={m.consulted} />
           </>
         )}
@@ -162,6 +166,8 @@ export default function ChatPanel({ scope, documentId, onCitation, variant = "pa
   const [messages, setMessages] = useState<ChatMessageDto[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  /** Réponse en cours de rédaction : étape annoncée et texte reçu. */
+  const [live, setLive] = useState<{ status: string; text: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<AiStatus | null>(null);
   const [web, setWeb] = useState(true);
@@ -174,6 +180,18 @@ export default function ChatPanel({ scope, documentId, onCitation, variant = "pa
   const listQuery = scope === "DOCUMENT" ? `scope=DOCUMENT&documentId=${documentId}` : "scope=GLOBAL";
   const aiReady = status ? status.configured && status.chat !== false : null;
   const webAvailable = !!status?.web?.available;
+  // La vérification se termine après l'envoi de la réponse : on recharge la conversation jusqu'à son résultat.
+  const verifying = !sending && messages.some((m) => m.consulted?.verification?.status === "en_cours");
+  useEffect(() => {
+    if (!verifying || !activeId) return;
+    const id = activeId;
+    let ticks = 0;
+    const timer = setInterval(() => {
+      if (++ticks > VERIFICATION_MAX_POLLS) return clearInterval(timer);
+      api.get<{ messages: ChatMessageDto[] }>(`/api/conversations/${id}`).then((r) => setMessages((prev) => (JSON.stringify(prev) === JSON.stringify(r.messages) ? prev : r.messages))).catch(() => undefined);
+    }, VERIFICATION_POLL_MS);
+    return () => clearInterval(timer);
+  }, [verifying, activeId]);
 
   const open = useCallback(async (id: string) => {
     setError(null);
@@ -216,7 +234,7 @@ export default function ChatPanel({ scope, documentId, onCitation, variant = "pa
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
-  }, [messages, sending]);
+  }, [messages, sending, live?.text, live?.status]);
 
   function toggleWeb(on: boolean) {
     setWeb(on);
@@ -227,12 +245,17 @@ export default function ChatPanel({ scope, documentId, onCitation, variant = "pa
     }
   }
 
+  function verifyPoint(c: ChatCitation) {
+    void send(`Vérifie dans des sources externes fiables ce passage de mon cours (${c.documentName}${c.page ? `, page ${c.page}` : ""}) : « ${c.quote} ». Signale toute erreur ou information dépassée.`);
+  }
+
   async function send(text: string) {
     const content = text.trim();
     if (!content || sending) return;
     setSending(true);
     setError(null);
     setInput("");
+    setLive({ status: "", text: "" });
     setMessages((m) => [...m, { id: `tmp-${Date.now()}`, role: "USER", content, citations: null, consulted: null, model: null, createdAt: new Date().toISOString() }]);
     try {
       let id = activeId;
@@ -246,13 +269,17 @@ export default function ChatPanel({ scope, documentId, onCitation, variant = "pa
         setActiveId(id);
         setConversations((list) => [c.conversation, ...(list ?? [])]);
       }
-      const r = await api.post<{ message: ChatMessageDto; title: string }>(`/api/conversations/${id}/messages`, { content, web: web && webAvailable });
+      const r = await postStream<{ message: ChatMessageDto; title: string }>(`/api/conversations/${id}/messages`, { content, web: web && webAvailable }, {
+        status: (t) => setLive({ status: t, text: "" }),
+        delta: (t) => setLive((l) => ({ status: l?.status ?? "", text: (l?.text ?? "") + t })),
+      });
       setMessages((m) => [...m, r.message]);
       setConversations((list) => (list ?? []).map((c) => (c.id === id ? { ...c, title: r.title } : c)));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Envoi impossible.");
       if (activeId) void open(activeId);
     } finally {
+      setLive(null);
       setSending(false);
     }
   }
@@ -443,13 +470,15 @@ export default function ChatPanel({ scope, documentId, onCitation, variant = "pa
               </div>
             )}
             {messages.map((m) => (
-              <Bubble key={m.id} m={m} onCitation={onCitation} large={page} />
+              <Bubble key={m.id} m={m} onCitation={onCitation} onVerify={webAvailable && !sending ? verifyPoint : undefined} large={page} />
             ))}
-            {sending && (
+            {sending && live?.text ? (
+              <Bubble m={{ id: "live", role: "ASSISTANT", content: live.text, citations: null, consulted: null, model: null, createdAt: "" }} large={page} />
+            ) : sending ? (
               <div className="flex items-center gap-2 text-xs text-muted-foreground" role="status">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> L&apos;assistant réfléchit…
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> {live?.status || "L'assistant prépare sa réponse…"}
               </div>
-            )}
+            ) : null}
             {error && (
               <p role="alert" className="rounded-lg border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
                 {error}

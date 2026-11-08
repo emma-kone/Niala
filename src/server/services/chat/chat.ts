@@ -7,8 +7,12 @@ import { checkQuota } from "@/server/ai/structured";
 import { UNTRUSTED_RULES, wrapUntrusted } from "@/server/ai/guard";
 import { resolveCitations, type Citation, type Coverage } from "@/server/domain/retrieval";
 import { embedPending } from "./indexing";
-import { RELIABILITY_RULE, TIER_LABEL, assessReliability, hostOf } from "@/server/domain/web-trust";
-import { WebSearchUnavailableError, searchWeb, webStatus } from "@/server/ai/web-search";
+import { hostOf } from "@/server/domain/web-trust";
+import { RELIABILITY_RULES, applyVerification, failedVerification, needsVerification, pendingVerification, verifyAnswer, type VerificationReport, type WebStatus } from "@/server/reliability/claims";
+import { registrableDomain } from "@/server/reliability/cross-check";
+import { LEVEL_LABEL, assessSource, inferPublication, searchGuidance, type SourceKind } from "@/server/reliability/sources";
+import { saveVerification, type SavedSource } from "@/server/reliability/store";
+import { WebSearchUnavailableError, searchWeb, webStatus, type WebResult } from "@/server/ai/web-search";
 import { documentCoverage, outline, readPart, resolveDocs, searchPassages, type DocInfo, type Hit, type Scope } from "./retrieval";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -25,6 +29,9 @@ const MAX_STEPS = 5;
 const HISTORY_MESSAGES = 14;
 const MAX_MESSAGE_CHARS = 6000;
 const DEFAULT_TITLE = "Nouvelle conversation";
+/** Au-delà, la vérification n'est plus lancée : la requête doit se terminer avant la limite de la route (120 s). */
+const VERIFICATION_DEADLINE_MS = 65_000;
+const STALE_VERIFICATION_MS = 150_000;
 
 export const createSchema = z.object({
   scope: z.enum(["GLOBAL", "DOCUMENT"]),
@@ -65,6 +72,10 @@ async function ownedConversation(userId: string, id: string) {
   return conv;
 }
 
+function asInterrupted(consulted: { verification?: VerificationReport }): Prisma.JsonObject {
+  return { ...consulted, verification: failedVerification(consulted.verification!.webStatus) } as unknown as Prisma.JsonObject;
+}
+
 export async function getConversation(userId: string, id: string) {
   const conv = await ownedConversation(userId, id);
   const messages = await db.conversationMessage.findMany({
@@ -72,7 +83,13 @@ export async function getConversation(userId: string, id: string) {
     orderBy: { createdAt: "asc" },
     select: { id: true, role: true, content: true, citations: true, consulted: true, model: true, createdAt: true },
   });
-  return { conversation: { id: conv.id, title: conv.title, scope: conv.scope, documentId: conv.documentId, subjectId: conv.subjectId, updatedAt: conv.updatedAt }, messages };
+  // Vérification interrompue (redémarrage du serveur, par exemple) : on ne la laisse pas « en cours » indéfiniment.
+  const visible = messages.map((m) => {
+    const consulted = m.consulted as { verification?: VerificationReport } | null;
+    if (consulted?.verification?.status !== "en_cours" || Date.now() - m.createdAt.getTime() < STALE_VERIFICATION_MS) return m;
+    return { ...m, consulted: asInterrupted(consulted) };
+  });
+  return { conversation: { id: conv.id, title: conv.title, scope: conv.scope, documentId: conv.documentId, subjectId: conv.subjectId, updatedAt: conv.updatedAt }, messages: visible };
 }
 
 export async function renameConversation(userId: string, id: string, title: string) {
@@ -85,7 +102,12 @@ export async function renameConversation(userId: string, id: string, title: stri
 
 export async function deleteConversation(userId: string, id: string) {
   await ownedConversation(userId, id);
-  await db.conversation.delete({ where: { id } });
+  // Les vérifications référencent les messages sans clé étrangère : elles doivent disparaître avec la conversation.
+  const messages = await db.conversationMessage.findMany({ where: { conversationId: id, userId }, select: { id: true } });
+  await db.$transaction([
+    db.verificationRun.deleteMany({ where: { userId, entityType: "ConversationMessage", entityId: { in: messages.map((m) => m.id) } } }),
+    db.conversation.delete({ where: { id } }),
+  ]);
   return { ok: true };
 }
 
@@ -120,23 +142,46 @@ class Evidence {
   readonly toolCalls: string[] = [];
   /** Recherches web lancées pendant ce tour, avec le nombre de résultats (0 = rien trouvé, -1 = moteur en échec). */
   readonly webSearches: { query: string; found: number }[] = [];
+  /** Texte intégral de chaque passage : c'est là que les preuves sont recherchées (la citation affichée est tronquée). */
+  readonly text = new Map<number, string>();
 
-  register(c: Omit<Citation, "n">, key: string): number {
+  register(c: Omit<Citation, "n">, key: string, fullText: string): number {
     const existing = this.keys.get(key);
     if (existing) return existing;
     const n = this.known.size + 1;
     this.known.set(n, { n, ...c });
     this.keys.set(key, n);
+    this.text.set(n, fullText);
     if (c.kind !== "web") this.docs.set(c.documentId, c.documentName);
     return n;
   }
 }
 
+function sourcesOf(ev: Evidence): SavedSource[] {
+  return [...ev.known.values()].map((c) => {
+    const common = { n: c.n, title: c.documentName, text: ev.text.get(c.n) ?? c.quote, retrievedAt: c.retrievedAt ?? new Date().toISOString() };
+    if (c.kind !== "web") return { ...common, kind: "document" as const, documentId: c.documentId, page: c.page };
+    return { ...common, kind: "web" as const, url: c.url, host: c.url ? (hostOf(c.url) ?? undefined) : undefined, level: c.level, sourceKind: c.sourceKind as SourceKind | undefined, organization: c.organization, publishedAt: c.publishedAt, year: c.publishedAt ? Number(/(?:19|20)\d{2}/.exec(c.publishedAt)?.[0]) || null : null };
+  });
+}
+
 const quoteOf = (s: string) => s.replace(/\s+/g, " ").trim().slice(0, 240);
+
+/** Enregistre une page web avec son évaluation : niveau, nature, organisme, date lisible et date de consultation. */
+function registerWeb(ev: Evidence, r: WebResult) {
+  const assessment = assessSource({ url: r.url, title: r.title });
+  const publication = inferPublication(r.url, r.snippet);
+  const n = ev.register(
+    { kind: "web", url: r.url, tier: r.tier, level: assessment.level, sourceKind: assessment.kind, organization: registrableDomain(r.host), publishedAt: publication.label, retrievedAt: new Date().toISOString(), documentId: "", documentName: `${r.title} (${r.host})`, subjectId: null, versionId: "", page: null, section: null, quote: quoteOf(r.snippet) },
+    `web:${r.url}`,
+    r.snippet
+  );
+  return { n, assessment, publication };
+}
 
 function formatHits(hits: Hit[], ev: Evidence) {
   return hits.map((h) => {
-    const ref = ev.register({ documentId: h.documentId, documentName: h.documentName, subjectId: h.subjectId, versionId: h.versionId, page: h.page, section: h.section, quote: quoteOf(h.content) }, `chunk:${h.chunkId}`);
+    const ref = ev.register({ documentId: h.documentId, documentName: h.documentName, subjectId: h.subjectId, versionId: h.versionId, page: h.page, section: h.section, quote: quoteOf(h.content) }, `chunk:${h.chunkId}`, h.content);
     return `[${ref}] ${h.documentName}${h.page ? `, page ${h.page}` : ""}${h.section ? ` — ${h.section}` : ""}\n${h.content}`;
   });
 }
@@ -179,7 +224,7 @@ async function runTool(ctx: ToolContext, name: string, args: Record<string, unkn
         const r = await readPart(ctx.userId, doc.id, from, args.to == null ? undefined : Number(args.to));
         const blocks = r.parts.map((p) => {
           ctx.ev.pagesRead.add(`${doc.id}:${p.n}`);
-          const ref = ctx.ev.register({ documentId: doc.id, documentName: doc.name, subjectId: doc.subjectId, versionId: doc.versionId, page: r.unit === "page" ? p.n : null, section: p.section, quote: quoteOf(p.text) }, `part:${doc.id}:${p.n}`);
+          const ref = ctx.ev.register({ documentId: doc.id, documentName: doc.name, subjectId: doc.subjectId, versionId: doc.versionId, page: r.unit === "page" ? p.n : null, section: p.section, quote: quoteOf(p.text) }, `part:${doc.id}:${p.n}`, p.text);
           return `[${ref}] ${doc.name}, ${r.unit} ${p.n}${p.section ? ` — ${p.section}` : ""}\n${p.text}`;
         });
         return {
@@ -194,21 +239,12 @@ async function runTool(ctx: ToolContext, name: string, args: Record<string, unkn
         if (!query.trim()) return { erreur: "Requête vide." };
         try {
           const out = await searchWeb(query, ctx.signal);
-          const reliability = assessReliability(out.results);
           ctx.ev.webSearches.push({ query, found: out.results.length });
-          if (!out.results.length) return { fiabilite: reliability.level, resultat: "Aucune source web trouvée.", consigne: RELIABILITY_RULE.aucune };
-          const lines = out.results.map((r) => {
-            const ref = ctx.ev.register({ kind: "web", url: r.url, tier: r.tier, documentId: "", documentName: `${r.title} (${r.host})`, subjectId: null, versionId: "", page: null, section: null, quote: quoteOf(r.snippet) }, `web:${r.url}`);
-            return `[${ref}] ${r.title} — ${r.host} — ${TIER_LABEL[r.tier]}\n${r.snippet}`;
-          });
+          if (!out.results.length) return { resultat: "Aucune source web trouvée.", consigne: searchGuidance([]) };
+          const registered = out.results.map((r) => ({ r, ...registerWeb(ctx.ev, r) }));
+          const lines = registered.map(({ r, n, assessment, publication }) => `[${n}] ${r.title} — ${r.host} — niveau ${assessment.level} (${LEVEL_LABEL[assessment.level]})${publication.label ? ` — ${publication.label}` : ""}\n${r.snippet}`);
           const body = [out.summary ? `Synthèse du moteur de recherche (NON vérifiée : ne retiens que ce que les sources numérotées confirment) :\n${out.summary}` : "", ...lines].filter(Boolean).join("\n\n---\n\n");
-          return {
-            fiabilite: reliability.level,
-            sources_reconnues: reliability.recognized,
-            sites_distincts: reliability.independent,
-            extraits_web: wrapUntrusted("extraits web", body),
-            consigne: `${RELIABILITY_RULE[reliability.level]} Vérifie aussi que les extraits répondent VRAIMENT à la question : une source fiable sur un autre sujet ne prouve rien. Si aucun extrait ne répond, dis que tu n'as pas trouvé.`,
-          };
+          return { extraits_web: wrapUntrusted("extraits web", body), consigne: searchGuidance(registered.map((x) => x.assessment.level)) };
         } catch (e) {
           ctx.ev.webSearches.push({ query, found: -1 });
           return { erreur: e instanceof WebSearchUnavailableError ? "La recherche web est momentanément indisponible. Dis-le à l'étudiant et réponds sans prétendre avoir vérifié sur le web (marque ta réponse « non vérifiée en ligne »)." : "Recherche web en échec." };
@@ -249,17 +285,19 @@ ${scope === "DOCUMENT" ? "Tu discutes d'UN SEUL cours. Tu n'as accès à aucun a
 Méthode :
 - Pour toute question qui porte sur le contenu d'un cours, commence par search_passages (et read_pages / get_outline si la question est large ou si les extraits sont insuffisants). N'affirme jamais ce que dit un cours sans l'avoir consulté dans ce tour de conversation. Si la question est générale ou indépendante des cours, réponds directement, sans mentionner les documents de l'étudiant ni l'état de leur extraction (sauf s'il pose la question).
 - Cite tes sources avec le numéro entre crochets, par exemple [2] ou [1, 3], placé juste après l'affirmation correspondante. N'utilise QUE des numéros fournis par les outils.
-- Distingue ce qui vient du cours, ce qui vient du web et ce qui vient de tes connaissances générales (annonce celles-ci : « hors du cours : … ») ; ces dernières n'ont pas de numéro.
-- Si le cours ne traite pas le sujet, dis-le.
+- Distingue ce qui vient du cours (« Selon ton document, … »), ce qui vient du web et ce qui vient de tes connaissances générales (annonce celles-ci : « hors du cours : … ») ; ces dernières n'ont pas de numéro.
+- Si le cours ne traite pas le sujet, dis-le. Si le cours semble contenir une erreur ou une information dépassée, signale-le avec tact et cherche une référence externe si la recherche est disponible.
+
+${RELIABILITY_RULES}
 ${web ? `
 Recherche web (outil search_web) :
 - Utilise-la pour vérifier ou compléter un point d'un cours, pour toute information factuelle précise (date, chiffre, version, nom, définition officielle, loi, règlement, actualité) dont tu n'es pas certain, ou quand l'étudiant le demande. Pas pour ce qui est déjà clair dans le cours. Si une première requête ne donne rien d'utile, reformule une fois (par exemple en anglais) avant de conclure.
-- Le serveur classe chaque source (« source reconnue » = documentation officielle, universités, administrations, références ; sinon « source à vérifier ») et calcule un niveau de fiabilité. Respecte la consigne renvoyée avec les résultats.
+- Le serveur classe chaque source du niveau 1 (primaire ou institutionnelle) au niveau 4 (non vérifiée) ; un forum réputé reste de niveau 3. Le niveau décrit la nature de la source, pas sa pertinence. Après ta réponse, le serveur contrôle chaque affirmation contre les sources : ne cite [n] que si le passage établit précisément ce que tu affirmes.
 - Règle de présentation, OBLIGATOIRE pour toute information issue du web :
-  • Information confirmée par une source reconnue : donne-la normalement, nomme le site et cite-le [n].
-  • Information trouvée seulement sur des sources à vérifier, ou dont tu n'es pas sûr : donne-la précédée de « ⚠️ Information non officielle / non vérifiée : », cite la source [n] et invite l'étudiant à la recouper.
+  • Information confirmée par une source de niveau 1 ou 2 : donne-la normalement, nomme le site et cite-le [n].
+  • Information trouvée seulement sur des forums ou sources de niveau 3 ou 4, ou dont tu n'es pas sûr : donne-la précédée de « ⚠️ Information non officielle / non vérifiée : », cite la source [n] et invite l'étudiant à la recouper.
   • Rien de fiable trouvé : écris clairement « ❌ Je n'ai pas trouvé d'information fiable sur … ». N'invente pas, ne comble pas avec tes souvenirs. Tu peux ensuite proposer une piste (où chercher), sans la présenter comme une réponse.
-- Si des sources se contredisent, dis-le et indique laquelle est officielle.
+- Si des sources se contredisent, décris précisément la divergence, compare leur autorité, leurs dates et leurs contextes, et ne choisis pas la version la plus fréquente. Si rien ne permet de trancher, dis-le. Pour le droit, précise toujours le pays ; en programmation, précise les versions quand cela change le résultat.
 - N'affirme rien que les extraits web ne soutiennent pas. La « synthèse du moteur » n'est pas une source : seules les sources numérotées comptent. Si la recherche est indisponible, dis-le.
 - Si tu réponds de mémoire à une question factuelle précise sans vérification en ligne, précise « (d'après mes connaissances, non vérifié en ligne) ».
 ` : `
@@ -285,31 +323,53 @@ async function logUsage(userId: string, model: string, promptChars: number, resp
   await db.aIUsageLog.create({ data: { userId, op: "chat.turn@1", model, promptChars, respChars, ok, error: error?.slice(0, 500) ?? null, durationMs: Date.now() - started } }).catch(() => undefined);
 }
 
+export type ChatEvent = { type: "status"; text: string } | { type: "delta"; text: string };
+
+const TOOL_STATUS: Record<string, string> = {
+  search_web: "Recherche sur le web…",
+  search_passages: "Recherche dans vos cours…",
+  read_pages: "Lecture des pages…",
+  get_outline: "Lecture du plan…",
+  list_documents: "Consultation de vos documents…",
+};
+
 export interface SendOptions {
   /** Autorise la recherche web (si un moteur est disponible). */
   web?: boolean;
+  /** Reçoit l'avancement et le texte au fur et à mesure de la rédaction. */
+  emit?: (event: ChatEvent) => void;
+  /** Exécute une tâche après l'envoi de la réponse. Absent : tout est fait avant de répondre. */
+  defer?: (task: () => Promise<unknown>) => void;
 }
 
 export async function sendMessage(userId: string, conversationId: string, content: string, options: SendOptions = {}): Promise<ChatReply> {
   const conv = await ownedConversation(userId, conversationId);
   const provider = getProvider();
   if (!provider?.converse) throw new ApiHttpError("Le chat nécessite le service d'IA Gemini, qui n'est pas configuré (variable GEMINI_API_KEY).", 503);
-  await checkQuota(userId);
 
   const scope = conv.scope;
   const scopeFilter: Scope = scope === "DOCUMENT" ? { documentIds: [conv.documentId!] } : { subjectId: conv.subjectId };
-  const docs = await resolveDocs(userId, scopeFilter);
+  // Lectures groupées : chaque aller-retour vers la base coûte environ 0,5 s.
+  const [, docs, history] = await Promise.all([
+    checkQuota(userId),
+    resolveDocs(userId, scopeFilter),
+    db.conversationMessage.findMany({ where: { conversationId, userId }, orderBy: { createdAt: "desc" }, take: HISTORY_MESSAGES, select: { role: true, content: true } }),
+  ]);
   if (scope === "DOCUMENT" && docs.length === 0) {
     const exists = await db.document.findFirst({ where: { id: conv.documentId!, userId }, select: { id: true } });
     if (!exists) throw new ApiHttpError("Document introuvable.", 404);
   }
 
-  const history = await db.conversationMessage.findMany({ where: { conversationId, userId }, orderBy: { createdAt: "desc" }, take: HISTORY_MESSAGES, select: { role: true, content: true } });
-  const userMsg = await db.conversationMessage.create({ data: { userId, conversationId, role: "USER", content } });
 
   // Indexation sémantique des passages encore non vectorisés (document ouvert : budget court, reprise au message suivant)
-  if (scope === "DOCUMENT" && docs[0]) await embedPending(userId, docs[0].versionId, 15_000);
-  const withCoverage = await Promise.all(docs.slice(0, 12).map(async (doc) => ({ doc, cov: await documentCoverage(userId, doc) })));
+  if (scope === "DOCUMENT" && docs[0]) {
+    if (options.defer) options.defer(() => embedPending(userId, docs[0].versionId, 15_000));
+    else await embedPending(userId, docs[0].versionId, 15_000);
+  }
+  const [userMsg, withCoverage] = await Promise.all([
+    db.conversationMessage.create({ data: { userId, conversationId, role: "USER", content } }),
+    Promise.all(docs.slice(0, 12).map(async (doc) => ({ doc, cov: await documentCoverage(userId, doc) }))),
+  ]);
 
   const webOn = options.web !== false && (await webStatus()) !== null;
   const ev = new Evidence();
@@ -327,15 +387,16 @@ export async function sendMessage(userId: string, conversationId: string, conten
   try {
     for (let step = 0; step <= MAX_STEPS; step++) {
       const last = step === MAX_STEPS;
-      const res = await provider.converse({ system, turns, tools: last ? undefined : tools, maxTokens: 4000, temperature: 0.3, signal: ctx.signal });
+      const res = await provider.converse({ system, turns, tools: last ? undefined : tools, maxTokens: 4000, temperature: 0.3, signal: ctx.signal, onText: options.emit ? (d) => options.emit!({ type: "delta", text: d }) : undefined });
       model = res.model;
       if (!res.calls.length || last) {
         answer = res.text;
         break;
       }
       turns.push({ role: "model", parts: res.modelParts });
-      const responses: ChatPart[] = [];
-      for (const call of res.calls.slice(0, 4)) responses.push({ functionResponse: { name: call.name, response: await runTool(ctx, call.name, call.args) } });
+      // Un nouveau statut annonce une étape : le client efface le texte provisoire éventuel.
+      options.emit?.({ type: "status", text: TOOL_STATUS[res.calls[0].name] ?? "Recherche…" });
+      const responses: ChatPart[] = await Promise.all(res.calls.slice(0, 4).map(async (call) => ({ functionResponse: { name: call.name, response: await runTool(ctx, call.name, call.args) } })));
       turns.push({ role: "user", parts: responses });
     }
     if (!answer.trim()) throw new AiCallError("Réponse vide.");
@@ -347,12 +408,28 @@ export async function sendMessage(userId: string, conversationId: string, conten
     throw new ApiHttpError("Le service d'IA est momentanément indisponible. Votre message est conservé : réessayez dans un instant.", 502);
   }
 
-  const { text, citations } = resolveCitations(answer.trim(), ev.known);
-  // Fiabilité calculée sur les sources web RÉELLEMENT citées dans la réponse (pas sur tout ce qui a été lu).
-  const citedWeb = citations.filter((c) => c.kind === "web" && c.url).map((c) => ({ host: hostOf(c.url!) ?? c.url!, tier: c.tier ?? "a_verifier" }));
-  const webReliability = ev.webSearches.length === 0 ? null : citedWeb.length ? assessReliability(citedWeb).level : ev.webSearches.every((s) => s.found < 0) ? "indisponible" : "aucune";
-  const consulted = {
-    webReliability,
+  // 1. Citations inventées retirées ; 2. contrôle de chaque affirmation ; 3. avertissements placés à côté de ce qui est incertain.
+  const resolved = resolveCitations(answer.trim(), ev.known);
+  const webState: WebStatus = !webOn ? (options.web === false ? "desactivee" : "indisponible") : ev.webSearches.length === 0 ? "non_utilisee" : ev.webSearches.every((s) => s.found < 0) ? "indisponible" : "utilisee";
+  const crossCheck = webOn
+    ? async (query: string) => {
+        const out = await searchWeb(query, ctx.signal);
+        ev.webSearches.push({ query, found: out.results.length });
+        const numbers = new Set(out.results.map((r) => registerWeb(ev, r).n));
+        return sourcesOf(ev).filter((s) => numbers.has(s.n));
+      }
+    : undefined;
+  const citedDocument = resolved.citations.some((c) => c.kind !== "web");
+  const check = async () => {
+    const verification = await verifyAnswer({ userId, question: content, answer: resolved.text, sources: sourcesOf(ev), citedDocument, webStatus: webState, search: crossCheck, deadlineAt: started + VERIFICATION_DEADLINE_MS });
+    const final = resolveCitations(applyVerification(resolved.text, verification), ev.known);
+    // Une source qui sert de preuve reste consultable, même si la réponse ne la cite pas.
+    const proofs = verification.claims.flatMap((c) => c.evidence.map((e) => e.n)).filter((n) => !final.citations.some((c) => c.n === n));
+    const citations = [...final.citations, ...[...new Set(proofs)].map((n) => ev.known.get(n)!)].sort((a, b) => a.n - b.n);
+    return { verification, text: final.text, citations };
+  };
+  const consultedWith = (verification: VerificationReport) => ({
+    verification,
     webSearches: ev.webSearches.length,
     documents: [...ev.docs].map(([id, name]) => ({ id, name })),
     passages: [...ev.known.values()].filter((c) => c.kind !== "web").length,
@@ -361,12 +438,36 @@ export async function sendMessage(userId: string, conversationId: string, conten
     pagesRead: ev.pagesRead.size,
     tools: ev.toolCalls,
     coverage: withCoverage.map(({ doc, cov }) => ({ documentId: doc.id, documentName: doc.name, ...cov })),
-  };
-  const saved = await db.conversationMessage.create({
-    data: { userId, conversationId, role: "ASSISTANT", content: text, citations: citations as unknown as Prisma.InputJsonValue, consulted: consulted as unknown as Prisma.InputJsonValue, model },
   });
-  let title = conv.title;
-  if (conv.title === DEFAULT_TITLE) title = content.replace(/\s+/g, " ").slice(0, 60);
-  await db.conversation.update({ where: { id: conversationId }, data: { title, updatedAt: new Date() } });
-  return { message: { id: saved.id, role: "ASSISTANT", content: text, citations, consulted, model, createdAt: saved.createdAt }, userMessageId: userMsg.id, title };
+  const asJson = (v: unknown) => v as Prisma.InputJsonValue;
+  const title = conv.title === DEFAULT_TITLE ? content.replace(/\s+/g, " ").slice(0, 60) : conv.title;
+  const store = async (text: string, citations: Citation[], consulted: unknown) => {
+    const [saved] = await Promise.all([
+      db.conversationMessage.create({ data: { userId, conversationId, role: "ASSISTANT", content: text, citations: asJson(citations), consulted: asJson(consulted), model } }),
+      db.conversation.update({ where: { id: conversationId }, data: { title, updatedAt: new Date() } }),
+    ]);
+    return { reply: { message: { id: saved.id, role: "ASSISTANT" as const, content: text, citations, consulted, model, createdAt: saved.createdAt }, userMessageId: userMsg.id, title }, messageId: saved.id };
+  };
+  const trace = (messageId: string, verification: VerificationReport) => saveVerification(userId, { feature: "chat", entityType: "ConversationMessage", entityId: messageId }, verification, sourcesOf(ev));
+
+  // L'étudiant reçoit la réponse tout de suite, annoncée « en cours de vérification » ; le résultat la complète ensuite.
+  if (options.defer && needsVerification(resolved.text, sourcesOf(ev), citedDocument)) {
+    const { reply, messageId } = await store(resolved.text, resolved.citations, consultedWith(pendingVerification(webState)));
+    options.defer(async () => {
+      try {
+        const done = await check();
+        const { count } = await db.conversationMessage.updateMany({ where: { id: messageId, userId }, data: { content: done.text, citations: asJson(done.citations), consulted: asJson(consultedWith(done.verification)) } });
+        if (count && done.verification.status !== "ignoree") await trace(messageId, done.verification);
+      } catch (e) {
+        console.warn("[chat] vérification différée impossible :", e instanceof Error ? e.message : e);
+        await db.conversationMessage.updateMany({ where: { id: messageId, userId }, data: { consulted: asJson(consultedWith(failedVerification(webState))) } }).catch(() => undefined);
+      }
+    });
+    return reply;
+  }
+
+  const done = await check();
+  const { reply, messageId } = await store(done.text, done.citations, consultedWith(done.verification));
+  if (done.verification.status !== "ignoree") await trace(messageId, done.verification);
+  return reply;
 }

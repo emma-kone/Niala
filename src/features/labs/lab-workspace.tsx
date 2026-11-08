@@ -300,7 +300,7 @@ export default function LabWorkspace({ id }: { id: string }) {
             {hints.length === 0 && !hintError && <p className="text-sm text-muted-foreground">Aucun indice demandé.</p>}
             {hints.map((h, i) => (
               <div key={i} className="rounded-md border-l-4 border-primary bg-muted/50 p-3 text-sm">
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Indice {h.level} · {h.source === "ai" ? "tuteur IA" : "d'après les résultats de vos tests"}</p>
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Indice {h.level} · {h.source === "ai" ? "tuteur IA, à confronter à vos tests" : "d'après les résultats de vos tests"}</p>
                 <p className="whitespace-pre-wrap">{h.message}</p>
               </div>
             ))}

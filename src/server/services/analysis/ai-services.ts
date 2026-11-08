@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { generateStructured } from "@/server/ai/structured";
-import { UNTRUSTED_RULES, foldText, quoteInText, wrapUntrusted } from "@/server/ai/guard";
+import { UNTRUSTED_RULES, foldText, quoteInText, wrapUntrusted, groundedRatio } from "@/server/ai/guard";
 import type { PageText } from "@/server/domain/chunking";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -67,6 +67,7 @@ export interface SectionExtraction {
 }
 
 const MAX_BATCH_CHARS = 16_000;
+const MIN_DEFINITION_GROUNDING = 0.5;
 const MAX_SECTION_CHARS = 6_000;
 
 function pageOfQuote(quote: string, pages: PageText[]): number | null {
@@ -128,13 +129,15 @@ export async function extractConcepts(userId: string, batch: SectionInput[]): Pr
       seen.add(`${normalizedName}|${c.kind}`);
       // Vérification serveur : la citation doit exister dans la section
       const verified = c.quote && quoteInText(c.quote, s.text) ? c.quote : null;
+      // Une citation exacte ne suffit pas : la définition reformulée doit, elle aussi, venir de la section.
+      const definitionGrounded = !c.definition || groundedRatio(c.definition, s.text) >= MIN_DEFINITION_GROUNDING;
       concepts.push({
         name: c.name,
         normalizedName,
         kind: c.kind,
         importance: c.importance,
         definition: c.definition ?? null,
-        origin: verified ? "DOCUMENT" : "AI_INFERRED",
+        origin: verified && definitionGrounded ? "DOCUMENT" : "AI_INFERRED",
         ref: verified ? { page: pageOfQuote(verified, s.pages), quote: verified } : null,
       });
     }

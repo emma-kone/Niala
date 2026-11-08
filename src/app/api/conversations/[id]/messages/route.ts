@@ -1,15 +1,78 @@
+import { after } from "next/server";
 import { requireUser } from "@/lib/auth";
-import { handle, limit, readJson } from "@/lib/api-helpers";
-import { messageSchema, sendMessage } from "@/server/services/chat/chat";
+import { ApiHttpError, handle, limit, readJson } from "@/lib/api-helpers";
+import { messageSchema, sendMessage, type ChatEvent } from "@/server/services/chat/chat";
 
 // Un tour de chat peut enchaîner plusieurs recherches et appels au modèle.
 export const maxDuration = 120;
 
+/**
+ * Par défaut, réponse JSON classique. Avec l'en-tête `Accept: application/x-ndjson`, la réponse est un flux de lignes JSON
+ * ({type:"status"|"delta"}… puis {type:"done", ...} ou {type:"error"}) : l'étudiant voit le texte se rédiger.
+ */
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
-  return handle(async () => {
+  if (!(req.headers.get("accept") ?? "").includes("application/x-ndjson")) {
+    return handle(async () => {
+      const user = await requireUser();
+      limit(`chat:${user.id}`, 20, 60_000);
+      const { content, web } = messageSchema.parse(await readJson<unknown>(req));
+      return sendMessage(user.id, (await ctx.params).id, content, { web, defer: after });
+    });
+  }
+
+  // Authentification, limite et validation répondent AVANT d'ouvrir le flux, avec leur vrai code HTTP.
+  let prepared: { userId: string; id: string; content: string; web?: boolean };
+  try {
     const user = await requireUser();
     limit(`chat:${user.id}`, 20, 60_000);
     const { content, web } = messageSchema.parse(await readJson<unknown>(req));
-    return sendMessage(user.id, (await ctx.params).id, content, { web });
+    prepared = { userId: user.id, id: (await ctx.params).id, content, web };
+  } catch (err) {
+    return handle(async () => {
+      throw err;
+    });
+  }
+
+  // `after` doit être appelé dans la requête : les tâches sont collectées pendant le flux et lancées une fois celui-ci terminé.
+  const tasks: (() => Promise<unknown>)[] = [];
+  let finished!: () => void;
+  const streamClosed = new Promise<void>((resolve) => (finished = resolve));
+  after(async () => {
+    await streamClosed;
+    await Promise.allSettled(tasks.map((t) => t()));
   });
+
+  const encoder = new TextEncoder();
+  let closed = false;
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const send = (obj: unknown) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(JSON.stringify(obj) + "\n"));
+        } catch {
+          closed = true;
+        }
+      };
+      try {
+        // Si l'étudiant quitte la page, la réponse se termine quand même et reste dans la conversation.
+        const reply = await sendMessage(prepared.userId, prepared.id, prepared.content, { web: prepared.web, emit: (e: ChatEvent) => send(e), defer: (t) => void tasks.push(t) });
+        send({ type: "done", ...reply });
+      } catch (err) {
+        const status = err instanceof ApiHttpError ? err.status : 500;
+        if (!(err instanceof ApiHttpError)) console.error("[chat stream]", err);
+        send({ type: "error", error: err instanceof ApiHttpError ? err.message : "Une erreur interne est survenue.", status });
+      } finally {
+        if (!closed) {
+          closed = true;
+          controller.close();
+        }
+        finished();
+      }
+    },
+    cancel() {
+      closed = true;
+    },
+  });
+  return new Response(stream, { headers: { "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-store, no-transform" } });
 }

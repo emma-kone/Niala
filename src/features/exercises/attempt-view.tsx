@@ -325,7 +325,7 @@ function ResultCard({ q, subjectId, exerciseId, documentId }: { q: AttemptQuesti
       )}
       {(q.type === "code" || q.type === "sql") && <LabLink exerciseId={exerciseId} position={q.position} kind={q.type} />}
       {r?.method === "keywords" && <p className="mt-2 text-xs text-muted-foreground">Correction automatique par mots-clés (le service d&apos;IA n&apos;était pas disponible) : à relire avec la réponse de référence.</p>}
-      {r?.method === "ai" && <p className="mt-2 text-xs text-muted-foreground">Correction assistée par IA selon les critères de l&apos;exercice.</p>}
+      {r?.method === "ai" && <p className="mt-2 text-xs text-muted-foreground">Correction assistée par IA selon les critères de l&apos;exercice, dont la référence provient de votre cours : à relire en cas de doute.</p>}
       {r?.verdict === "ungraded" && <p className="mt-2 text-xs text-violet-800 dark:text-violet-300">Cette réponse n&apos;a pas été corrigée. Comparez-la à la réponse de référence ci-dessus.</p>}
       {Array.isArray((r?.detail as { missing?: string[] } | undefined)?.missing) && (r!.detail as { missing: string[] }).missing.length > 0 && (
         <div className="mt-2 text-sm"><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Ce qui manque</p><ul className="list-disc pl-5">{(r!.detail as { missing: string[] }).missing.map((m, i) => <li key={i}>{m}</li>)}</ul></div>

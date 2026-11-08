@@ -39,6 +39,8 @@ export interface ConverseRequest {
   maxTokens: number;
   temperature: number;
   signal: AbortSignal;
+  /** Reçoit le texte visible au fur et à mesure. Absent : la réponse est renvoyée d'un bloc. */
+  onText?: (delta: string) => void;
 }
 export interface ConverseResult {
   text: string;
@@ -80,7 +82,7 @@ const GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models
 const isAbort = (e: unknown) => ["TimeoutError", "AbortError"].includes((e as { name?: string })?.name ?? "");
 
 /** Appel HTTP Gemini avec reprises (429/5xx). La clé ne figure que dans l'en-tête, jamais dans l'URL ni les erreurs. */
-export async function geminiPost(apiKey: string, path: string, body: unknown, signal: AbortSignal): Promise<Record<string, any>> {
+async function geminiFetch(apiKey: string, path: string, body: unknown, signal: AbortSignal): Promise<Response> {
   const maxRetries = 2;
   let lastError = "";
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -98,7 +100,7 @@ export async function geminiPost(apiKey: string, path: string, body: unknown, si
         if ((res.status === 429 || res.status >= 500) && attempt < maxRetries) continue;
         throw new AiCallError(lastError);
       }
-      return await res.json();
+      return res;
     } catch (e) {
       if (e instanceof AiCallError) throw e;
       if (isAbort(e)) throw new AiCallError("Délai dépassé.");
@@ -107,6 +109,66 @@ export async function geminiPost(apiKey: string, path: string, body: unknown, si
     }
   }
   throw new AiCallError(lastError || "Échec de l'appel.");
+}
+
+export async function geminiPost(apiKey: string, path: string, body: unknown, signal: AbortSignal): Promise<Record<string, any>> {
+  const res = await geminiFetch(apiKey, path, body, signal);
+  try {
+    return await res.json();
+  } catch (e) {
+    if (isAbort(e)) throw new AiCallError("Délai dépassé.");
+    throw new AiCallError("Réponse illisible.");
+  }
+}
+
+type RawPart = ChatPart & { text?: string; thought?: boolean; thoughtSignature?: string };
+
+/** Appel en flux (SSE) : `onText` reçoit le texte visible au fil de l'eau ; renvoie des parties rejouables telles quelles. */
+async function geminiStream(apiKey: string, path: string, body: unknown, signal: AbortSignal, onText: (d: string) => void) {
+  const res = await geminiFetch(apiKey, `${path.replace(":generateContent", ":streamGenerateContent")}?alt=sse`, body, signal);
+  if (!res.body) throw new AiCallError("Flux vide.");
+  const parts: RawPart[] = [];
+  let modelVersion: string | undefined;
+  let blockReason: string | undefined;
+  const take = (block: string) => {
+    const line = block.split("\n").find((l) => l.startsWith("data:"));
+    if (!line) return;
+    let chunk: Record<string, any>;
+    try {
+      chunk = JSON.parse(line.slice(5).trim());
+    } catch {
+      return;
+    }
+    modelVersion = chunk.modelVersion ?? modelVersion;
+    blockReason = chunk.promptFeedback?.blockReason ?? blockReason;
+    for (const p of (chunk.candidates?.[0]?.content?.parts ?? []) as RawPart[]) {
+      const prev = parts[parts.length - 1];
+      const plain = typeof p.text === "string" && !p.thought && !p.thoughtSignature;
+      if (plain && prev && typeof prev.text === "string" && !prev.thought && !prev.thoughtSignature) prev.text += p.text;
+      else parts.push({ ...p });
+      if (typeof p.text === "string" && !p.thought && p.text) onText(p.text);
+    }
+  };
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+      let i: number;
+      while ((i = buffer.indexOf("\n\n")) >= 0) {
+        take(buffer.slice(0, i));
+        buffer = buffer.slice(i + 2);
+      }
+    }
+    if (buffer.trim()) take(buffer);
+  } catch (e) {
+    if (isAbort(e)) throw new AiCallError("Délai dépassé.");
+    throw new AiCallError("Flux interrompu.");
+  }
+  return { parts, modelVersion, blockReason };
 }
 
 const textOf = (parts: { text?: string; thought?: boolean }[] | undefined) =>
@@ -140,25 +202,42 @@ export function geminiProvider(apiKey: string, model: string, embeddingModel = D
       if (!text.trim()) throw new AiCallError(data.promptFeedback?.blockReason ? "Contenu refusé par le modèle." : "Réponse vide.");
       return { text, model: data.modelVersion ?? model };
     },
-    async converse({ system, turns, tools, maxTokens, temperature, signal }) {
-      const data = await geminiPost(
-        apiKey,
-        `${encodeURIComponent(model)}:generateContent`,
-        {
-          systemInstruction: { parts: [{ text: system }] },
-          contents: turns,
-          ...(tools?.length ? { tools: [{ functionDeclarations: tools }] } : {}),
-          generationConfig: { maxOutputTokens: maxTokens, temperature },
-        },
-        signal
-      );
-      const parts: ChatPart[] = data.candidates?.[0]?.content?.parts ?? [];
+    async converse({ system, turns, tools, maxTokens, temperature, signal, onText }) {
+      const path = `${encodeURIComponent(model)}:generateContent`;
+      const body = {
+        systemInstruction: { parts: [{ text: system }] },
+        contents: turns,
+        ...(tools?.length ? { tools: [{ functionDeclarations: tools }] } : {}),
+        // Le chat privilégie la vitesse : réflexion minimale sur les modèles qui acceptent ce réglage.
+        generationConfig: { maxOutputTokens: maxTokens, temperature, ...(/^gemini-3/.test(model) ? { thinkingConfig: { thinkingLevel: "minimal" } } : {}) },
+      };
+      let parts: ChatPart[];
+      let version: string | undefined;
+      let blockReason: string | undefined;
+      let streamed = false;
+      try {
+        if (!onText) throw null;
+        const out = await geminiStream(apiKey, path, body, signal, (d) => {
+          streamed = true;
+          onText(d);
+        });
+        ({ parts, modelVersion: version, blockReason } = out);
+      } catch (e) {
+        // Le flux a échoué avant le premier mot : on repasse par un appel classique plutôt que de perdre la réponse.
+        if (streamed) throw e;
+        const data = await geminiPost(apiKey, path, body, signal);
+        parts = data.candidates?.[0]?.content?.parts ?? [];
+        version = data.modelVersion;
+        blockReason = data.promptFeedback?.blockReason;
+        const fallback = textOf(parts as { text?: string; thought?: boolean }[]);
+        if (onText && fallback) onText(fallback);
+      }
       const calls = parts
         .filter((p) => p.functionCall)
         .map((p) => ({ name: String((p.functionCall as { name: string }).name), args: ((p.functionCall as { args?: Record<string, unknown> }).args ?? {}) as Record<string, unknown> }));
       const text = textOf(parts as { text?: string; thought?: boolean }[]);
-      if (!calls.length && !text.trim()) throw new AiCallError(data.promptFeedback?.blockReason ? "Contenu refusé par le modèle." : "Réponse vide.");
-      return { text, calls, modelParts: parts, model: data.modelVersion ?? model };
+      if (!calls.length && !text.trim()) throw new AiCallError(blockReason ? "Contenu refusé par le modèle." : "Réponse vide.");
+      return { text, calls, modelParts: parts, model: version ?? model };
     },
     async embed(texts, task, signal) {
       const out: number[][] = [];

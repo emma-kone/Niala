@@ -109,6 +109,12 @@ export interface Citation {
   kind?: "document" | "web";
   url?: string;
   tier?: "reconnue" | "a_verifier";
+  /** Évaluation de la page par le serveur (sources web). */
+  level?: 1 | 2 | 3 | 4;
+  sourceKind?: string;
+  organization?: string | null;
+  publishedAt?: string | null;
+  retrievedAt?: string;
 }
 
 /**

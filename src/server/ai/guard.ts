@@ -31,6 +31,18 @@ export function foldText(s: string): string {
     .trim();
 }
 
+/**
+ * Part des mots significatifs d'un texte produit par l'IA qui se retrouvent dans la source (comparaison sur le début
+ * des mots pour tolérer les flexions). Indice grossier : il repère une explication sans lien, il ne prouve pas l'exactitude.
+ */
+export function groundedRatio(claim: string, source: string): number {
+  const words = (t: string) => foldText(t).split(" ").filter((w) => w.length >= 4).map((w) => w.slice(0, 5));
+  const claimed = [...new Set(words(claim))];
+  if (!claimed.length) return 1;
+  const known = new Set(words(source));
+  return claimed.filter((w) => known.has(w)).length / claimed.length;
+}
+
 /** La citation figure-t-elle réellement dans le texte source ? (tolère casse, accents, ponctuation, coupures) */
 export function quoteInText(quote: string, text: string, minLength = 12): boolean {
   const q = foldText(quote);

@@ -9,7 +9,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ACTION_LABEL, pct, recommendationHref, type DashboardData, type Recommendation } from "@/features/progress/types";
+import { ACTION_LABEL, evidenceLabel, pct, recommendationHref, type DashboardData, type Recommendation } from "@/features/progress/types";
 
 const errText = (e: unknown, fb: string) => (e instanceof Error ? e.message : fb);
 const ago = (d: string | null) => {
@@ -131,7 +131,7 @@ export default function DashboardView() {
                       <span className="w-14 text-right text-sm font-semibold">{pct(s.mastery)}</span>
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      Maîtrise estimée sur {s.concepts.measured} notion(s) mesurée(s) sur {s.concepts.total} (confiance {pct(s.confidence)}) · {s.concepts.fragile} fragile(s) · {s.concepts.solid} solide(s). Ce n&apos;est pas une note.
+                      Maîtrise estimée sur {s.concepts.measured} notion(s) mesurée(s) sur {s.concepts.total} ({evidenceLabel(s.confidence)}) · {s.concepts.fragile} fragile(s) · {s.concepts.solid} solide(s). Ce n&apos;est pas une note.
                     </p>
                   </div>
                 )}

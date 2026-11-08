@@ -32,6 +32,7 @@ export interface WebSearcher {
 }
 
 const CACHE_MS = 60 * 60_000;
+const MIN_TAVILY_SCORE = 0.3;
 /** Identifiant générique exigé par la politique d'accès des API Wikimedia (aucune donnée personnelle). */
 const USER_AGENT = "NialaStudy/1.0 (plateforme d'apprentissage ; recherche de sources)";
 let groundingBlockedUntil = 0;
@@ -60,7 +61,7 @@ const stripHtml = (s: string) => s.replace(/<[^>]*>/g, "").replace(/&quot;/g, '"
 
 function toResult(title: string, url: string, snippet: string, host = hostOf(url)): WebResult | null {
   if (!host || !/^https?:\/\//i.test(url)) return null;
-  return { title: clip(title || host, 140), url, host, snippet: clip(snippet, 700), tier: trustTier(host) };
+  return { title: clip(title || host, 140), url, host, snippet: clip(snippet, 700), tier: trustTier(url) };
 }
 
 // ── Tavily ───────────────────────────────────────────────────────────────────
@@ -73,8 +74,9 @@ async function tavily(key: string, query: string, signal: AbortSignal, restrict:
     signal,
   });
   if (!res.ok) throw new WebSearchUnavailableError(`Tavily HTTP ${res.status}`);
-  const data = (await res.json()) as { results?: { title?: string; url?: string; content?: string }[] };
-  return (data.results ?? []).map((r) => toResult(r.title ?? "", r.url ?? "", r.content ?? "")).filter((r): r is WebResult => !!r);
+  const data = (await res.json()) as { results?: { title?: string; url?: string; content?: string; score?: number }[] };
+  // Résultats sans rapport avec la requête (mesuré : ≤ 0,22 pour une requête absurde, ≥ 0,36 pour une pertinente).
+  return (data.results ?? []).filter((r) => (r.score ?? 1) >= MIN_TAVILY_SCORE).map((r) => toResult(r.title ?? "", r.url ?? "", r.content ?? "")).filter((r): r is WebResult => !!r);
 }
 
 async function tavilySearch(key: string, query: string, signal: AbortSignal): Promise<WebSearchOutcome> {

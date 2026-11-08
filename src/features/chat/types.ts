@@ -10,6 +10,35 @@ export interface ChatCitation {
   kind?: "document" | "web";
   url?: string;
   tier?: "reconnue" | "a_verifier";
+  level?: 1 | 2 | 3 | 4;
+  sourceKind?: string;
+  organization?: string | null;
+  publishedAt?: string | null;
+  retrievedAt?: string;
+}
+
+export type ClaimConfidence = "elevee" | "moderee" | "faible" | "non_verifiee" | "contradictoire";
+
+export interface VerifiedClaimDto {
+  text: string;
+  type: string;
+  domain: string;
+  confidence: ClaimConfidence;
+  basis: "web" | "document" | "aucune";
+  reason: string;
+  limits: string[];
+  courseConflict: boolean;
+  evidence: { n: number; stance: "soutient" | "contredit"; quote: string; direct: boolean }[];
+}
+
+export interface VerificationDto {
+  status: "effectuee" | "ignoree" | "echec" | "en_cours";
+  webStatus: "utilisee" | "indisponible" | "non_utilisee" | "desactivee";
+  claims: VerifiedClaimDto[];
+  summary: { elevee: number; moderee: number; faible: number; non_verifiee: number; contradictoire: number; document: number };
+  rejectedCitations: number;
+  limits: string[];
+  checkedAt: string;
 }
 
 export interface ConsultedInfo {
@@ -19,8 +48,8 @@ export interface ConsultedInfo {
   web?: boolean;
   /** Recherches web lancées pendant la réponse. */
   webSearches?: number;
-  /** Fiabilité des sources web citées, calculée par le serveur (null : pas de recherche web). */
-  webReliability?: "verifiee" | "non_verifiee" | "aucune" | "indisponible" | null;
+  /** Vérification serveur de la réponse, affirmation par affirmation. */
+  verification?: VerificationDto;
   pagesRead: number;
   tools: string[];
   coverage: { documentId: string; documentName: string; complete: boolean; warnings: string[] }[];

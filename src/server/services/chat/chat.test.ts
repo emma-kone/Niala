@@ -7,6 +7,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { PGLiteSocketServer } from "@electric-sql/pglite-socket";
 import type { AiProvider, ChatTurn, ConverseRequest } from "@/server/ai/provider";
 import { WebSearchUnavailableError, __setWebSearcherForTests } from "@/server/ai/web-search";
+import type { ChatEvent } from "./chat";
 
 let server: PGLiteSocketServer;
 let pg: PGlite;
@@ -22,6 +23,9 @@ let docCours: string;
 let docAutre: string;
 let docB: string;
 
+let verifier: () => unknown = () => {
+  throw new Error("vérificateur indisponible");
+};
 const seen: ConverseRequest[] = [];
 let script: (req: ConverseRequest, step: number) => { text?: string; calls?: { name: string; args: Record<string, unknown> }[] } = () => ({ text: "ok" });
 
@@ -42,7 +46,7 @@ const fake: AiProvider = {
   model: "fake-1",
   embeddingModel: "fake-embed",
   async complete() {
-    throw new Error("non utilisé");
+    return { text: JSON.stringify(verifier()), model: "fake-1" };
   },
   async embed(texts) {
     return texts.map(vec);
@@ -51,6 +55,7 @@ const fake: AiProvider = {
     seen.push(req);
     const step = req.turns.filter((t: ChatTurn) => t.role === "model").length;
     const r = script(req, step);
+    if (r.text) req.onText?.(r.text);
     const parts = r.calls ? r.calls.map((c) => ({ functionCall: c })) : [{ text: r.text ?? "" }];
     return { text: r.text ?? "", calls: r.calls ?? [], modelParts: parts, model: "fake-1" };
   },
@@ -69,7 +74,7 @@ async function importText(user: string, name: string, content: string) {
 
 beforeAll(async () => {
   pg = await PGlite.create();
-  for (const name of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat"]) {
+  for (const name of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261109000000_niala_reliability"]) {
     await pg.exec(readFileSync(path.join(migrations, name, "migration.sql"), "utf8"));
   }
   const port = 30000 + Math.floor(Math.random() * 10000);
@@ -240,7 +245,7 @@ describe("recherche web", () => {
         backend: "tavily" as const,
         results: [
           { title: "Cycle de vie d'une activité", url: "https://developer.android.com/guide/activity-lifecycle", host: "developer.android.com", snippet: "onCreate, onStart, onResume.", tier: "reconnue" as const },
-          { title: "Mon blog", url: "https://blog.example.com/android", host: "blog.example.com", snippet: "Un avis.", tier: "a_verifier" as const },
+          { title: "Mon blog", url: "https://blog.example.com/android", host: "blog.example.com", snippet: "Un avis personnel sur le cycle de vie des activités.", tier: "a_verifier" as const },
         ],
       };
     },
@@ -258,18 +263,75 @@ describe("recherche web", () => {
     const consulted = r.message.consulted as { passages: number; webSources: number };
     expect([consulted.passages, consulted.webSources]).toEqual([0, 2]);
     expect(seen[0].tools?.map((t) => t.name)).toContain("search_web");
-    expect(JSON.stringify(seen[1].turns.at(-1))).toContain("source à vérifier");
+    expect(JSON.stringify(seen[1].turns.at(-1))).toContain("niveau 4");
     expect(seen[0].system).toContain("Je n'ai pas trouvé d'information fiable");
-    expect(JSON.stringify(seen[1].turns.at(-1))).toContain('"fiabilite":"verifiee"');
-    expect((r.message.consulted as { webReliability: string }).webReliability).toBe("verifiee");
+    expect(r.message.citations.map((x) => x.level)).toEqual([1, 4]);
+    // Vérificateur en panne : rien n'est présenté comme vérifié.
+    const v = (r.message.consulted as { verification: { status: string; limits: string[] } }).verification;
+    expect(v.status).toBe("echec");
+    expect(v.limits.join(" ")).toContain("n'a pas été contrôlée");
   });
 
   it("seules des sources à vérifier sont citées : réponse marquée non vérifiée", async () => {
     __setWebSearcherForTests(web);
-    script = (_req, step) => (step === 0 ? { calls: [{ name: "search_web", args: { query: "android" } }] } : { text: "⚠️ Information non officielle / non vérifiée : un avis [2]." });
+    script = (_req, step) => (step === 0 ? { calls: [{ name: "search_web", args: { query: "android" } }] } : { text: "Les activités ont un cycle de vie discuté [2]. Trois méthodes clés existent [1]." });
+    verifier = () => ({
+      claims: [
+        { text: "Les activités ont un cycle de vie discuté", preuves: [{ n: 2, position: "soutient", citation: "Un avis personnel sur le cycle de vie", directe: true }] },
+        { text: "Trois méthodes clés existent", preuves: [{ n: 1, position: "soutient", citation: "onCreate, onStart, onResume", directe: true }] },
+      ],
+    });
     const c = await chat.createConversation(A, { scope: "GLOBAL" });
     const r = await chat.sendMessage(A, c.id, "Avis sur Android ?");
-    expect((r.message.consulted as { webReliability: string }).webReliability).toBe("non_verifiee");
+    verifier = () => {
+      throw new Error("vérificateur indisponible");
+    };
+    const v = (r.message.consulted as { verification: { claims: { confidence: string }[] } }).verification;
+    expect(v.claims.map((x) => x.confidence)).toEqual(["non_verifiee", "elevee"]);
+    expect(r.message.content).toContain("⚠️");
+    expect(r.message.content.indexOf("⚠️")).toBeLessThan(r.message.content.indexOf("Trois méthodes"));
+    // Traçabilité : affirmations, sources, passages et dates sont conservés.
+    const run = await db.verificationRun.findFirstOrThrow({ where: { entityId: r.message.id }, include: { claims: { include: { evidence: true } }, sources: true } });
+    expect(run.claims).toHaveLength(2);
+    expect(run.claims[1].evidence[0].quote).toBe("onCreate, onStart, onResume");
+    expect(run.sources.find((s) => s.n === 1)).toMatchObject({ level: 1, sourceKind: "documentation", host: "developer.android.com" });
+    expect(run.sources[0].retrievedAt).toBeInstanceOf(Date);
+    // Supprimer la conversation supprime aussi ses vérifications.
+    await chat.deleteConversation(A, c.id);
+    expect(await db.verificationRun.count({ where: { entityId: r.message.id } })).toBe(0);
+    __setWebSearcherForTests(undefined);
+  });
+
+  it("réponse immédiate : la vérification se termine après l'envoi et complète le message", async () => {
+    __setWebSearcherForTests(web);
+    script = (_req, step) => (step === 0 ? { calls: [{ name: "search_web", args: { query: "android" } }] } : { text: "Les activités ont un cycle de vie discuté [2]." });
+    verifier = () => ({ claims: [{ text: "Les activités ont un cycle de vie discuté", preuves: [{ n: 2, position: "soutient", citation: "Un avis personnel sur le cycle de vie", directe: true }] }] });
+    const tasks: (() => Promise<unknown>)[] = [];
+    const c = await chat.createConversation(A, { scope: "GLOBAL" });
+    const r = await chat.sendMessage(A, c.id, "Avis ?", { defer: (t) => void tasks.push(t) });
+    expect((r.message.consulted as { verification: { status: string } }).verification.status).toBe("en_cours");
+    expect(r.message.content).not.toContain("⚠️");
+    expect(tasks).toHaveLength(1);
+    await tasks[0]();
+    verifier = () => {
+      throw new Error("vérificateur indisponible");
+    };
+    const saved = (await chat.getConversation(A, c.id)).messages.at(-1)!;
+    expect((saved.consulted as { verification: { status: string } }).verification.status).toBe("effectuee");
+    expect(saved.content).toContain("⚠️");
+    expect(await db.verificationRun.count({ where: { entityId: saved.id } })).toBe(1);
+    __setWebSearcherForTests(undefined);
+  });
+
+  it("réponse en flux : étape annoncée puis texte, avant le résultat final", async () => {
+    __setWebSearcherForTests(web);
+    script = (_req, step) => (step === 0 ? { calls: [{ name: "search_web", args: { query: "android" } }] } : { text: "Une réponse rédigée." });
+    const events: ChatEvent[] = [];
+    const c = await chat.createConversation(A, { scope: "GLOBAL" });
+    const r = await chat.sendMessage(A, c.id, "Question", { emit: (e) => void events.push(e) });
+    expect(events).toEqual([{ type: "status", text: "Recherche sur le web…" }, { type: "delta", text: "Une réponse rédigée." }]);
+    expect(r.message.content).toContain("Une réponse rédigée.");
+    __setWebSearcherForTests(undefined);
   });
 
   it("aucun résultat : le modèle reçoit la consigne de le dire clairement", async () => {
@@ -279,9 +341,8 @@ describe("recherche web", () => {
     const c = await chat.createConversation(A, { scope: "GLOBAL" });
     const r = await chat.sendMessage(A, c.id, "Sujet introuvable ?");
     const toolTurn = JSON.stringify(seen[1].turns.at(-1));
-    expect(toolTurn).toContain('"fiabilite":"aucune"');
-    expect(toolTurn).toContain("Je n'ai pas trouvé de source fiable");
-    expect((r.message.consulted as { webReliability: string }).webReliability).toBe("aucune");
+    expect(toolTurn).toContain("Je n'ai pas trouvé d'information fiable");
+    expect((r.message.consulted as { verification: { webStatus: string } }).verification.webStatus).toBe("utilisee");
   });
 
   it("désactivée par l'étudiant : l'outil n'est pas proposé", async () => {
@@ -301,7 +362,7 @@ describe("recherche web", () => {
     const r = await chat.sendMessage(A, c.id, "Vérifie sur le web");
     expect(JSON.stringify(seen[1].turns.at(-1))).toContain("momentanément indisponible");
     expect(r.message.citations).toEqual([]);
-    expect((r.message.consulted as { webReliability: string }).webReliability).toBe("indisponible");
+    expect((r.message.consulted as { verification: { webStatus: string } }).verification.webStatus).toBe("indisponible");
     __setWebSearcherForTests(undefined);
   });
 });

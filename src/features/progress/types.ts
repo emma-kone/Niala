@@ -81,3 +81,6 @@ export function recommendationHref(r: Recommendation): string | null {
 
 export const ACTION_LABEL: Record<Recommendation["type"], string> = { EXERCISE: "Créer un exercice ciblé", REVIEW: "Relire le cours", LAB: "Ouvrir le laboratoire" };
 export const pct = (n: number) => `${Math.round(n * 100)} %`;
+
+/** Quantité de preuves derrière une estimation : un repère qualitatif, jamais une probabilité d'exactitude. */
+export const evidenceLabel = (confidence: number) => (confidence >= 0.7 ? "preuves suffisantes" : confidence >= 0.35 ? "preuves partielles" : "preuves limitées");

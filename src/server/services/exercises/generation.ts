@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { ApiHttpError } from "@/lib/api-helpers";
 import { AiCallError, AiQuotaError, AiUnavailableError, isAiConfigured } from "@/server/ai/provider";
 import { generateStructured } from "@/server/ai/structured";
-import { UNTRUSTED_RULES, foldText, quoteInText, wrapUntrusted } from "@/server/ai/guard";
+import { UNTRUSTED_RULES, foldText, groundedRatio, quoteInText, wrapUntrusted } from "@/server/ai/guard";
 import type { PageText } from "@/server/domain/chunking";
 import {
   DIFFICULTY_WEIGHT,
@@ -31,7 +31,7 @@ import { verifyCodeReference, verifySqlSpec } from "@/server/services/labs/execu
 // Pas assez de matière → moins de questions (jamais d'invention pour atteindre le nombre demandé).
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const GENERATION_PROMPT_VERSION = "exercise-v1";
+export const GENERATION_PROMPT_VERSION = "exercise-v2";
 const WINDOW_CHARS = 12_000;
 const MAX_SLOTS_PER_CALL = 8;
 
@@ -88,6 +88,8 @@ const DIFFICULTY_HINT = {
   difficile: "analyse, comparaison, cas limite ou combinaison de plusieurs idées de l'extrait",
 };
 
+const MIN_EXPLANATION_GROUNDING = 0.2;
+
 const SYSTEM = `Tu es un enseignant qui crée des exercices à partir d'UN extrait de cours.
 ${UNTRUSTED_RULES}
 
@@ -99,6 +101,7 @@ Règles de génération :
 5. Si l'extrait ne permet pas de poser une question fiable pour un créneau, n'invente rien : ajoute son numéro dans "insufficient".
 6. "concepts" : 1 à 3 noms de notions du cours que la question évalue (utilise de préférence les notions listées).
 7. "explanation" : explique POURQUOI la bonne réponse est correcte, en t'appuyant sur l'extrait.
+8. Si l'extrait te paraît faux, dépassé ou contradictoire sur un point, ne bâtis pas de question dessus : ajoute le créneau dans "insufficient".
 Réponse : {"questions":[{"slot":<n>,"type":"...","statement":"...","source":{"quote":"..."},"concepts":["..."],"explanation":"...", ...champs du type}],"insufficient":[<slots>]}`;
 
 const responseSchema = z.object({ questions: z.array(z.unknown()).max(40), insufficient: z.array(z.number().int()).max(40).catch([]) });
@@ -229,6 +232,11 @@ export async function generateExercise(userId: string, rawConfig: unknown) {
         const page = pageOfQuote(q.source.quote, w.pages);
         if (page === null && !quoteInText(q.source.quote, w.text)) {
           dropped.ungrounded++; // la citation n'existe pas dans le document : question rejetée
+          continue;
+        }
+        // L'explication doit s'appuyer sur l'extrait, pas seulement la citation.
+        if (q.explanation && q.explanation.length >= 40 && groundedRatio(q.explanation, w.text) < MIN_EXPLANATION_GROUNDING) {
+          dropped.ungrounded++;
           continue;
         }
         const key = foldText(q.statement).slice(0, 80);

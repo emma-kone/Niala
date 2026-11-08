@@ -11,7 +11,7 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CATEGORY_LABEL } from "@/features/labs/types";
 import { cn } from "@/lib/utils";
-import { pct, type ConceptDetail, type ProgressConcept, type ProgressData } from "./types";
+import { evidenceLabel, pct, type ConceptDetail, type ProgressConcept, type ProgressData } from "./types";
 
 const errText = (e: unknown, fb: string) => (e instanceof Error ? e.message : fb);
 const BAND_CLASS: Record<ProgressConcept["band"], string> = {
@@ -114,7 +114,7 @@ export default function ProgressView() {
                         </>
                       )}
                       <Badge variant="outline" className={cn("font-normal", BAND_CLASS[c.band])}>{c.bandLabel}</Badge>
-                      <span className="w-24 text-right text-xs text-muted-foreground">confiance {pct(c.confidence)}</span>
+                      <span className="w-28 text-right text-xs text-muted-foreground">{evidenceLabel(c.confidence)}</span>
                     </button>
                     {open === c.id && (
                       <div className="border-t bg-muted/30 px-4 py-3 text-sm">
