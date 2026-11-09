@@ -24,6 +24,14 @@ const GOOGLE_ERRORS: Record<string, string> = {
   google_account_exists: "Un compte existe déjà avec cette adresse : connectez-vous avec votre mot de passe.",
 };
 
+function LegalFooter() {
+  return (
+    <footer className="border-t px-6 py-3 text-center text-xs text-muted-foreground">
+      <Link href={routes.privacy} className="hover:text-foreground">Confidentialité</Link> · <Link href={routes.terms} className="hover:text-foreground">Conditions d&apos;utilisation</Link>
+    </footer>
+  );
+}
+
 function GoogleMark() {
   return (
     <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden>
@@ -57,10 +65,14 @@ export default function LoginView() {
   }, []);
 
   if (authenticated === null) {
+    // Les liens légaux sont dans le HTML initial : visibles des moteurs et des vérificateurs qui n'exécutent pas JavaScript.
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-background">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" aria-hidden />
-        <p className="typo-subtitle">Chargement de Niala…</p>
+      <div className="min-h-screen flex flex-col bg-background">
+        <main className="flex flex-1 flex-col items-center justify-center gap-3">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" aria-hidden />
+          <p className="typo-subtitle">Chargement de Niala…</p>
+        </main>
+        <LegalFooter />
       </div>
     );
   }
@@ -170,9 +182,7 @@ export default function LoginView() {
           </div>
         </div>
       </main>
-      <footer className="border-t px-6 py-3 text-center text-xs text-muted-foreground">
-        <Link href={routes.privacy} className="hover:text-foreground">Confidentialité</Link> · <Link href={routes.terms} className="hover:text-foreground">Conditions d&apos;utilisation</Link>
-      </footer>
+      <LegalFooter />
     </div>
   );
 }
