@@ -7,14 +7,12 @@
 //   (au montage après chargement, puis à chaque changement).
 // - Exercices : mode par défaut et indices pendant les sessions.
 // - Import : taille maximale par fichier (1–50 Mo).
-// - Compte : informations en lecture seule (e-mail, nom, identifiant, modèle
-//   IA, langue, conservation des données).
+// Les informations du compte sont dans le menu ouvert par l'icône de l'étudiant.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/client-api";
 import { useToast } from "@/hooks/use-toast";
-import { cn } from "@/lib/utils";
 import { useTheme } from "@/components/theme/theme-provider";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -28,10 +26,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { Loader2, Palette, PenLine, Upload, User, XCircle } from "lucide-react";
+import { Loader2, Palette, PenLine, Upload, XCircle } from "lucide-react";
 
 // ── Types de l'API ───────────────────────────────────────────────────────────
 
@@ -42,21 +39,10 @@ interface AppSettings {
   defaultMode: string;
   maxUploadMB: number;
   hintsEnabled: boolean;
-  aiModel: string;
-  exerciseLang: string;
-  retentionDays: number;
-}
-
-interface AppUser {
-  id: string;
-  email: string;
-  name: string | null;
 }
 
 interface SettingsResponse {
   settings: AppSettings;
-  ai?: { configured: boolean; provider: string | null; model: string | null };
-  user: AppUser;
 }
 
 // ── Constantes ───────────────────────────────────────────────────────────────
@@ -86,37 +72,6 @@ function errorMessage(err: unknown, fallback: string): string {
   return err instanceof Error && err.message ? err.message : fallback;
 }
 
-/** Ligne d'information lisible (dl/dt/dd) des cartes en lecture seule. */
-function InfoRow({
-  label,
-  value,
-  tnum = false,
-  mono = false,
-  truncate = false,
-}: {
-  label: string;
-  value: string;
-  tnum?: boolean;
-  mono?: boolean;
-  truncate?: boolean;
-}) {
-  return (
-    <div className="flex items-baseline justify-between gap-4 border-b border-border/60 pb-1.5">
-      <dt className="typo-meta shrink-0">{label}</dt>
-      <dd
-        className={cn(
-          "min-w-0 text-right text-sm font-medium",
-          tnum && "tnum",
-          mono && "font-code",
-          truncate && "truncate",
-        )}
-      >
-        {value}
-      </dd>
-    </div>
-  );
-}
-
 // ── Vue principale ───────────────────────────────────────────────────────────
 
 export default function SettingsView() {
@@ -127,20 +82,12 @@ export default function SettingsView() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   // ── Réglages modifiables (état local optimiste) ──
-  const { theme: appliedTheme, setTheme: applyTheme } = useTheme();
-  const [theme, setTheme] = useState<ThemeChoice>(appliedTheme);
+  // Le thème affiché est celui du fournisseur : le menu du compte peut aussi le changer.
+  const { theme, setTheme: applyTheme } = useTheme();
   const [defaultMode, setDefaultMode] = useState("apprentissage");
   const [hintsEnabled, setHintsEnabled] = useState(true);
   const [maxUploadInput, setMaxUploadInput] = useState("10");
   const [savedMaxUploadMB, setSavedMaxUploadMB] = useState<number | null>(null);
-
-  // ── Données en lecture seule ──
-  const [user, setUser] = useState<AppUser | null>(null);
-  const [info, setInfo] = useState<{
-    aiModel: string;
-    exerciseLang: string;
-    retentionDays: number;
-  } | null>(null);
 
   // ── États de sauvegarde ──
   const [savingTheme, setSavingTheme] = useState(false);
@@ -156,17 +103,10 @@ export default function SettingsView() {
       .then((res) => {
         if (cancelled) return;
         const settings = res.settings;
-        setTheme(isThemeChoice(settings.theme) ? settings.theme : "light");
         setDefaultMode(settings.defaultMode);
         setHintsEnabled(settings.hintsEnabled);
         setMaxUploadInput(String(settings.maxUploadMB));
         setSavedMaxUploadMB(settings.maxUploadMB);
-        setInfo({
-          aiModel: res.ai?.configured ? `${res.ai.model} (${res.ai.provider})` : "Service d'IA non configuré",
-          exerciseLang: settings.exerciseLang,
-          retentionDays: settings.retentionDays,
-        });
-        setUser(res.user);
         if (isThemeChoice(settings.theme)) applyTheme(settings.theme);
       })
       .catch((err: unknown) => {
@@ -193,14 +133,12 @@ export default function SettingsView() {
     async (value: string) => {
       if (!isThemeChoice(value) || savingTheme) return;
       const previous = theme;
-      setTheme(value);
       applyTheme(value);
       setSavingTheme(true);
       try {
         await api.put<{ settings: AppSettings }>("/api/settings", { theme: value });
         toast({ title: "Réglages enregistrés", description: "Le thème a été appliqué." });
       } catch (err: unknown) {
-        setTheme(previous);
         applyTheme(previous);
         toast({
           title: "Enregistrement impossible",
@@ -211,7 +149,7 @@ export default function SettingsView() {
         setSavingTheme(false);
       }
     },
-    [theme, savingTheme, toast],
+    [theme, savingTheme, toast, applyTheme],
   );
 
   // ── Mode d'exercice par défaut ──
@@ -457,45 +395,6 @@ export default function SettingsView() {
           <p className="typo-meta">
             Taille maximale acceptée pour chaque fichier importé (1–50 Mo).
           </p>
-        </CardContent>
-      </Card>
-
-      {/* ── Compte ── */}
-      <Card>
-        <CardHeader className="pb-4">
-          <CardTitle className="typo-h2 flex items-center gap-2">
-            <User className="h-4 w-4 text-muted-foreground" aria-hidden />
-            Compte
-          </CardTitle>
-          <CardDescription>
-            Informations du compte et paramètres de plateforme (lecture seule).
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {loading || user === null || info === null ? (
-            <div className="space-y-2" aria-hidden>
-              <Skeleton className="h-4 w-2/3" />
-              <Skeleton className="h-4 w-1/2" />
-              <Skeleton className="h-4 w-3/4" />
-            </div>
-          ) : (
-            <dl className="space-y-1.5">
-              <InfoRow label="Adresse e-mail" value={user.email} />
-              <InfoRow label="Nom" value={user.name ?? "—"} />
-              <InfoRow label="Identifiant" value={user.id} mono truncate />
-              <Separator className="my-3" />
-              <InfoRow label="Modèle IA" value={info.aiModel} />
-              <InfoRow
-                label="Langue des exercices"
-                value={info.exerciseLang === "fr" ? "Français" : info.exerciseLang}
-              />
-              <InfoRow
-                label="Conservation des données"
-                value={info.retentionDays === 0 ? "Illimitée" : `${info.retentionDays} jours`}
-                tnum
-              />
-            </dl>
-          )}
         </CardContent>
       </Card>
     </section>

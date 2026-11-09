@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useSyncExternalStore } from "react";
 import { ChevronLeft, ChevronRight, GraduationCap, LogOut } from "lucide-react";
+import { AccountMenu } from "@/components/layout/account-menu";
 import { NAV_GROUPS, isNavActive } from "@/config/navigation";
 import { cn } from "@/lib/utils";
 import type { AppUser } from "@/store/app-store";
@@ -39,7 +40,6 @@ function setCollapsed(value: boolean) {
 export function SidebarNav({ user, onLogout }: SidebarNavProps) {
   const pathname = usePathname();
   const collapsed = useSyncExternalStore(subscribe, readCollapsed, () => false);
-  const initial = (user?.name?.trim() || user?.email || "?").charAt(0).toUpperCase();
 
   return (
     <aside
@@ -97,13 +97,7 @@ export function SidebarNav({ user, onLogout }: SidebarNavProps) {
       </nav>
 
       <div className={cn("mx-2 mb-3 flex items-center gap-1.5 rounded-[38px] bg-sidebar-accent p-2", collapsed && "flex-col")}>
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--accent-sun)] text-sm font-semibold text-on-pastel" aria-hidden>{initial}</span>
-        {!collapsed && (
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-xs font-medium">{user?.name ?? "Mon compte"}</p>
-            <p className="truncate text-[11px] text-sidebar-foreground/75">{user?.email}</p>
-          </div>
-        )}
+        <AccountMenu user={user} collapsed={collapsed} />
         <button type="button" onClick={onLogout} aria-label="Se déconnecter" title="Se déconnecter" className="rounded-lg p-1.5 text-sidebar-foreground/70 hover:bg-sidebar-border hover:text-sidebar-foreground">
           <LogOut className="h-4 w-4" aria-hidden />
         </button>

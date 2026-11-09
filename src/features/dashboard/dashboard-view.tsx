@@ -42,12 +42,15 @@ function ProgressRing({ value }: { value: number }) {
 
 function HeroCta({ href, label }: { href: string; label: string }) {
   return (
-    <Link href={href} className="mt-5 inline-flex items-center gap-3 rounded-full bg-[var(--dash-cta)] py-1.5 pl-1.5 pr-5 text-sm font-medium text-[var(--dash-cta-foreground)] transition-transform hover:-translate-y-0.5">
+    <Link href={href} className="mt-4 inline-flex shrink-0 items-center gap-3 rounded-full bg-[var(--dash-cta)] py-1.5 pl-1.5 pr-5 text-sm font-medium text-[var(--dash-cta-foreground)] transition-transform hover:-translate-y-0.5">
       <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--dash-cta-foreground)] text-[var(--dash-cta)]"><ArrowRight className="h-4 w-4" aria-hidden /></span>
       {label}
     </Link>
   );
 }
+
+/** S'adapte à la hauteur disponible : le bouton de reprise reste toujours visible dans la grande carte. */
+const HERO_TITLE = "line-clamp-2 break-words text-3xl font-bold leading-[1.1] tracking-tight lg:text-[clamp(1.6rem,min(3.4vw,5.2vh),3rem)]";
 
 /** Dernier cours ouvert : matière, titre, position de lecture et reprise à la page enregistrée. */
 function ResumeContent({ doc }: { doc: RecentDocument }) {
@@ -56,11 +59,11 @@ function ResumeContent({ doc }: { doc: RecentDocument }) {
   return (
     <>
       <p className="text-xs font-semibold uppercase tracking-[.16em] text-dash-panel-foreground/60">À reprendre</p>
-      <p className="mt-3 flex items-center gap-2 text-sm font-medium"><SubjectIcon icon={doc.subjectIcon} name={doc.subjectName} color={doc.subjectColor} surface="pastel" /> <span className="truncate">{doc.subjectName}</span></p>
-      <h1 className="mt-2 line-clamp-3 text-3xl font-bold leading-[1.1] tracking-tight xl:text-5xl">{doc.name}</h1>
-      <p className="mt-3 max-w-md text-sm text-dash-panel-foreground/70 xl:text-base">{where ? `${where} · ouvert ${ago(doc.lastOpenedAt)}` : `Ouvert ${ago(doc.lastOpenedAt)}`}</p>
+      <p className="mt-2 flex items-center gap-2 text-sm font-medium"><SubjectIcon icon={doc.subjectIcon} name={doc.subjectName} color={doc.subjectColor} surface="pastel" /> <span className="truncate">{doc.subjectName}</span></p>
+      <h1 className={cn("mt-1.5", HERO_TITLE)}>{doc.name}</h1>
+      <p className="mt-2 max-w-md text-sm text-dash-panel-foreground/70">{where ? `${where} · ouvert ${ago(doc.lastOpenedAt)}` : `Ouvert ${ago(doc.lastOpenedAt)}`}</p>
       {ratio !== null && (
-        <div className="mt-3 h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-dash-panel-foreground/15" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(ratio * 100)} aria-label="Progression de lecture">
+        <div className="mt-2 h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-dash-panel-foreground/15" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(ratio * 100)} aria-label="Progression de lecture">
           <div className="h-full rounded-full bg-[var(--dash-cta)]" style={{ width: `${Math.max(3, ratio * 100)}%` }} />
         </div>
       )}
@@ -76,20 +79,20 @@ function Hero({ data, name }: { data: DashboardData; name: string }) {
   const rec = h.kind === "recommendation" ? data.next : null;
   const href = h.href ?? (rec ? recommendationHref(rec) : null);
   return (
-    <section aria-label="Dernier cours consulté" className="relative z-[1] flex min-h-[320px] flex-col justify-between overflow-hidden rounded-[32px] bg-dash-panel p-6 text-dash-panel-foreground sm:p-8 lg:col-span-2 lg:min-h-0 lg:rounded-[60px] lg:p-10 xl:p-12">
+    <section aria-label="Dernier cours consulté" className="relative z-[1] flex min-h-[320px] flex-col justify-between overflow-hidden rounded-[32px] bg-dash-panel p-6 text-dash-panel-foreground sm:p-8 lg:col-span-2 lg:min-h-0 lg:rounded-[60px] lg:px-10 lg:py-8 xl:px-12">
       <svg aria-hidden viewBox="0 0 400 400" className="pointer-events-none absolute -right-16 -top-16 h-[220px] w-[220px] xl:h-[380px] xl:w-[380px]">
         <defs><linearGradient id="niala-glow" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#e7c6f5" /><stop offset=".55" stopColor="#f4c95d" /><stop offset="1" stopColor="#f26b3a" /></linearGradient></defs>
         <circle cx="210" cy="190" r="118" fill="url(#niala-glow)" />
         {[150, 182].map((r) => <circle key={r} cx="210" cy="190" r={r} fill="none" stroke="currentColor" strokeOpacity=".12" />)}
       </svg>
       <p className="relative text-lg font-medium">Bonjour{name ? ` ${name}` : ""}</p>
-      <div className="relative mt-6 lg:max-w-[62%]">
+      <div className="relative mt-4 lg:max-w-[62%]">
         {doc ? (
           <ResumeContent doc={doc} />
         ) : (
           <>
             <p className="text-xs font-semibold uppercase tracking-[.16em] text-dash-panel-foreground/60">{h.eyebrow}</p>
-            <h1 className="mt-2 line-clamp-3 text-3xl font-bold leading-[1.1] tracking-tight xl:text-5xl">{h.title}</h1>
+            <h1 className={cn("mt-2", HERO_TITLE)}>{h.title}</h1>
             <p className="mt-3 line-clamp-3 max-w-md text-sm text-dash-panel-foreground/70 xl:text-base">{h.detail}</p>
             {href && <HeroCta href={href} label={h.cta ?? "Ouvrir"} />}
           </>

@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { GraduationCap, LogOut, Menu } from "lucide-react";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { AccountMenu } from "@/components/layout/account-menu";
 import { NAV_GROUPS, isNavActive } from "@/config/navigation";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/app-store";
@@ -54,7 +55,7 @@ export function MobileNav({ onLogout }: { onLogout: () => void }) {
             ))}
           </nav>
           <div className="m-3 flex items-center gap-2 rounded-2xl bg-sidebar-accent p-2">
-            <p className="min-w-0 flex-1 truncate pl-2 text-xs">{user?.email}</p>
+            <AccountMenu user={user} onNavigate={() => setOpen(false)} />
             <button type="button" onClick={onLogout} aria-label="Se déconnecter" className="rounded-lg p-1.5 hover:bg-sidebar-border">
               <LogOut className="h-4 w-4" aria-hidden />
             </button>
