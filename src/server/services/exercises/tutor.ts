@@ -7,7 +7,6 @@ import { generateStructured } from "@/server/ai/structured";
 import { levelText } from "@/config/academic";
 import { leaksSolution } from "@/server/services/labs/hints";
 import { ownedAttempt, languageName, type Snapshot } from "./attempts";
-import { describeWork, isStructured, workspaceFindings } from "@/workspaces";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tuteur pendant la résolution d'un exercice. Il accompagne sans donner la réponse tant que la question n'est pas corrigée :
@@ -16,7 +15,7 @@ import { describeWork, isStructured, workspaceFindings } from "@/workspaces";
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const TUTOR_PROMPT_VERSION = "exercise-tutor-v1";
-export const TUTOR_KINDS = ["hint", "explain", "clarify", "why_wrong", "correction", "steps", "free", "check"] as const;
+export const TUTOR_KINDS = ["hint", "explain", "clarify", "why_wrong", "correction", "steps", "free"] as const;
 export type TutorKind = (typeof TUTOR_KINDS)[number];
 
 const HISTORY_LIMIT = 10;
@@ -44,7 +43,6 @@ const KIND_GUIDE: Record<TutorKind, string> = {
   correction: "L'étudiant demande la correction détaillée de la question.",
   steps: "L'étudiant veut comprendre les étapes de résolution.",
   free: "L'étudiant pose une question.",
-  check: "L'étudiant demande de vérifier la cohérence de son travail dans l'atelier : à partir des contrôles automatiques et de sa production, signale les incohérences et explique pourquoi elles posent problème, SANS corriger à sa place ni écrire la solution.",
 };
 
 const LEVEL_GUIDE: Record<string, string> = {
@@ -98,15 +96,15 @@ async function context(userId: string, attemptId: string, position: number) {
   const corrected = !!answer?.feedback && answer.verdict !== "ungraded";
   const revealed = a.status === "GRADED" || (snap.exercise.correctionMode === "immediate" && corrected);
   const settings = await db.userSettings.findUnique({ where: { userId }, select: { hintsEnabled: true, explanationLevel: true, exerciseLang: true } });
-  return { a, snap, q, answer, revealed, isWorkspace: q.type === "workspace", assistance: snap.exercise.assistance ?? "full", hintsEnabled: settings?.hintsEnabled ?? true, explanationLevel: settings?.explanationLevel ?? "standard", language: languageName(settings?.exerciseLang) };
+  return { a, snap, q, answer, revealed, assistance: snap.exercise.assistance ?? "full", hintsEnabled: settings?.hintsEnabled ?? true, explanationLevel: settings?.explanationLevel ?? "standard", language: languageName(settings?.exerciseLang) };
 }
 
 /** Actions réellement autorisées : le navigateur n'affiche que celles-ci, le serveur les contrôle à nouveau. */
-function allowedKinds(c: { revealed: boolean; assistance: string; hintsEnabled: boolean; isWorkspace?: boolean }): TutorKind[] {
+function allowedKinds(c: { revealed: boolean; assistance: string; hintsEnabled: boolean }): TutorKind[] {
   if (c.revealed) return ["explain", "why_wrong", "correction", "steps", "free"];
   if (c.assistance === "none") return [];
   if (c.assistance === "hints") return [...(c.hintsEnabled ? (["hint"] as const) : []), "clarify"];
-  return [...(c.hintsEnabled ? (["hint"] as const) : []), "explain", "clarify", "why_wrong", "steps", "free", ...(c.isWorkspace ? (["check"] as const) : [])];
+  return [...(c.hintsEnabled ? (["hint"] as const) : []), "explain", "clarify", "why_wrong", "steps", "free"];
 }
 
 const REFUSAL: Partial<Record<TutorKind, string>> = {
@@ -155,9 +153,7 @@ export async function askTutor(userId: string, attemptId: string, input: z.infer
     group?.context ? `Données de l'exercice : ${wrapUntrusted("données", group.context.slice(0, 6000))}` : "",
     earlier.length ? `Questions précédentes : ${wrapUntrusted("précédentes", earlier.join("\n"))}` : "",
     `Question ${q.position} (${q.type}) : ${wrapUntrusted("question", JSON.stringify({ statement: q.payload.statement, options: q.payload.options, left: q.payload.left, right: q.payload.right }).slice(0, 5000))}`,
-    q.type === "workspace" && isStructured(q.payload.environment)
-      ? `Production actuelle de l'étudiant dans l'atelier (${String(q.payload.environment)}) :\n${wrapUntrusted("production", describeWork(q.payload.environment, currentAnswer))}\nContrôles automatiques : ${workspaceFindings(q.payload.environment, currentAnswer).join(" | ") || "aucune incohérence détectée"}`
-      : `Réponse actuelle de l'étudiant : ${wrapUntrusted("réponse", JSON.stringify(currentAnswer ?? null).slice(0, 6000))}`,
+    `Réponse actuelle de l'étudiant : ${wrapUntrusted("réponse", JSON.stringify(currentAnswer ?? null).slice(0, 6000))}`,
     feedback ? `Résultat de la correction : ${feedback.verdict ?? ""}. ${feedback.explanation ?? ""}` : "",
     `Corrigé ${revealed ? "" : "(CONFIDENTIEL, ne pas révéler) "}: ${wrapUntrusted("corrigé", JSON.stringify({ cle: q.answerKey, explication: q.explanation }).slice(0, 6000))}`,
     history.length ? `Échanges précédents sur cette question : ${wrapUntrusted("échanges", [...history].reverse().map((m) => `${m.role === "USER" ? "Étudiant" : "Tuteur"} : ${m.content.slice(0, 800)}`).join("\n"))}` : "",
@@ -194,5 +190,4 @@ const KIND_LABEL: Record<TutorKind, string> = {
   correction: "Montre-moi la correction détaillée.",
   steps: "Quelles sont les étapes de résolution ?",
   free: "Question",
-  check: "Vérifie la cohérence de mon travail.",
 };

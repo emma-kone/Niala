@@ -19,7 +19,7 @@ const MapEditor = dynamic(() => import("@/features/maps/map-editor"), {
   ),
 });
 
-export default function MapPage({ subjectId, mapId }: { subjectId: string | null; mapId: string }) {
+export default function MapPage({ subjectId, mapId }: { subjectId: string; mapId: string }) {
   const [map, setMap] = useState<MapDetail | null>(null);
   const [error, setError] = useState<{ message: string; status?: number } | null>(null);
 
@@ -29,7 +29,7 @@ export default function MapPage({ subjectId, mapId }: { subjectId: string | null
       .get<{ map: MapDetail }>(`/api/maps/${mapId}`)
       .then((r) => {
         if (cancelled) return;
-        if (subjectId && r.map.subjectId !== subjectId) setError({ message: "Carte introuvable.", status: 404 });
+        if (r.map.subjectId !== subjectId) setError({ message: "Carte introuvable.", status: 404 });
         else setMap(r.map);
       })
       .catch((e) => !cancelled && setError({ message: e instanceof Error ? e.message : "Chargement impossible.", status: (e as { status?: number }).status }));
@@ -43,7 +43,7 @@ export default function MapPage({ subjectId, mapId }: { subjectId: string | null
       <div className="mx-auto max-w-xl px-4 py-16 text-center">
         <h1 className="typo-h2">{error.status === 404 ? "Carte introuvable" : "Chargement impossible"}</h1>
         <p className="typo-subtitle mt-2">{error.message}</p>
-        <Button asChild variant="outline" className="mt-6"><Link href={subjectId ? `${routes.subject(subjectId)}/cartes` : "/cartes"}>Retour aux cartes</Link></Button>
+        <Button asChild variant="outline" className="mt-6"><Link href={`${routes.subject(subjectId)}/cartes`}>Retour aux cartes</Link></Button>
       </div>
     );
   }

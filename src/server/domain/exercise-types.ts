@@ -11,7 +11,6 @@ export const QUESTION_TYPES = [
   "open",
   "matching",
   "practical",
-  "workspace",
   "code",
   "sql",
 ] as const;
@@ -28,13 +27,12 @@ export const TYPE_LABEL: Record<QuestionType, string> = {
   open: "Question ouverte",
   matching: "Relier des éléments",
   practical: "Exercice pratique",
-  workspace: "Atelier pratique (modélisation, calcul, algorithme)",
   code: "Exercice de programmation",
   sql: "Exercice SQL",
 };
 
 /** Questions de mise en pratique : ce sont elles que la jauge théorie / pratique répartit face aux autres. */
-export const PRACTICE_TYPES: readonly QuestionType[] = ["code", "sql", "practical", "workspace"];
+export const PRACTICE_TYPES: readonly QuestionType[] = ["code", "sql", "practical"];
 /** Types dont la présence fait apparaître la jauge dans le formulaire. */
 export const PROGRAMMING_TYPES: readonly QuestionType[] = ["code", "sql"];
 export const MAX_SOURCE_DOCUMENTS = 8;

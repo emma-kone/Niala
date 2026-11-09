@@ -38,7 +38,7 @@ export interface MapEdgeDto {
 
 export interface MapDetail {
   id: string;
-  subjectId: string | null;
+  subjectId: string;
   title: string;
   kind: "STRUCTURE" | "CONCEPT";
   revision: number;
@@ -57,5 +57,4 @@ export interface MapListItem {
   nodes: number;
   edges: number;
   document: { id: string; name: string } | null;
-  subject?: { id: string; name: string } | null;
 }

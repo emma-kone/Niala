@@ -6,7 +6,7 @@ import { UNTRUSTED_RULES, quoteInText, wrapUntrusted } from "@/server/ai/guard";
 import { AiCallError, AiQuotaError, AiUnavailableError, isAiConfigured } from "@/server/ai/provider";
 import { generateStructured } from "@/server/ai/structured";
 import { CORRECTION_MODES, EXERCISE_MODES, POINT_STEP, QUESTION_TYPES, TYPE_LABEL } from "@/server/domain/exercise-types";
-import { allocatePoints, buildQuestion, upgradeToWorkspace, maxQuestions, rawQuestionSchema, semanticProblem, type BuiltQuestion } from "@/server/domain/exercise-model";
+import { allocatePoints, buildQuestion, maxQuestions, rawQuestionSchema, semanticProblem, type BuiltQuestion } from "@/server/domain/exercise-model";
 import { loadVersionPages } from "@/server/services/analysis/analysis-service";
 import { getStorage } from "@/server/storage";
 import { languageName, purgeOccasionalExercises } from "./attempts";
@@ -40,7 +40,6 @@ const FORMATS = `- qcm_single : "options":[…3 à 5…],"correctIndex":0
 - short_answer : "accepted":["réponse","variante"]
 - open : "reference":"réponse modèle","criteria":["critère 1","critère 2"]
 - practical : "reference":"résolution modèle (calcul, démonstration, étapes)","criteria":["critère 1","critère 2"]
-- workspace : cas pratique de modélisation (Merise), de calcul ou d'algorithmique : "environment":"merise|math|algo","reference":"résolution modèle","criteria":["critère 1","critère 2"],"deliverables":["MCD","MLD"]
 - code : "language":"python|javascript|typescript","starterCode":"","referenceSolution":"…","criteria":["…","…"],"tests":[]
 - sql : "setupSql":"CREATE TABLE … ; INSERT …","referenceSql":"SELECT …","criteria":["…","…"],"ordered":false,"checks":[],"variants":[]`;
 
@@ -151,7 +150,7 @@ export async function importExercises(userId: string, raw: unknown) {
           continue;
         }
         const meta = questionMeta.parse(rawQ);
-        const built = upgradeToWorkspace(buildQuestion(p.data));
+        const built = buildQuestion(p.data);
         Object.assign(built.payload, { rich: true, label: meta.label ?? null, group: { index: group, title: exercise.title ?? `Exercice ${group}`, instructions: exercise.instructions ?? null, context: exercise.context ?? null } });
         const page = pages.find((pg) => quoteInText(p.data.source.quote, pg.text))?.page ?? null;
         accepted.push({

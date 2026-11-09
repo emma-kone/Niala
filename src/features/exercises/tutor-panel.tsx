@@ -14,7 +14,7 @@ import { useSettings, type UserSettings } from "@/features/settings/use-settings
 
 const RichText = dynamic(() => import("./rich-text"), { loading: () => <Skeleton className="h-4 w-full" /> });
 
-type Kind = "hint" | "explain" | "clarify" | "why_wrong" | "correction" | "steps" | "free" | "check";
+type Kind = "hint" | "explain" | "clarify" | "why_wrong" | "correction" | "steps" | "free";
 interface TutorMessage {
   id: string;
   role: "USER" | "ASSISTANT";
@@ -35,7 +35,6 @@ const ACTIONS: { kind: Kind; label: string; icon: LucideIcon }[] = [
   { kind: "explain", label: "Expliquer la notion", icon: BookOpen },
   { kind: "why_wrong", label: "Pourquoi c'est faux ?", icon: SearchCheck },
   { kind: "steps", label: "Les étapes", icon: ListOrdered },
-  { kind: "check", label: "Vérifier mon travail", icon: SearchCheck },
   { kind: "correction", label: "Correction détaillée", icon: Sparkles },
 ];
 

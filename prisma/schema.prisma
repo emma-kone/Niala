@@ -23,8 +23,6 @@ model User {
   settings        UserSettings?
   profile         StudentProfile?
   tutorMessages   AttemptTutorMessage[]
-  coachDismissals CoachDismissal[]
-  workspaceRevisions WorkspaceRevision[]
   subjects        Subject[]
   documents       Document[]
   exercises       LegacyExercise[]
@@ -86,39 +84,8 @@ model UserSettings {
   notifyProgress   Boolean @default(true)
   notifyRevision   Boolean @default(true)
   notifyActivities Boolean @default(true)
-  weeklyGoal       Int     @default(0) // objectif hebdomadaire : exercices terminés par semaine (0 = aucun)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-
-/// Conseil pédagogique écarté par l'étudiant : il ne réapparaît pas avant `until`.
-model CoachDismissal {
-  id        String   @id @default(cuid())
-  userId    String
-  key       String
-  until     DateTime
-  createdAt DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, key])
-}
-
-/// Versions successives de la production d'un espace de travail (Merise, mathématiques…), pour récupérer son travail.
-model WorkspaceRevision {
-  id        String   @id @default(cuid())
-  userId    String
-  attemptId String
-  position  Int
-  number    Int
-  data      Json
-  createdAt DateTime @default(now())
-
-  user    User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  attempt ExerciseAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
-
-  @@unique([attemptId, position, number])
-  @@index([userId])
 }
 
 /// Informations personnelles et académiques. Sans ligne ou sans catégorie : compte créé avant l'inscription détaillée, ou par Google.
@@ -224,7 +191,6 @@ model Document {
   studyExercises   Exercise[]
   conversations    Conversation[]
   academicTasks    AcademicTask[]
-  mindMaps         MindMap[]
 
   @@index([userId, lastOpenedAt])
   @@index([subjectId])
@@ -794,8 +760,7 @@ model NoteLink {
 model MindMap {
   id         String   @id @default(cuid())
   userId     String
-  subjectId  String? // null : carte créée depuis un contenu sans matière enregistrée
-  documentId String? // cours dont la carte est tirée (génération directe par l'IA)
+  subjectId  String
   analysisId String?
   kind       MapKind
   title      String
@@ -804,8 +769,7 @@ model MindMap {
   updatedAt  DateTime @updatedAt
 
   user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  subject   Subject?          @relation(fields: [subjectId], references: [id], onDelete: Cascade)
-  document  Document?         @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  subject   Subject           @relation(fields: [subjectId], references: [id], onDelete: Cascade)
   analysis  DocumentAnalysis? @relation(fields: [analysisId], references: [id], onDelete: SetNull)
   nodes     MindMapNode[]
   edges     MindMapEdge[]
@@ -952,7 +916,6 @@ model ExerciseAttempt {
   exercise Exercise? @relation(fields: [exerciseId], references: [id], onDelete: SetNull)
   answers  Answer[]
   tutorMessages AttemptTutorMessage[]
-  workspaceRevisions WorkspaceRevision[]
 
   @@index([userId, status, finishedAt])
   @@index([exerciseId])

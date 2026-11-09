@@ -44,7 +44,6 @@ const HINT: Partial<Record<QuestionType, string>> = {
   code: "Corrigé par tests exécutés quand la solution de référence est vérifiable.",
   sql: "Corrigé par comparaison à la requête de référence.",
   practical: "À proposer seulement si le cours contient des exercices ou des procédures.",
-  workspace: "Ouvre un atelier adapté : Merise (MCD, MLD…), mathématiques (formules, graphiques) ou algorithmique.",
 };
 const CORRECTION_LABEL: Record<CorrectionMode, { title: string; text: string; icon: typeof Zap }> = {
   immediate: { title: "En temps réel", text: "L'explication s'affiche après chaque réponse.", icon: Zap },
@@ -215,21 +214,21 @@ function ImportPicker({ source, phase, onFile, onClear }: { source: Source | nul
   );
 }
 
-export default function CreateExerciseView({ subjectId, documentId, presetConcepts = [], initialSource, preset }: { subjectId: string | null; documentId: string | null; presetConcepts?: string[]; initialSource?: string | null; preset?: { subject?: string | null; chapter?: string | null; difficulty?: string | null; count?: string | null; mode?: string | null } }) {
+export default function CreateExerciseView({ subjectId, documentId, presetConcepts = [], initialSource }: { subjectId: string | null; documentId: string | null; presetConcepts?: string[]; initialSource?: string | null }) {
   const router = useRouter();
   const { settings } = useSettings();
   const { data: profile } = useQuery({ queryKey: PROFILE_KEY, queryFn: fetchProfile });
   // Depuis une matière ou un document, la source est déjà connue : le choix n'est proposé que depuis le module Exercices.
   const standalone = !subjectId && !documentId;
   const [sourceMode, setSourceMode] = useState<SourceMode>(() => (!standalone ? "course" : initialSource === "course" || initialSource === "import" ? initialSource : "free"));
-  const [freeSubject, setFreeSubject] = useState(preset?.subject?.slice(0, 120) ?? "");
-  const [chapter, setChapter] = useState(preset?.chapter?.slice(0, 200) ?? "");
+  const [freeSubject, setFreeSubject] = useState("");
+  const [chapter, setChapter] = useState("");
   // Tant que l'étudiant n'a rien choisi pour cet exercice, ses préférences et son profil font office de valeurs proposées.
   const [levelChoice, setLevel] = useState("");
   const level = levelChoice || (isLevelChoice(profile?.level) ? profile.level : "");
   const [levelOtherChoice, setLevelOther] = useState<string | null>(null);
   const levelOther = levelOtherChoice ?? (level === profile?.level ? (profile?.levelOther ?? "") : "");
-  const [modeChoice, setMode] = useState<ExerciseMode | null>((EXERCISE_MODES as readonly string[]).includes(preset?.mode ?? "") ? (preset!.mode as ExerciseMode) : null);
+  const [modeChoice, setMode] = useState<ExerciseMode | null>(null);
   const mode = modeChoice ?? settings?.defaultMode ?? "personnalise";
   const [keep, setKeep] = useState(true);
   const [importSource, setImportSource] = useState<Source | null>(null);
@@ -240,7 +239,7 @@ export default function CreateExerciseView({ subjectId, documentId, presetConcep
   const [error, setError] = useState<{ message: string; status?: number } | null>(null);
 
   const [title, setTitle] = useState("");
-  const [count, setCount] = useState(/^\d{1,3}$/.test(preset?.count ?? "") ? preset!.count! : "10");
+  const [count, setCount] = useState("10");
   const [scale, setScale] = useState<Scale>("20");
   const [custom, setCustom] = useState("15");
   const [types, setTypes] = useState<Set<QuestionType>>(new Set(["qcm_single", "true_false", "short_answer"]));
@@ -248,7 +247,7 @@ export default function CreateExerciseView({ subjectId, documentId, presetConcep
   const coverage: Coverage = coverageChoice ?? (mode === "revision" ? "hard" : "all");
   const [sectionIds, setSectionIds] = useState<Set<string>>(new Set());
   const [conceptIds, setConceptIds] = useState<Set<string>>(new Set());
-  const [difficulty, setDifficulty] = useState<(typeof DIFFICULTIES)[number]>((DIFFICULTIES as readonly string[]).includes(preset?.difficulty ?? "") ? (preset!.difficulty as (typeof DIFFICULTIES)[number]) : "progressive");
+  const [difficulty, setDifficulty] = useState<(typeof DIFFICULTIES)[number]>("progressive");
   const [correctionChoice, setCorrectionMode] = useState<CorrectionMode | null>(null);
   const correctionMode = correctionChoice ?? settings?.correctionPref ?? "final";
   const [practice, setPractice] = useState(50);
@@ -292,7 +291,7 @@ export default function CreateExerciseView({ subjectId, documentId, presetConcep
   const total = scale === "custom" ? Number(custom.replace(",", ".")) : Number(scale);
   const n = Number(count);
   const showGauge = PROGRAMMING_TYPES.some((t) => types.has(t));
-  const hasTheory = [...types].some((t) => t !== "code" && t !== "sql" && t !== "practical" && t !== "workspace");
+  const hasTheory = [...types].some((t) => t !== "code" && t !== "sql" && t !== "practical");
   const practicePercent = hasTheory ? practice : 100;
   const practiceCount = Number.isInteger(n) && n > 0 ? Math.round((n * practicePercent) / 100) : 0;
 

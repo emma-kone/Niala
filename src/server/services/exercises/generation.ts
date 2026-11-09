@@ -11,7 +11,6 @@ import {
   TYPE_LABEL,
   allocatePoints,
   buildQuestion,
-  upgradeToWorkspace,
   buildSlots,
   exerciseConfigSchema,
   freeExerciseConfigSchema,
@@ -99,7 +98,6 @@ const FORMAT: Record<string, string> = {
   open: `{"type":"open","reference":"réponse modèle","criteria":["critère 1","critère 2"]}`,
   matching: `{"type":"matching","pairs":[{"left":"…","right":"…"},{"left":"…","right":"…"},{"left":"…","right":"…"}]}`,
   practical: `{"type":"practical","reference":"résolution modèle","criteria":["critère 1","critère 2"]}`,
-  workspace: `{"type":"workspace","environment":"merise|math|algo","reference":"résolution modèle rédigée","criteria":["critère 1","critère 2"],"deliverables":["MCD","MLD"],"structured":<voir ci-dessous>}  (cas pratique à résoudre dans un atelier : "merise" = modélisation (MCD, MLD, dictionnaire…), "math" = calcul ou résolution, "algo" = algorithme ou programme. "structured" est FACULTATIF : merise → {"deliverables":["mcd"],"entities":[{"name":"Client","attributes":["nom"],"identifier":["idClient"]}],"associations":[{"name":"Passer","links":[{"entity":"Client","card":"0,N"},{"entity":"Commande","card":"1,1"}]}]} avec card ∈ 0,1 | 1,1 | 0,N | 1,N ; math → {"parts":[{"label":"1","answers":["2","-1"]}]} avec des expressions écrites en syntaxe simple (x^2, sqrt(x), (1)/(2)) ; algo → omis. N'écris "structured" que si tu en es certain.)`,
   code: `{"type":"code","language":"python","starterCode":"…","referenceSolution":"…","criteria":["critère 1","critère 2"],"tests":[{"name":"cas simple","call":{"fn":"nom_de_la_fonction","args":[3,4]},"expected":7},{"name":"cas limite : liste vide","call":{"fn":"nom_de_la_fonction","args":[[]]},"expected":0,"edge":true}]}  (langage : python, javascript ou typescript ; la solution DÉFINIT la fonction appelée par les tests ; 3 à 6 tests dont au moins un cas limite ; "expected" = valeur JSON retournée. Alternative sans fonction : {"name":"…","stdin":"entrée","expected":"sortie exacte du programme
 "}. Chaque "expected" doit être EXACTEMENT ce que produit la solution de référence.)`,
   sql: `{"type":"sql","setupSql":"CREATE TABLE … ; INSERT … (au moins 5 lignes réalistes)","referenceSql":"SELECT …","criteria":["critère 1","critère 2"],"ordered":false,"checks":[],"variants":[{"name":"table vide ou valeurs NULL","extraSql":"DELETE FROM … ;"}]}  (SQLite ; "ordered":true seulement si l'énoncé impose un ORDER BY ; "checks" = requêtes SELECT de contrôle de l'état final, seulement pour INSERT/UPDATE/DELETE/DDL ; "variants" = 1 à 2 jeux de données limites ajoutés après setupSql)`,
@@ -280,7 +278,7 @@ export async function generateExercise(userId: string, rawConfig: unknown) {
           continue;
         }
         seenStatements.add(key);
-        accepted.push({ slot, built: upgradeToWorkspace(buildQuestion(q)), explanation: q.explanation ?? null, refs: [{ quote: q.source.quote, page, documentId: w.source.id, documentName: w.source.name, subjectId: w.source.subjectId }], concepts: q.concepts });
+        accepted.push({ slot, built: buildQuestion(q), explanation: q.explanation ?? null, refs: [{ quote: q.source.quote, page, documentId: w.source.id, documentName: w.source.name, subjectId: w.source.subjectId }], concepts: q.concepts });
       }
     }
   });
@@ -390,7 +388,7 @@ export async function generateFreeExercise(userId: string, rawConfig: unknown) {
         continue;
       }
       seen.add(key);
-      const built = upgradeToWorkspace(buildQuestion(p.data), { subject: config.subject, chapter: config.chapter });
+      const built = buildQuestion(p.data);
       built.payload.rich = true;
       accepted.push({ slot, built, explanation: p.data.explanation ?? null, refs: [], concepts: p.data.concepts });
     }

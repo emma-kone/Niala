@@ -9,8 +9,6 @@ import { deleteDocuments } from "@/server/services/documents";
 import { gradeAnswer } from "./evaluation";
 import type { AttemptReview } from "./review";
 import { refreshProgress } from "@/server/services/progress/progress";
-import { MAX_WORK_BYTES, isStructured, workspaceValueSchema } from "@/workspaces";
-import { recordRevision } from "@/server/services/workspaces/revisions";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tentatives : copie FIGÉE de l'exercice (snapshot), réponses enregistrées au fil de l'eau (reprise),
@@ -182,8 +180,6 @@ const valueSchemas: Record<QuestionType, z.ZodType> = {
   open: str(8000).nullable(),
   matching: z.record(str(64), str(64)).refine((o) => Object.keys(o).length <= 8),
   practical: str(8000).nullable(),
-  /** Production d'un atelier : validée plus bas selon son environnement. */
-  workspace: z.unknown(),
   code: str(12000).nullable(),
   sql: str(12000).nullable(),
 };
@@ -193,15 +189,8 @@ export async function saveAnswer(userId: string, attemptId: string, position: nu
   if (a.status !== "IN_PROGRESS") throw new ApiHttpError("Cette tentative est terminée : les réponses ne peuvent plus être modifiées.", 409);
   const q = (a.snapshot as unknown as Snapshot).questions.find((x) => x.position === position);
   if (!q) throw new ApiHttpError("Question introuvable.", 404);
-  let parsed = valueSchemas[q.type].safeParse(value);
+  const parsed = valueSchemas[q.type].safeParse(value);
   if (!parsed.success) throw new ApiHttpError("Réponse invalide pour ce type de question.", 422);
-  if (q.type === "workspace") {
-    const env = q.payload.environment;
-    if (!isStructured(env)) throw new ApiHttpError("Environnement de travail inconnu.", 422);
-    if (JSON.stringify(value ?? null).length > MAX_WORK_BYTES) throw new ApiHttpError("Cette production est trop volumineuse pour être enregistrée.", 413);
-    parsed = workspaceValueSchema(env).safeParse(value);
-    if (!parsed.success) throw new ApiHttpError("Production invalide pour cet atelier.", 422);
-  }
   if (isImmediate(a.snapshot as unknown as Snapshot) && isLocked(a.answers.find((x) => x.position === position))) throw new ApiHttpError("Cette question est déjà corrigée : sa réponse ne peut plus être modifiée.", 409);
   await db.$transaction([
     db.answer.upsert({
@@ -212,8 +201,6 @@ export async function saveAnswer(userId: string, attemptId: string, position: nu
     db.exerciseAttempt.update({ where: { id: attemptId }, data: { lastPosition: position } }),
     db.learningActivity.updateMany({ where: { userId, refType: "attempt", refId: attemptId }, data: { lastPosition: { position } } }),
   ]);
-  // Versions de la production : récupération possible après une erreur ou une interruption.
-  if (q.type === "workspace") await recordRevision(userId, attemptId, position, parsed.data).catch((e) => console.warn("[workspace] version non enregistrée :", e instanceof Error ? e.message : e));
   return { ok: true };
 }
 

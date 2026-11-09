@@ -5,8 +5,6 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { AttemptQuestion } from "./types";
-import { WorkspaceHost } from "@/features/workspaces/workspace-host";
-import { describeWork, isStructured } from "@/workspaces";
 
 // Saisie de la réponse, adaptée à chaque type de question. La valeur renvoyée a exactement la
 // forme attendue par le serveur (voir valueSchemas dans services/exercises/attempts.ts).
@@ -29,14 +27,12 @@ function Blanks({ statement, render }: { statement: string; render: (index: numb
   );
 }
 
-export function QuestionInput({ q, value, onChange, disabled, attemptId, statementNode }: { q: AttemptQuestion; value: unknown; onChange: (v: unknown) => void; disabled?: boolean; attemptId?: string; statementNode?: React.ReactNode }) {
+export function QuestionInput({ q, value, onChange, disabled }: { q: AttemptQuestion; value: unknown; onChange: (v: unknown) => void; disabled?: boolean }) {
   const p = q.payload as Record<string, unknown>;
   const statement = String(p.statement ?? "");
   const group = "rounded-lg border px-3 py-2.5 text-sm transition-colors";
 
   switch (q.type) {
-    case "workspace":
-      return attemptId ? <WorkspaceHost attemptId={attemptId} position={q.position} statement={statementNode ?? statement} payload={p} value={value} onChange={onChange} disabled={disabled} /> : null;
     case "qcm_single": {
       const options = p.options as Opt[];
       return (
@@ -169,8 +165,6 @@ export function AnswerText({ q }: { q: AttemptQuestion }) {
   const label = (list: Opt[], id: string) => list.find((o) => o.id === id)?.label ?? id;
   if (v == null || v === "" || (Array.isArray(v) && v.length === 0)) return <span className="italic text-muted-foreground">Aucune réponse</span>;
   switch (q.type) {
-    case "workspace":
-      return isStructured(p.environment) ? <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded-lg bg-muted/50 p-2 font-code text-xs">{describeWork(p.environment, v)}</pre> : null;
     case "qcm_single":
       return <>{label(p.options as Opt[], String(v))}</>;
     case "qcm_multiple":

@@ -350,9 +350,6 @@ export default function SettingsView() {
                 <Row title="Correction" text="Moment où la correction s'affiche par défaut (toujours à la fin en mode Examen)." htmlFor="setting-correction">
                   <Choice id="setting-correction" value={settings.correctionPref} onChange={(v) => void update({ correctionPref: v })} options={[{ value: "final", label: "À la fin de l'exercice" }, { value: "immediate", label: "Après chaque réponse" }]} />
                 </Row>
-                <Row title="Objectif hebdomadaire" text="Nombre d'exercices à terminer chaque semaine ; Niala suit votre avancement dans vos conseils. 0 : aucun objectif." htmlFor="setting-goal">
-                  <Input id="setting-goal" type="number" min={0} max={50} className="tnum w-24" defaultValue={settings.weeklyGoal} key={settings.weeklyGoal} onBlur={(e) => { const v = Number.parseInt(e.target.value, 10); if (Number.isInteger(v) && v >= 0 && v <= 50 && v !== settings.weeklyGoal) void update({ weeklyGoal: v }); }} />
-                </Row>
                 {toggle("hintsEnabled", "Indices du tuteur", "Permet de demander des indices progressifs pendant un exercice.")}
                 <Row title="Explications de l'IA" text="Niveau de détail du tuteur, adapté aussi à votre niveau d'études." htmlFor="setting-explanations">
                   <Choice id="setting-explanations" value={settings.explanationLevel} onChange={(v) => void update({ explanationLevel: v })} options={[{ value: "simple", label: "Simples" }, { value: "standard", label: "Standard" }, { value: "detailed", label: "Approfondies" }]} />

@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, CalendarPlus, ClipboardList, Info, ListTree, Loader2, MessageSquare, Network, StickyNote, type LucideIcon } from "lucide-react";
+import { ArrowLeft, CalendarPlus, ClipboardList, Info, ListTree, Loader2, MessageSquare, StickyNote, type LucideIcon } from "lucide-react";
 import { api } from "@/lib/client-api";
 import { routes } from "@/config/routes";
 import { planHref } from "@/features/agenda/types";
@@ -18,7 +18,6 @@ import { Properties } from "@/features/subject-files/properties";
 import { STATUS_LABEL, type DocumentDetails } from "@/features/subject-files/types";
 import { ExtractedTextViewer, OriginalTextViewer } from "./text-viewers";
 import { AnalysisPanel } from "./analysis-panel";
-import { MindMapDialog } from "@/features/maps/mindmap-generator";
 import ChatPanel from "@/features/chat/chat-panel";
 import type { NoteListItem } from "@/features/notes/types";
 import type { PdfAnnotation, PdfSelection } from "./pdf-viewer";
@@ -348,18 +347,6 @@ export default function ReaderView({ subjectId, docId }: { subjectId: string; do
             <CalendarPlus className="h-4 w-4" aria-hidden /> <span className="hidden sm:inline">Planifier</span>
           </Link>
         </Button>
-        {doc && (
-          <MindMapDialog
-            documentId={docId}
-            documentName={doc.name}
-            pageCount={pdfPages ?? doc.pageCount ?? null}
-            trigger={(open) => (
-              <Button variant="outline" size="sm" className="shrink-0 gap-1.5" onClick={open} data-hint="Générer une carte mentale de ce cours avec l'IA">
-                <Network className="h-4 w-4" aria-hidden /> <span className="hidden sm:inline">Générer une carte mentale avec l&apos;IA</span>
-              </Button>
-            )}
-          />
-        )}
         <Button asChild variant="outline" size="sm" className="shrink-0 gap-1.5">
           <Link href={`${routes.subject(subjectId)}/exercices/nouveau?document=${docId}`}>
             <ClipboardList className="h-4 w-4" aria-hidden /> <span className="hidden sm:inline">Créer un exercice</span>

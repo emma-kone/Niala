@@ -12,7 +12,6 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CATEGORY_LABEL } from "@/features/labs/types";
 import { cn } from "@/lib/utils";
-import { CoachPanel } from "./coach-panel";
 import { evidenceLabel, pct, type ConceptDetail, type ProgressConcept, type ProgressData } from "./types";
 
 const errText = (e: unknown, fb: string) => (e instanceof Error ? e.message : fb);
@@ -91,12 +90,7 @@ export default function ProgressView() {
           {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <RefreshCw className="h-4 w-4" aria-hidden />} Recalculer
         </Button>
       </div>
-      <section id="conseils" aria-labelledby="coach-title" className="mt-5 rounded-3xl border bg-card p-5">
-        <h2 id="coach-title" className="typo-h2">Conseils pour progresser</h2>
-        <p className="typo-meta mb-3 mt-0.5">Fondés sur vos exercices, vos erreurs, vos demandes d&apos;aide et votre régularité. Chaque conseil indique ce qui le justifie.</p>
-        <CoachPanel />
-      </section>
-      <p className="typo-subtitle mt-4">
+      <p className="typo-subtitle mt-1">
         La maîtrise est estimée <strong>par notion</strong> à partir de vos réponses corrigées et de vos tests de laboratoire, avec un niveau de confiance. Une note d&apos;exercice n&apos;est pas une mesure de maîtrise.
       </p>
 

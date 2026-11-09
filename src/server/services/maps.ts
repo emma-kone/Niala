@@ -73,13 +73,12 @@ export async function listMaps(userId: string, subjectId: string) {
 
 export async function getMap(userId: string, id: string) {
   const map = await ownedMap(userId, id);
-  const [state, revisions, doc, direct] = await Promise.all([
+  const [state, revisions, doc] = await Promise.all([
     readState(db, id),
     db.mindMapRevision.findMany({ where: { mapId: id }, orderBy: { number: "desc" }, select: { number: true, createdAt: true } }),
     map.analysisId
       ? db.documentAnalysis.findFirst({ where: { id: map.analysisId }, select: { version: { select: { document: { select: { id: true, name: true } } } } } })
       : null,
-    map.documentId ? db.document.findFirst({ where: { id: map.documentId, userId }, select: { id: true, name: true } }) : null,
   ]);
   return {
     id: map.id,
@@ -88,27 +87,16 @@ export async function getMap(userId: string, id: string) {
     kind: map.kind,
     revision: map.revision,
     updatedAt: map.updatedAt,
-    document: direct ?? doc?.version.document ?? null,
+    document: doc?.version.document ?? null,
     ...state,
     revisions,
   };
 }
 
-/** Toutes les cartes de l'étudiant (avec ou sans matière), éventuellement celles tirées d'un cours donné. */
-export async function listAllMaps(userId: string, filter: { documentId?: string } = {}) {
-  const maps = await db.mindMap.findMany({
-    where: { userId, ...(filter.documentId ? { documentId: filter.documentId } : {}) },
-    orderBy: { updatedAt: "desc" },
-    take: 200,
-    include: { _count: { select: { nodes: true, edges: true } }, subject: { select: { id: true, name: true } }, document: { select: { id: true, name: true } }, analysis: { select: { version: { select: { document: { select: { id: true, name: true } } } } } } },
-  });
-  return maps.map((m) => ({ id: m.id, title: m.title, kind: m.kind, updatedAt: m.updatedAt, nodes: m._count.nodes, edges: m._count.edges, subject: m.subject, document: m.document ?? m.analysis?.version.document ?? null }));
-}
-
 // ── Création / génération ────────────────────────────────────────────────────
 
-export async function createEmptyMap(userId: string, subjectId: string | null, title: string, kind: MapKind) {
-  if (subjectId) await requireSubject(userId, subjectId);
+export async function createEmptyMap(userId: string, subjectId: string, title: string, kind: MapKind) {
+  await requireSubject(userId, subjectId);
   const map = await db.mindMap.create({ data: { userId, subjectId, title: title.trim().slice(0, 160) || "Nouvelle carte", kind } });
   return { id: map.id };
 }
@@ -206,13 +194,8 @@ export async function generateConceptMap(userId: string, analysisId: string) {
 }
 
 async function persistGenerated(userId: string, subjectId: string, analysisId: string, kind: MapKind, title: string, nodes: NodeDto[], edges: EdgeDto[]) {
-  return persistMindMap(userId, { subjectId, documentId: null, analysisId, kind, title, nodes, edges });
-}
-
-export async function persistMindMap(userId: string, p: { subjectId: string | null; documentId: string | null; analysisId: string | null; kind: MapKind; title: string; nodes: NodeDto[]; edges: EdgeDto[] }) {
-  const { subjectId, documentId, analysisId, kind, title, nodes, edges } = p;
   const map = await db.$transaction(async (tx) => {
-    const m = await tx.mindMap.create({ data: { userId, subjectId, documentId, analysisId, kind, title } });
+    const m = await tx.mindMap.create({ data: { userId, subjectId, analysisId, kind, title } });
     await tx.mindMapNode.createMany({
       data: nodes.map((n) => ({ id: n.id, userId, mapId: m.id, label: n.label, x: n.x, y: n.y, origin: n.origin, conceptId: n.conceptId, sectionId: n.sectionId, data: (n.data ?? undefined) as Prisma.InputJsonValue | undefined })),
     });
@@ -261,7 +244,7 @@ export async function saveMap(userId: string, id: string, input: { revision: num
       const prev = nodeById.get(n.id);
       if (prev) {
         const edited = prev.label !== n.label || prev.data?.edited === true;
-        const data = { ...(n.data ?? {}), ...(prev.data?.page ? { page: prev.data.page } : {}), ...(prev.data?.definition ? { definition: prev.data.definition } : {}), ...(edited ? { edited: true } : {}) };
+        const data = { ...(n.data ?? {}), ...(prev.data?.page ? { page: prev.data.page } : {}), ...(edited ? { edited: true } : {}) };
         await tx.mindMapNode.update({
           where: { id: n.id },
           data: { label: n.label, x: n.x, y: n.y, data: Object.keys(data).length ? (data as Prisma.InputJsonValue) : Prisma.JsonNull },
