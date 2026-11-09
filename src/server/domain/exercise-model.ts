@@ -8,7 +8,7 @@ import { randomBytes } from "node:crypto";
 // bonnes réponses) est décidé ici, jamais par l'IA.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { DIFFICULTIES, POINT_STEP, QUESTION_TYPES, TYPE_LABEL, type QuestionType } from "./exercise-types";
+import { DIFFICULTIES, POINT_STEP, QUESTION_TYPES, TYPE_LABEL, type QuestionType, CORRECTION_MODES, MAX_SOURCE_DOCUMENTS, PRACTICE_TYPES } from "./exercise-types";
 export { DIFFICULTIES, POINT_STEP, QUESTION_TYPES, TYPE_LABEL };
 export type { QuestionType };
 
@@ -25,7 +25,10 @@ const id = z.string().min(1).max(64);
 
 export const exerciseConfigSchema = z
   .object({
+    /** Document principal : il rattache l'exercice à sa matière. */
     documentId: id,
+    /** Tous les documents sources, document principal compris (facultatif quand il n'y en a qu'un). */
+    documentIds: z.array(id).min(1).max(MAX_SOURCE_DOCUMENTS).optional(),
     title: z.string().trim().max(160).optional(),
     questionCount: z.number().int().min(1),
     /** Barème : note sur 10, 20, 100 ou personnalisée (maximum 100). */
@@ -37,11 +40,15 @@ export const exerciseConfigSchema = z
       conceptIds: z.array(id).max(100).optional(),
     }),
     difficulty: z.enum(DIFFICULTIES),
+    correctionMode: z.enum(CORRECTION_MODES).default("final"),
+    /** Part de questions pratiques en pourcentage ; absente, tous les types sont alternés. */
+    practicePercent: z.number().int().min(0).max(100).optional(),
   })
   .superRefine((c, ctx) => {
     if (c.questionCount > maxQuestions()) ctx.addIssue({ code: "custom", path: ["questionCount"], message: `Maximum ${maxQuestions()} questions.` });
     if (Math.abs(c.totalPoints / POINT_STEP - Math.round(c.totalPoints / POINT_STEP)) > 1e-9) ctx.addIssue({ code: "custom", path: ["totalPoints"], message: "Le barème doit être un multiple de 0,25." });
     if (c.totalPoints / POINT_STEP < c.questionCount) ctx.addIssue({ code: "custom", path: ["totalPoints"], message: "Barème trop petit pour ce nombre de questions (0,25 point minimum par question)." });
+    if (c.coverage.mode !== "all" && new Set([c.documentId, ...(c.documentIds ?? [])]).size > 1) ctx.addIssue({ code: "custom", path: ["coverage"], message: "Avec plusieurs documents, l'exercice couvre obligatoirement tous leurs contenus." });
     if (c.coverage.mode === "sections" && !c.coverage.sectionIds?.length) ctx.addIssue({ code: "custom", path: ["coverage"], message: "Choisissez au moins une section." });
     if (c.coverage.mode === "concepts" && !c.coverage.conceptIds?.length) ctx.addIssue({ code: "custom", path: ["coverage"], message: "Choisissez au moins une notion." });
   });
@@ -77,15 +84,30 @@ export interface Slot {
   difficulty: Difficulty;
 }
 
-export function buildSlots(count: number, types: QuestionType[], difficulty: ExerciseConfig["difficulty"]): Slot[] {
+/** Type de chaque créneau. Avec une part de pratique, les questions pratiques sont réparties régulièrement dans l'exercice. */
+function typeSequence(count: number, types: QuestionType[], practicePercent?: number): QuestionType[] {
   const uniq = [...new Set(types)];
+  const practice = uniq.filter((t) => PRACTICE_TYPES.includes(t));
+  const theory = uniq.filter((t) => !PRACTICE_TYPES.includes(t));
+  if (practicePercent === undefined || !practice.length || !theory.length) return Array.from({ length: count }, (_, i) => uniq[i % uniq.length]);
+  const practiceCount = Math.round((count * practicePercent) / 100);
+  let p = 0;
+  let t = 0;
+  return Array.from({ length: count }, (_, i) => {
+    const isPractice = Math.floor(((i + 1) * practiceCount) / count) > Math.floor((i * practiceCount) / count);
+    return isPractice ? practice[p++ % practice.length] : theory[t++ % theory.length];
+  });
+}
+
+export function buildSlots(count: number, types: QuestionType[], difficulty: ExerciseConfig["difficulty"], practicePercent?: number): Slot[] {
+  const sequence = typeSequence(count, types, practicePercent);
   const cycle: Difficulty[] = ["facile", "moyenne", "difficile", "moyenne"];
   return Array.from({ length: count }, (_, i) => {
     let d: Difficulty;
     if (difficulty === "progressive") d = (["facile", "moyenne", "difficile"] as const)[Math.min(2, Math.floor((i * 3) / count))];
     else if (difficulty === "melangee") d = cycle[i % cycle.length];
     else d = difficulty;
-    return { slot: i + 1, type: uniq[i % uniq.length], difficulty: d };
+    return { slot: i + 1, type: sequence[i], difficulty: d };
   });
 }
 

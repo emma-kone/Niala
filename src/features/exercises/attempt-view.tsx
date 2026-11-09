@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, CheckCircle2, ExternalLink, FlaskConical, Loader2, RefreshCw, RotateCcw } from "lucide-react";
+import { ArrowLeft, ArrowRight, CheckCircle2, ExternalLink, FlaskConical, Loader2, RefreshCw, RotateCcw, Sparkles } from "lucide-react";
 import { api } from "@/lib/client-api";
 import { routes } from "@/config/routes";
 import { cn } from "@/lib/utils";
@@ -15,7 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { AnswerText, ExpectedText, QuestionInput } from "./question-input";
 import { TestOutcomes } from "@/features/labs/test-outcomes";
 import type { Diagnosis, TestOutcome, TestSummary } from "@/features/labs/types";
-import { VERDICT_LABEL, fmtPoints, type AttemptDetail, type AttemptQuestion } from "./types";
+import { VERDICT_LABEL, fmtPoints, type AttemptDetail, type AttemptQuestion, type AttemptReview } from "./types";
 import { confirmAction } from "@/components/notifications";
 
 type SaveState = "saved" | "saving" | "error";
@@ -33,6 +33,9 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
   const [saveError, setSaveError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
   const timers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
   const pending = useRef<Map<number, unknown>>(new Map());
   const inFlight = useRef(0);
@@ -122,10 +125,44 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
       if (pending.current.size > 0) throw new Error("Certaines réponses n'ont pas pu être enregistrées. Réessayez.");
       const r = await api.post<{ attempt: AttemptDetail }>(`/api/attempts/${attemptId}/submit`);
       setAttempt(r.attempt);
+      void requestReview();
     } catch (e) {
       setActionError(errText(e, "La correction a échoué. Vos réponses sont conservées."));
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  /** Le bilan arrive après la note : un échec de l'IA ne retarde ni n'empêche la correction. */
+  async function requestReview() {
+    setReviewing(true);
+    setReviewError(null);
+    try {
+      const r = await api.post<{ attempt: AttemptDetail }>(`/api/attempts/${attemptId}/review`);
+      setAttempt(r.attempt);
+    } catch (e) {
+      setReviewError(errText(e, "Le bilan n'a pas pu être rédigé."));
+    } finally {
+      setReviewing(false);
+    }
+  }
+
+  /** Correction immédiate : la réponse en attente part avec la demande de correction. */
+  async function check(position: number) {
+    const timer = timers.current.get(position);
+    if (timer) clearTimeout(timer);
+    timers.current.delete(position);
+    pending.current.delete(position);
+    setChecking(true);
+    setActionError(null);
+    try {
+      const r = await api.post<{ attempt: AttemptDetail }>(`/api/attempts/${attemptId}/answers/${position}/check`, { value: answers[position] ?? null });
+      setAttempt(r.attempt);
+      setSave("saved");
+    } catch (e) {
+      setActionError(errText(e, "La correction de cette question a échoué. Votre réponse est conservée."));
+    } finally {
+      setChecking(false);
     }
   }
 
@@ -196,9 +233,11 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
           </div>
         </section>
 
+        <ReviewPanel review={attempt.review} busy={reviewing} error={reviewError} onRequest={() => void requestReview()} />
+
         <ol className="space-y-4">
           {attempt.questions.map((q) => (
-            <ResultCard key={q.position} q={q} subjectId={subjectId} exerciseId={exerciseId} documentId={attempt.exercise.documentId} />
+            <ResultCard key={q.position} q={q} subjectId={subjectId} exerciseId={exerciseId} documentId={attempt.exercise.documentId} comment={attempt.review?.questions.find((c) => c.position === q.position)?.comment} />
           ))}
         </ol>
       </div>
@@ -208,6 +247,13 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
   // ───────────────────────── Passage ─────────────────────────
   const q = attempt.questions[current - 1];
   const answered = attempt.questions.filter((x) => isFilled(answers[x.position])).length;
+  const immediate = attempt.correctionMode === "immediate";
+  const corrected = immediate && !!q.result && q.result.verdict !== "ungraded";
+  const navClass = (x: AttemptQuestion) => {
+    if (current === x.position) return "border-primary bg-primary text-primary-foreground";
+    if (immediate && x.result) return VERDICT_LABEL[x.result.verdict].className;
+    return isFilled(answers[x.position]) ? "border-emerald-400 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300" : "hover:bg-muted";
+  };
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6">
       <div className="mb-1 flex items-center justify-between gap-3">
@@ -219,6 +265,7 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
         </span>
       </div>
       <h1 className="typo-h2">{attempt.exercise.title}</h1>
+      <p className="typo-meta mt-0.5">{immediate ? "Correction expliquée après chaque réponse" : "Correction détaillée à la fin de l'exercice"}</p>
       <div className="mt-3 flex items-center gap-3">
         <Progress value={(answered / total) * 100} className="h-2 flex-1" aria-label="Progression" />
         <span className="typo-meta whitespace-nowrap">{answered} / {total} répondues</span>
@@ -232,7 +279,7 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
             onClick={() => void go(x.position)}
             aria-label={`Question ${x.position}${isFilled(answers[x.position]) ? " (répondue)" : ""}`}
             aria-current={current === x.position ? "step" : undefined}
-            className={cn("h-8 min-w-8 rounded-md border px-2 text-xs font-medium", current === x.position ? "border-primary bg-primary text-primary-foreground" : isFilled(answers[x.position]) ? "border-emerald-400 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300" : "hover:bg-muted")}
+            className={cn("h-8 min-w-8 rounded-md border px-2 text-xs font-medium", navClass(x))}
           >
             {x.position}
           </button>
@@ -248,8 +295,19 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
         <h2 id="question-title" className="mb-4 text-base font-semibold leading-relaxed">
           {q.type === "fill_choices" || q.type === "fill_blank" ? "Complétez la phrase :" : String(q.payload.statement)}
         </h2>
-        <QuestionInput key={q.position} q={q} value={answers[q.position]} onChange={(v) => change(q.position, v)} />
+        <QuestionInput key={q.position} q={q} value={answers[q.position]} onChange={(v) => change(q.position, v)} disabled={corrected || checking} />
+        {immediate && !corrected && (
+          <Button className="mt-4 gap-1.5" onClick={() => void check(q.position)} disabled={checking || !isFilled(answers[q.position])}>
+            {checking ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <CheckCircle2 className="h-4 w-4" aria-hidden />} {checking ? "Correction en cours…" : "Valider ma réponse"}
+          </Button>
+        )}
       </section>
+
+      {immediate && q.result && (
+        <ol className="mt-4" aria-label="Correction de la question">
+          <ResultCard q={q} subjectId={subjectId} exerciseId={exerciseId} documentId={attempt.exercise.documentId} hideStatement />
+        </ol>
+      )}
 
       {actionError && <p role="alert" className="mt-3 text-sm text-destructive">{actionError}</p>}
       <div className="mt-4 flex items-center justify-between">
@@ -258,7 +316,7 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
           <Button className="gap-1.5" onClick={() => void go(current + 1)}>Suivante <ArrowRight className="h-4 w-4" aria-hidden /></Button>
         ) : (
           <Button className="gap-1.5" onClick={() => void submit()} disabled={submitting}>
-            {submitting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <CheckCircle2 className="h-4 w-4" aria-hidden />} Terminer et corriger
+            {submitting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <CheckCircle2 className="h-4 w-4" aria-hidden />} {immediate ? "Terminer et voir le bilan" : "Valider et voir la correction"}
           </Button>
         )}
       </div>
@@ -268,6 +326,37 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
         </div>
       )}
     </div>
+  );
+}
+
+/** Bilan global rédigé par l'IA, à partir des résultats déjà établis. */
+function ReviewPanel({ review, busy, error, onRequest }: { review: AttemptReview | null; busy: boolean; error: string | null; onRequest: () => void }) {
+  if (!review) {
+    return (
+      <section aria-label="Bilan de l'IA" className="mb-5 flex flex-wrap items-center gap-3 rounded-xl border bg-card p-4 text-sm">
+        <Sparkles className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+        <p role={error ? "alert" : "status"} className={cn("min-w-0 flex-1", error ? "text-destructive" : "text-muted-foreground")}>{error ?? (busy ? "L'IA rédige le bilan détaillé de votre copie…" : "Obtenez un bilan global et une explication de vos erreurs.")}</p>
+        {busy ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-hidden /> : <Button size="sm" variant="outline" onClick={onRequest}>{error ? "Réessayer" : "Rédiger le bilan"}</Button>}
+      </section>
+    );
+  }
+  return (
+    <section aria-label="Bilan de l'IA" className="mb-5 space-y-3 rounded-xl border bg-card p-5">
+      <h2 className="flex items-center gap-2 font-semibold"><Sparkles className="h-4 w-4" aria-hidden /> Bilan de votre copie</h2>
+      <p className="text-sm leading-relaxed">{review.overview}</p>
+      {review.strengths.length > 0 && (
+        <div>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Points réussis</h3>
+          <ul className="mt-1 list-disc space-y-0.5 pl-5 text-sm">{review.strengths.map((s, i) => <li key={i}>{s}</li>)}</ul>
+        </div>
+      )}
+      {review.priorities.length > 0 && (
+        <div>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">À retravailler</h3>
+          <ul className="mt-1 space-y-1.5 text-sm">{review.priorities.map((p, i) => <li key={i}><span className="font-medium">{p.topic} : </span>{p.advice}</li>)}</ul>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -294,7 +383,7 @@ function LabLink({ exerciseId, position, kind }: { exerciseId: string; position:
   );
 }
 
-function ResultCard({ q, subjectId, exerciseId, documentId }: { q: AttemptQuestion; subjectId: string; exerciseId: string; documentId: string | null }) {
+function ResultCard({ q, subjectId, exerciseId, documentId, comment, hideStatement }: { q: AttemptQuestion; subjectId: string; exerciseId: string; documentId: string | null; comment?: string; hideStatement?: boolean }) {
   const r = q.result;
   const tests = (r?.detail as { tests?: TestOutcome[]; summary?: TestSummary; diagnoses?: Diagnosis[] } | undefined);
   const v = VERDICT_LABEL[r?.verdict ?? "ungraded"];
@@ -307,7 +396,7 @@ function ResultCard({ q, subjectId, exerciseId, documentId }: { q: AttemptQuesti
         <Badge variant="outline" className={cn("ml-auto font-medium", v.className)}>{v.label}</Badge>
         <span className="font-semibold">{fmtPoints(r?.points)} / {fmtPoints(q.points)}</span>
       </div>
-      <p className="font-medium">{statement}</p>
+      {!hideStatement && <p className="font-medium">{statement}</p>}
       <dl className="mt-3 space-y-2 text-sm">
         <div>
           <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Votre réponse</dt>
@@ -331,11 +420,13 @@ function ResultCard({ q, subjectId, exerciseId, documentId }: { q: AttemptQuesti
         <div className="mt-2 text-sm"><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Ce qui manque</p><ul className="list-disc pl-5">{(r!.detail as { missing: string[] }).missing.map((m, i) => <li key={i}>{m}</li>)}</ul></div>
       )}
       {r?.explanation && <p className="mt-3 rounded-md bg-muted/60 p-3 text-sm"><span className="font-semibold">Explication : </span>{r.explanation}</p>}
+      {comment && <p className="mt-2 rounded-md bg-muted/60 p-3 text-sm"><span className="font-semibold">Analyse de votre réponse : </span>{comment}</p>}
       {q.sourceRefs?.map((s, i) => (
         <p key={i} className="mt-2 border-l-2 border-emerald-500 pl-2 text-xs italic text-muted-foreground">
           « {s.quote} »{" "}
-          {documentId && s.page && (
-            <Link href={`${routes.subject(subjectId)}/documents/${documentId}?page=${s.page}`} className="not-italic text-primary hover:underline">
+          {s.documentName && <span className="not-italic">{s.documentName}{s.page ? " · " : ""}</span>}
+          {(s.documentId ?? documentId) && s.page && (
+            <Link href={`${routes.subject(s.subjectId ?? subjectId)}/documents/${s.documentId ?? documentId}?page=${s.page}`} className="not-italic text-primary hover:underline">
               Relire p. {s.page} <ExternalLink className="inline h-3 w-3" aria-hidden />
             </Link>
           )}

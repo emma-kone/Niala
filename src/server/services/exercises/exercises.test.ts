@@ -56,6 +56,7 @@ const QUOTES = ["Une fonction est un bloc de code reutilisable que l'on appelle 
 let calls: CompletionRequest[] = [];
 let mode: "normal" | "partial" | "ungrounded" | "garbage" = "normal";
 let evalPoints = 999;
+let reviewFails = false;
 
 function questionFor(slot: { slot: number; type: string }, quote: string) {
   const base = { slot: slot.slot, type: slot.type, statement: `Question numero ${slot.slot} sur le cours ?`, source: { quote }, concepts: ["Fonction recursive", "Parametre"], explanation: "Voir l'extrait du cours." };
@@ -81,6 +82,10 @@ const fake: AiProvider = {
     calls.push(req);
     if (req.system.includes("Tu corriges la réponse")) {
       return { model: "fake-model", text: JSON.stringify({ points: evalPoints, explanation: "Évaluation de test.", criteria: [{ label: "Critère 1", met: true }], missing: [] }) };
+    }
+    if (req.system.includes("bilan d'un exercice")) {
+      if (reviewFails) return { model: "fake-model", text: "pas du json" };
+      return { model: "fake-model", text: JSON.stringify({ overview: "Bilan de test.", strengths: ["Rappel des définitions"], priorities: [{ topic: "Récursivité", advice: "Relire le chapitre." }], questions: [{ position: 1, comment: "Commentaire de test." }, { position: 99, comment: "Position inconnue." }] }) };
     }
     if (mode === "garbage") return { model: "fake-model", text: "pas du json" };
     const m = req.user.match(/Créneaux à remplir :\n(\[[\s\S]*?\])\n\nFormat/);
@@ -143,6 +148,7 @@ beforeEach(() => {
   calls = [];
   mode = "normal";
   evalPoints = 999;
+  reviewFails = false;
   prov.__setProviderForTests(fake);
 });
 
@@ -231,6 +237,105 @@ describe("génération", () => {
     calls = [];
     await gen.generateExercise(A, cfg({ questionCount: 2, totalPoints: 4, coverage: { mode: "hard" } }));
     expect(calls.length).toBeGreaterThan(0);
+  });
+});
+
+describe("plusieurs documents sources", () => {
+  let second: string;
+  beforeAll(async () => {
+    second = await importPdf(A, subj, "second.pdf", PAGES);
+  });
+
+  it("alimente l'exercice avec chaque document et conserve leur provenance", async () => {
+    prov.__setProviderForTests(fake);
+    calls = [];
+    const r = await gen.generateExercise(A, cfg({ documentIds: [docId, second], questionCount: 4, totalPoints: 8 }));
+    expect(r.subjectId).toBe(subj);
+    const questions = await db.question.findMany({ where: { exerciseId: r.id } });
+    const used = new Set(questions.flatMap((q) => (q.sourceRefs as { documentId: string }[]).map((s) => s.documentId)));
+    expect(used).toEqual(new Set([docId, second]));
+    expect(calls.some((c) => c.user.includes("SECRET_AUTRE_DOC"))).toBe(false);
+    const ex = await db.exercise.findUniqueOrThrow({ where: { id: r.id } });
+    expect(ex.documentId).toBe(docId);
+    expect(ex.title).toContain("et 1 autre");
+  });
+
+  it("refuse le document d'un autre étudiant au milieu des sources", async () => {
+    await expect(gen.generateExercise(A, cfg({ documentIds: [docId, docB] }))).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("refuse une couverture par sections avec plusieurs documents", async () => {
+    await expect(gen.generateExercise(A, cfg({ documentIds: [docId, second], coverage: { mode: "sections", sectionIds: ["x"] } }))).rejects.toMatchObject({ status: 422 });
+  });
+});
+
+describe("modes de correction", () => {
+  const start = async (correctionMode?: string) => {
+    prov.__setProviderForTests(fake);
+    const r = await gen.generateExercise(A, cfg({ types: ["true_false"], questionCount: 3, totalPoints: 6, difficulty: "moyenne", ...(correctionMode ? { correctionMode } : {}) }));
+    return (await att.startAttempt(A, r.id, { fresh: true })).id;
+  };
+
+  it("à la fin par défaut : aucune correction avant la validation", async () => {
+    const id = await start();
+    expect((await att.getAttempt(A, id)).correctionMode).toBe("final");
+    await att.saveAnswer(A, id, 1, true);
+    await expect(att.checkAnswer(A, id, 1, true)).rejects.toMatchObject({ status: 409 });
+    const a = await att.getAttempt(A, id);
+    expect(JSON.stringify(a)).not.toMatch(/"verdict"|"expected"/);
+  });
+
+  it("en temps réel : la question validée est corrigée seule, les autres restent cachées", async () => {
+    const id = await start("immediate");
+    const a = await att.checkAnswer(A, id, 1, true);
+    expect(a.status).toBe("IN_PROGRESS");
+    expect(a.questions[0].result).toMatchObject({ verdict: "correct", points: 2 });
+    expect(a.questions[0].result?.explanation).toBeTruthy();
+    expect(a.questions[1].result).toBeUndefined();
+    expect(JSON.stringify(a.questions[1])).not.toMatch(/expected|sourceRefs/);
+  });
+
+  it("en temps réel : une réponse corrigée ne peut plus être changée", async () => {
+    const id = await start("immediate");
+    await att.checkAnswer(A, id, 1, false);
+    await expect(att.saveAnswer(A, id, 1, true)).rejects.toMatchObject({ status: 409 });
+    const again = await att.checkAnswer(A, id, 1, true);
+    expect(again.questions[0].result?.verdict).toBe("incorrect");
+  });
+
+  it("en temps réel : la fin conserve les corrections et traite le reste", async () => {
+    const id = await start("immediate");
+    await att.checkAnswer(A, id, 1, true);
+    await att.saveAnswer(A, id, 2, true);
+    const done = await att.submitAttempt(A, id);
+    expect(done.status).toBe("GRADED");
+    expect(done.questions.map((q) => q.result?.verdict)).toEqual(["correct", "correct", "skipped"]);
+    expect(done.score).toBe(4);
+  });
+
+  it("le bilan de l'IA est conservé, filtré, et n'est produit qu'une fois", async () => {
+    const { reviewAttempt } = await import("./review");
+    const id = await start();
+    await expect(reviewAttempt(A, id)).rejects.toMatchObject({ status: 409 });
+    await att.saveAnswer(A, id, 1, true);
+    await att.submitAttempt(A, id);
+    const scored = (await att.getAttempt(A, id)).score;
+    const r = await reviewAttempt(A, id);
+    expect(r.review).toMatchObject({ overview: "Bilan de test.", questions: [{ position: 1 }] });
+    expect(r.score).toBe(scored);
+    calls = [];
+    await reviewAttempt(A, id);
+    expect(calls).toHaveLength(0);
+    await expect(reviewAttempt(B, id)).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("un bilan impossible n'altère pas la correction", async () => {
+    const { reviewAttempt } = await import("./review");
+    const id = await start();
+    await att.submitAttempt(A, id);
+    reviewFails = true;
+    await expect(reviewAttempt(A, id)).rejects.toMatchObject({ status: 502 });
+    expect((await att.getAttempt(A, id)).status).toBe("GRADED");
   });
 });
 

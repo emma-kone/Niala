@@ -1,4 +1,4 @@
-import type { QuestionType } from "@/server/domain/exercise-types";
+import type { CorrectionMode, QuestionType } from "@/server/domain/exercise-types";
 
 export interface ExerciseListItem {
   id: string;
@@ -26,7 +26,7 @@ export interface ExerciseDetail {
   totalPoints: number;
   notice: string | null;
   requested: number | null;
-  config: { types: string[]; difficulty: string | null; coverage: string | null };
+  config: { types: string[]; difficulty: string | null; coverage: string | null; correctionMode: CorrectionMode; practicePercent: number | null; sources: { id: string; name: string }[] };
   questions: { position: number; type: QuestionType; points: number; difficulty: string }[];
   attempts: { id: string; status: "IN_PROGRESS" | "SUBMITTED" | "GRADED"; score: number | null; maxScore: number | null; startedAt: string; finishedAt: string | null; durationSec: number | null; answered: number }[];
 }
@@ -52,13 +52,22 @@ export interface AttemptQuestion {
   payload: Record<string, unknown>;
   answer: unknown;
   result?: QuestionResult | null;
-  sourceRefs?: { quote: string; page: number | null }[];
+  sourceRefs?: { quote: string; page: number | null; documentId?: string; documentName?: string; subjectId?: string | null }[];
   concepts?: { id: string; name: string }[];
+}
+
+export interface AttemptReview {
+  overview: string;
+  strengths: string[];
+  priorities: { topic: string; advice: string }[];
+  questions: { position: number; comment: string }[];
 }
 
 export interface AttemptDetail {
   id: string;
   status: "IN_PROGRESS" | "SUBMITTED" | "GRADED";
+  correctionMode: CorrectionMode;
+  review: AttemptReview | null;
   exercise: { id: string; title: string; totalPoints: number; documentId: string | null; documentName: string | null; versionNumber: number | null; subjectId: string };
   lastPosition: number;
   score: number | null;

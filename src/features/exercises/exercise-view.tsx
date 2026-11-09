@@ -95,7 +95,12 @@ export default function ExerciseView({ subjectId, exerciseId }: { subjectId: str
         ) : (
           <span>Document source supprimé</span>
         )}
+        {ex.config.sources.length > 1 && <span>et {ex.config.sources.length - 1} autre{ex.config.sources.length > 2 ? "s" : ""} document{ex.config.sources.length > 2 ? "s" : ""}</span>}
         <span>Créé le {new Date(ex.createdAt).toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" })}</span>
+      </p>
+      <p className="typo-meta mt-1">
+        {ex.config.correctionMode === "immediate" ? "Correction expliquée après chaque réponse" : "Correction détaillée à la fin"}
+        {ex.config.practicePercent !== null ? ` · ${100 - ex.config.practicePercent} % théorie, ${ex.config.practicePercent} % pratique` : ""}
       </p>
 
       {ex.notice && <p role="note" className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">{ex.notice}</p>}

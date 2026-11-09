@@ -31,6 +31,16 @@ export const TYPE_LABEL: Record<QuestionType, string> = {
   sql: "Exercice SQL",
 };
 
+/** Questions de mise en pratique : ce sont elles que la jauge théorie / pratique répartit face aux autres. */
+export const PRACTICE_TYPES: readonly QuestionType[] = ["code", "sql", "practical"];
+/** Types dont la présence fait apparaître la jauge dans le formulaire. */
+export const PROGRAMMING_TYPES: readonly QuestionType[] = ["code", "sql"];
+export const MAX_SOURCE_DOCUMENTS = 8;
+
+/** immediate : explication après chaque réponse ; final : correction et bilan une fois tout traité. */
+export const CORRECTION_MODES = ["immediate", "final"] as const;
+export type CorrectionMode = (typeof CORRECTION_MODES)[number];
+
 export const DIFFICULTIES = ["facile", "moyenne", "difficile", "progressive", "melangee"] as const;
 export const DIFFICULTY_LABEL: Record<(typeof DIFFICULTIES)[number], string> = {
   facile: "Facile",

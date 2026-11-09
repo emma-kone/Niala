@@ -2,32 +2,186 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Loader2, Sparkles } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, CheckCircle2, FileText, FolderOpen, Loader2, ListChecks, Plus, Sparkles, Upload, X, Zap } from "lucide-react";
 import { api } from "@/lib/client-api";
 import { routes } from "@/config/routes";
 import { cn } from "@/lib/utils";
-import { DIFFICULTIES, DIFFICULTY_LABEL, POINT_STEP, QUESTION_TYPES, TYPE_LABEL, type QuestionType } from "@/server/domain/exercise-types";
+import { CORRECTION_MODES, DIFFICULTIES, DIFFICULTY_LABEL, MAX_SOURCE_DOCUMENTS, POINT_STEP, PROGRAMMING_TYPES, QUESTION_TYPES, TYPE_LABEL, type CorrectionMode, type QuestionType } from "@/server/domain/exercise-types";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Slider } from "@/components/ui/slider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SubjectIcon } from "@/components/subject-icon";
+import { uploadFiles, type UploadItem } from "@/features/subject-files/upload";
 import { fmtPoints, type ExerciseOptions } from "./types";
 
 const errText = (e: unknown, fb: string) => (e instanceof Error ? e.message : fb);
 type Scale = "10" | "20" | "100" | "custom";
 type Coverage = "all" | "sections" | "concepts" | "hard";
+interface Source {
+  id: string;
+  name: string;
+  ready: boolean;
+}
+interface SubjectChoice {
+  id: string;
+  name: string;
+  color: string;
+  icon?: string | null;
+}
+
 const HINT: Partial<Record<QuestionType, string>> = {
-  code: "Corrigé par lecture (les tests d'exécution relèvent du laboratoire de code).",
+  code: "Corrigé par tests exécutés quand la solution de référence est vérifiable.",
   sql: "Corrigé par comparaison à la requête de référence.",
   practical: "À proposer seulement si le cours contient des exercices ou des procédures.",
 };
+const CORRECTION_LABEL: Record<CorrectionMode, { title: string; text: string; icon: typeof Zap }> = {
+  immediate: { title: "En temps réel", text: "L'explication s'affiche après chaque réponse.", icon: Zap },
+  final: { title: "À la fin", text: "Vous validez tout, puis l'IA détaille la correction.", icon: ListChecks },
+};
+const ACCEPTED_FILES = ".pdf,.docx,.pptx,.txt,.md";
+const CARD = "rounded-3xl border bg-card p-5";
+
+const sourceOf = (o: ExerciseOptions): Source => ({ id: o.document.id, name: o.document.name, ready: o.document.ready });
+const optionsOf = (id: string) => api.get<ExerciseOptions>(`/api/files/${id}/exercise-options`);
+
+/** Documents sources : ceux déjà rangés dans une matière, ou un fichier venu d'ailleurs importé à l'instant. */
+function SourcesPicker({ subjectId, sources, onChange }: { subjectId: string; sources: Source[]; onChange: (update: (list: Source[]) => Source[]) => void }) {
+  const [open, setOpen] = useState(false);
+  const [subjects, setSubjects] = useState<SubjectChoice[]>([]);
+  const [browsing, setBrowsing] = useState(subjectId);
+  const [docs, setDocs] = useState<{ id: string; name: string }[] | null>(null);
+  const [uploads, setUploads] = useState<UploadItem[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const input = useRef<HTMLInputElement>(null);
+  const full = sources.length >= MAX_SOURCE_DOCUMENTS;
+
+  useEffect(() => {
+    api.get<{ subjects: SubjectChoice[] }>("/api/subjects").then((r) => setSubjects(r.subjects)).catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    api
+      .get<{ documents: { id: string; name: string }[] }>(`/api/subjects/${browsing}/documents`)
+      .then((r) => !cancelled && setDocs(r.documents))
+      .catch(() => !cancelled && setDocs([]));
+    return () => {
+      cancelled = true;
+      setDocs(null);
+    };
+  }, [open, browsing]);
+
+  async function add(id: string) {
+    setError(null);
+    try {
+      const source = sourceOf(await optionsOf(id));
+      onChange((list) => (list.some((s) => s.id === id) || list.length >= MAX_SOURCE_DOCUMENTS ? list : [...list, source]));
+    } catch (e) {
+      setError(errText(e, "Ce document n'a pas pu être ajouté."));
+    }
+  }
+
+  async function importFiles(files: File[]) {
+    if (!files.length) return;
+    const room = MAX_SOURCE_DOCUMENTS - sources.length;
+    const accepted = files.slice(0, room);
+    setError(files.length > room ? `${MAX_SOURCE_DOCUMENTS} documents maximum : les fichiers en trop n'ont pas été importés.` : null);
+    const items = accepted.map((f, i): UploadItem => ({ key: `${f.name}-${i}-${Date.now()}`, name: f.name, phase: "waiting" }));
+    setUploads((u) => [...u, ...items]);
+    const finished = new Map<string, UploadItem>(items.map((i) => [i.key, i]));
+    await uploadFiles(accepted, { subjectId, folderId: null }, (key, patch) => {
+      finished.set(key, { ...finished.get(key)!, ...patch });
+      setUploads((u) => u.map((x) => (x.key === key ? { ...x, ...patch } : x)));
+    }, items.map((i) => i.key));
+    for (const item of finished.values()) {
+      if (item.phase !== "done" || !item.documentId) continue;
+      await add(item.documentId);
+      setUploads((u) => u.filter((x) => x.key !== item.key));
+    }
+  }
+
+  const selected = new Set(sources.map((s) => s.id));
+  const sending = uploads.some((u) => u.phase === "waiting" || u.phase === "sending" || u.phase === "processing");
+
+  return (
+    <section aria-labelledby="ex-sources" className={CARD}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 id="ex-sources" className="font-semibold">Documents sources</h2>
+          <p className="typo-meta mt-0.5">Les questions ne s&apos;appuient que sur ces documents ({sources.length} / {MAX_SOURCE_DOCUMENTS}).</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Popover open={open} onOpenChange={setOpen}>
+            <PopoverTrigger asChild>
+              <Button type="button" variant="outline" size="sm" className="gap-1.5 rounded-full" disabled={full}><FolderOpen className="h-3.5 w-3.5" aria-hidden /> Mes matières</Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-80 space-y-2 rounded-2xl p-3">
+              <Select value={browsing} onValueChange={setBrowsing}>
+                <SelectTrigger aria-label="Matière" className="h-9"><SelectValue /></SelectTrigger>
+                <SelectContent>{subjects.map((s) => <SelectItem key={s.id} value={s.id}><span className="flex items-center gap-2"><SubjectIcon icon={s.icon} name={s.name} color={s.color} size="xs" /> {s.name}</span></SelectItem>)}</SelectContent>
+              </Select>
+              <ul className="max-h-60 space-y-px overflow-y-auto">
+                {docs === null && <li className="px-2 py-1 text-xs text-muted-foreground">Chargement…</li>}
+                {docs?.length === 0 && <li className="px-2 py-1 text-xs text-muted-foreground">Aucun document dans cette matière.</li>}
+                {docs?.map((d) => (
+                  <li key={d.id}>
+                    <label className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-muted">
+                      <Checkbox checked={selected.has(d.id)} disabled={!selected.has(d.id) && full} onCheckedChange={(c) => (c === true ? void add(d.id) : onChange((list) => list.filter((s) => s.id !== d.id)))} />
+                      <span className="min-w-0 flex-1 truncate">{d.name}</span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            </PopoverContent>
+          </Popover>
+          <input ref={input} type="file" multiple accept={ACCEPTED_FILES} className="hidden" onChange={(e) => { const files = [...(e.target.files ?? [])]; e.target.value = ""; void importFiles(files); }} />
+          <Button type="button" variant="outline" size="sm" className="gap-1.5 rounded-full" disabled={full || sending} onClick={() => input.current?.click()}><Upload className="h-3.5 w-3.5" aria-hidden /> Importer un fichier</Button>
+        </div>
+      </div>
+      {sources.length === 0 && uploads.length === 0 && (
+        <p className="mt-3 flex items-center gap-2 rounded-2xl border border-dashed p-4 text-sm text-muted-foreground"><Plus className="h-4 w-4 shrink-0" aria-hidden /> Ajoutez au moins un document : depuis vos matières, ou un fichier téléchargé ailleurs.</p>
+      )}
+      {(sources.length > 0 || uploads.length > 0) && (
+        <ul className="mt-3 grid gap-2 sm:grid-cols-2" aria-label="Documents choisis">
+          {sources.map((s) => (
+            <li key={s.id} className={cn("flex items-center gap-2 rounded-2xl bg-muted/50 py-2 pl-3 pr-2 text-sm", !s.ready && "ring-1 ring-destructive")}>
+              <FileText className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-medium" title={s.name}>{s.name}</span>
+                {!s.ready && <span className="block text-xs text-destructive">Texte non extrait : document inutilisable</span>}
+              </span>
+              <button type="button" aria-label={`Retirer ${s.name}`} className="rounded-full p-1 text-muted-foreground hover:bg-background hover:text-foreground" onClick={() => onChange((list) => list.filter((x) => x.id !== s.id))}><X className="h-3.5 w-3.5" aria-hidden /></button>
+            </li>
+          ))}
+          {uploads.map((u) => (
+            <li key={u.key} className="flex items-center gap-2 rounded-2xl bg-muted/50 py-2 pl-3 pr-2 text-sm">
+              {u.phase === "error" ? <X className="h-4 w-4 shrink-0 text-destructive" aria-hidden /> : <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" aria-hidden />}
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-medium" title={u.name}>{u.name}</span>
+                <span className={cn("block text-xs", u.phase === "error" ? "text-destructive" : "text-muted-foreground")}>{u.phase === "error" ? (u.message ?? "Import impossible.") : "Import et lecture du fichier…"}</span>
+              </span>
+              {u.phase === "error" && <button type="button" aria-label={`Fermer ${u.name}`} className="rounded-full p-1 text-muted-foreground hover:bg-background" onClick={() => setUploads((list) => list.filter((x) => x.key !== u.key))}><X className="h-3.5 w-3.5" aria-hidden /></button>}
+            </li>
+          ))}
+        </ul>
+      )}
+      {error && <p role="alert" className="mt-2 text-sm text-destructive">{error}</p>}
+    </section>
+  );
+}
 
 export default function CreateExerciseView({ subjectId, documentId, presetConcepts = [] }: { subjectId: string; documentId: string | null; presetConcepts?: string[] }) {
   const router = useRouter();
+  const [setup, setSetup] = useState<{ aiConfigured: boolean; maxQuestions: number } | null>(null);
   const [opts, setOpts] = useState<ExerciseOptions | null>(null);
+  const [sources, setSources] = useState<Source[]>([]);
   const [error, setError] = useState<{ message: string; status?: number } | null>(null);
 
   const [title, setTitle] = useState("");
@@ -39,16 +193,18 @@ export default function CreateExerciseView({ subjectId, documentId, presetConcep
   const [sectionIds, setSectionIds] = useState<Set<string>>(new Set());
   const [conceptIds, setConceptIds] = useState<Set<string>>(new Set());
   const [difficulty, setDifficulty] = useState<(typeof DIFFICULTIES)[number]>("progressive");
+  const [correctionMode, setCorrectionMode] = useState<CorrectionMode>("final");
+  const [practice, setPractice] = useState(50);
   const [busy, setBusy] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!documentId) return setError({ message: "Aucun document choisi. Ouvrez un document et utilisez « Créer un exercice »." });
-    api
-      .get<ExerciseOptions>(`/api/files/${documentId}/exercise-options`)
+    api.get<{ aiConfigured: boolean; maxQuestions: number }>("/api/exercises/setup").then(setSetup).catch((e) => setError({ message: errText(e, "Chargement impossible."), status: (e as { status?: number }).status }));
+    if (!documentId) return;
+    optionsOf(documentId)
       .then((o) => {
         if (o.document.subjectId !== subjectId) throw Object.assign(new Error("Document introuvable."), { status: 404 });
-        setOpts(o);
+        setSources([sourceOf(o)]);
         // Suggestion de la progression : notions préchoisies (uniquement celles réellement présentes dans l'analyse)
         const valid = presetConcepts.filter((id) => o.concepts.some((c) => c.id === id));
         if (valid.length) {
@@ -58,25 +214,44 @@ export default function CreateExerciseView({ subjectId, documentId, presetConcep
         }
       })
       .catch((e) => setError({ message: errText(e, "Chargement impossible."), status: (e as { status?: number }).status }));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentId, subjectId]);
 
+  // Sections et notions n'ont de sens que pour un document unique.
+  const singleId = sources.length === 1 ? sources[0].id : null;
+  useEffect(() => {
+    if (!singleId) return;
+    let cancelled = false;
+    optionsOf(singleId).then((o) => !cancelled && setOpts(o)).catch(() => undefined);
+    return () => {
+      cancelled = true;
+      setOpts(null);
+    };
+  }, [singleId]);
+
+  const effectiveCoverage: Coverage = singleId ? coverage : "all";
   const total = scale === "custom" ? Number(custom.replace(",", ".")) : Number(scale);
   const n = Number(count);
+  const showGauge = PROGRAMMING_TYPES.some((t) => types.has(t));
+  const hasTheory = [...types].some((t) => t !== "code" && t !== "sql" && t !== "practical");
+  const practicePercent = hasTheory ? practice : 100;
+  const practiceCount = Number.isInteger(n) && n > 0 ? Math.round((n * practicePercent) / 100) : 0;
+
   const problems = useMemo(() => {
     const p: string[] = [];
-    if (!opts) return p;
+    if (!setup) return p;
+    if (sources.length === 0) p.push("Ajoutez au moins un document.");
+    if (sources.some((s) => !s.ready)) p.push("Retirez les documents dont le texte n'a pas pu être extrait.");
     if (!Number.isInteger(n) || n < 1) p.push("Indiquez un nombre de questions.");
-    else if (n > opts.maxQuestions) p.push(`Maximum ${opts.maxQuestions} questions.`);
+    else if (n > setup.maxQuestions) p.push(`Maximum ${setup.maxQuestions} questions.`);
     if (!Number.isFinite(total) || total <= 0) p.push("Indiquez un barème.");
     else if (total > 100) p.push("Le barème est limité à 100 points.");
     else if (Math.abs(total / POINT_STEP - Math.round(total / POINT_STEP)) > 1e-9) p.push("Le barème doit être un multiple de 0,25.");
     else if (Number.isInteger(n) && n >= 1 && total / POINT_STEP < n) p.push("Barème trop petit : 0,25 point minimum par question.");
     if (types.size === 0) p.push("Choisissez au moins un type de question.");
-    if (coverage === "sections" && sectionIds.size === 0) p.push("Choisissez au moins une section.");
-    if (coverage === "concepts" && conceptIds.size === 0) p.push("Choisissez au moins une notion.");
+    if (effectiveCoverage === "sections" && sectionIds.size === 0) p.push("Choisissez au moins une section.");
+    if (effectiveCoverage === "concepts" && conceptIds.size === 0) p.push("Choisissez au moins une notion.");
     return p;
-  }, [opts, n, total, types, coverage, sectionIds, conceptIds]);
+  }, [setup, sources, n, total, types, effectiveCoverage, sectionIds, conceptIds]);
 
   const toggle = <T,>(set: Set<T>, v: T, on: boolean) => {
     const next = new Set(set);
@@ -87,20 +262,23 @@ export default function CreateExerciseView({ subjectId, documentId, presetConcep
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!opts || problems.length) return;
+    if (problems.length || !sources.length) return;
     setBusy(true);
     setSubmitError(null);
     try {
-      const r = await api.post<{ id: string }>("/api/exercises", {
-        documentId: opts.document.id,
+      const r = await api.post<{ id: string; subjectId: string }>("/api/exercises", {
+        documentId: sources[0].id,
+        documentIds: sources.map((s) => s.id),
         title: title.trim() || undefined,
         questionCount: n,
         totalPoints: total,
         types: [...types],
-        coverage: { mode: coverage, ...(coverage === "sections" ? { sectionIds: [...sectionIds] } : {}), ...(coverage === "concepts" ? { conceptIds: [...conceptIds] } : {}) },
+        coverage: { mode: effectiveCoverage, ...(effectiveCoverage === "sections" ? { sectionIds: [...sectionIds] } : {}), ...(effectiveCoverage === "concepts" ? { conceptIds: [...conceptIds] } : {}) },
         difficulty,
+        correctionMode,
+        ...(showGauge ? { practicePercent } : {}),
       });
-      router.push(`${routes.subject(subjectId)}/exercices/${r.id}`);
+      router.push(`${routes.subject(r.subjectId)}/exercices/${r.id}`);
     } catch (err) {
       setSubmitError(errText(err, "La génération a échoué."));
       setBusy(false);
@@ -116,122 +294,155 @@ export default function CreateExerciseView({ subjectId, documentId, presetConcep
       </div>
     );
   }
-  if (!opts) return <div className="mx-auto max-w-2xl space-y-3 px-4 py-8" aria-busy><Skeleton className="h-8 w-72" /><Skeleton className="h-96 rounded-xl" /></div>;
+  if (!setup) return <div className="mx-auto max-w-6xl space-y-3 px-4 py-8" aria-busy><Skeleton className="h-8 w-72" /><Skeleton className="h-96 rounded-3xl" /></div>;
 
-  const hasAnalysis = !!opts.analysis;
+  const hasAnalysis = !!opts?.analysis;
   const per = Number.isInteger(n) && n > 0 && total > 0 ? total / n : null;
-  const blocked = !opts.aiConfigured || !opts.document.ready;
+  const back = documentId ? `${routes.subject(subjectId)}/documents/${documentId}` : routes.subject(subjectId);
+  const coverageReason = !singleId ? "un seul document requis" : hasAnalysis ? "aucune notion extraite" : "analysez d'abord le document";
 
   return (
-    <form onSubmit={submit} className="mx-auto w-full max-w-2xl px-4 py-6 sm:px-6">
-      <Link href={`${routes.subject(subjectId)}/documents/${opts.document.id}`} className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="h-4 w-4" aria-hidden /> Retour au document</Link>
+    <form onSubmit={submit} className="mx-auto w-full max-w-[1320px] px-4 py-6 sm:px-6">
+      <Link href={back} className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="h-4 w-4" aria-hidden /> Retour</Link>
       <h1 className="typo-h1">Créer un exercice</h1>
-      <p className="typo-subtitle mt-1">Source unique : <strong>{opts.document.name}</strong>. Les autres documents de la matière ne sont pas utilisés.</p>
+      <p className="typo-subtitle mt-1">Choisissez vos sources et réglez l&apos;exercice : rien n&apos;est inventé en dehors de vos documents.</p>
 
-      {!opts.aiConfigured && <p role="alert" className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">Le service d&apos;IA n&apos;est pas configuré (variable <code>ANTHROPIC_API_KEY</code>) : la génération d&apos;exercices est indisponible.</p>}
-      {!opts.document.ready && <p role="alert" className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">Le texte de ce document n&apos;a pas pu être extrait : impossible de créer un exercice.</p>}
+      {!setup.aiConfigured && <p role="alert" className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">Le service d&apos;IA n&apos;est pas configuré : la génération d&apos;exercices est indisponible.</p>}
 
-      <div className="mt-6 space-y-6">
-        <div className="space-y-1.5">
-          <Label htmlFor="ex-title">Titre (facultatif)</Label>
-          <Input id="ex-title" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={160} placeholder={`Exercice — ${opts.document.name}`} />
-        </div>
+      <div className="mt-5 grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
+        <div className="space-y-4">
+          <SourcesPicker subjectId={subjectId} sources={sources} onChange={setSources} />
 
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="space-y-1.5">
-            <Label htmlFor="ex-count">Nombre de questions</Label>
-            <Input id="ex-count" type="number" min={1} max={opts.maxQuestions} value={count} onChange={(e) => setCount(e.target.value)} />
-            <p className="typo-meta">Maximum {opts.maxQuestions}. Si le document ne fournit pas assez de matière, l&apos;exercice contiendra moins de questions (rien n&apos;est inventé).</p>
-          </div>
-          <fieldset className="space-y-1.5">
-            <legend className="text-sm font-medium">Barème (total des points)</legend>
-            <div className="flex flex-wrap gap-2">
-              {(["10", "20", "100", "custom"] as Scale[]).map((s) => (
-                <label key={s} className={cn("flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm", scale === s && "border-primary bg-primary/5")}>
-                  <input type="radio" name="scale" checked={scale === s} onChange={() => setScale(s)} />
-                  {s === "custom" ? "Personnalisé" : `Sur ${s}`}
+          <fieldset className={CARD}>
+            <legend className="sr-only">Types de questions</legend>
+            <h2 className="font-semibold">Types de questions</h2>
+            <p className="typo-meta mt-0.5">Seuls les types cochés seront utilisés.</p>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              {QUESTION_TYPES.map((t) => (
+                <label key={t} className={cn("flex cursor-pointer items-start gap-2 rounded-2xl border px-3 py-2 text-sm transition-colors", types.has(t) && "border-primary bg-primary/5")}>
+                  <Checkbox checked={types.has(t)} onCheckedChange={(c) => setTypes(toggle(types, t, c === true))} className="mt-0.5" />
+                  <span>{TYPE_LABEL[t]}{HINT[t] && <span className="typo-meta block">{HINT[t]}</span>}</span>
                 </label>
               ))}
             </div>
-            {scale === "custom" && <Input aria-label="Barème personnalisé (maximum 100)" inputMode="decimal" value={custom} onChange={(e) => setCustom(e.target.value)} className="w-32" />}
-            <p className="typo-meta">La somme des points des questions est exactement égale au barème.</p>
+          </fieldset>
+
+          <fieldset className={CARD}>
+            <legend className="sr-only">Couverture du cours</legend>
+            <h2 className="font-semibold">Couverture du cours</h2>
+            <div className="mt-2 grid gap-x-4 gap-y-1.5 sm:grid-cols-2">
+              {([
+                ["all", "Tout le contenu", true],
+                ["sections", "Certaines sections", hasAnalysis && (opts?.sections.length ?? 0) > 0],
+                ["concepts", "Certaines notions", hasAnalysis && (opts?.concepts.length ?? 0) > 0],
+                ["hard", "Les notions difficiles ou principales", hasAnalysis && (opts?.concepts.length ?? 0) > 0],
+              ] as [Coverage, string, boolean][]).map(([v, label, ok]) => (
+                <label key={v} className={cn("flex items-center gap-2 text-sm", !ok && "opacity-50")}>
+                  <input type="radio" name="coverage" checked={effectiveCoverage === v} disabled={!ok} onChange={() => setCoverage(v)} />
+                  {label}
+                  {!ok && <span className="typo-meta">— {coverageReason}</span>}
+                </label>
+              ))}
+            </div>
+            {effectiveCoverage === "sections" && opts && (
+              <ul className="mt-3 max-h-56 space-y-1 overflow-y-auto rounded-2xl border p-2" aria-label="Sections">
+                {opts.sections.map((s) => (
+                  <li key={s.id} style={{ paddingLeft: s.level * 14 }}>
+                    <label className="flex items-center gap-2 text-sm">
+                      <Checkbox checked={sectionIds.has(s.id)} onCheckedChange={(c) => setSectionIds(toggle(sectionIds, s.id, c === true))} />
+                      {s.numbering && <span className="text-xs font-semibold text-muted-foreground">{s.numbering}</span>} {s.label}
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {effectiveCoverage === "concepts" && opts && (
+              <ul className="mt-3 max-h-56 space-y-1 overflow-y-auto rounded-2xl border p-2" aria-label="Notions">
+                {opts.concepts.map((c) => (
+                  <li key={c.id}>
+                    <label className="flex items-center gap-2 text-sm">
+                      <Checkbox checked={conceptIds.has(c.id)} onCheckedChange={(v) => setConceptIds(toggle(conceptIds, c.id, v === true))} />
+                      {c.name}{c.importance === 3 && <span className="typo-meta">principale</span>}
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {effectiveCoverage === "hard" && <p className="typo-meta mt-2">Notions que vous maîtrisez le moins ; à défaut d&apos;historique, notions principales du cours.</p>}
           </fieldset>
         </div>
 
-        <fieldset className="space-y-2">
-          <legend className="text-sm font-medium">Types de questions</legend>
-          <p className="typo-meta">Seuls les types cochés seront utilisés.</p>
-          <div className="grid gap-2 sm:grid-cols-2">
-            {QUESTION_TYPES.map((t) => (
-              <label key={t} className={cn("flex cursor-pointer items-start gap-2 rounded-lg border px-3 py-2 text-sm", types.has(t) && "border-primary bg-primary/5")}>
-                <Checkbox checked={types.has(t)} onCheckedChange={(c) => setTypes(toggle(types, t, c === true))} className="mt-0.5" />
-                <span>{TYPE_LABEL[t]}{HINT[t] && <span className="typo-meta block">{HINT[t]}</span>}</span>
-              </label>
-            ))}
+        <aside aria-label="Réglages de l'exercice" className={cn(CARD, "space-y-4 lg:sticky lg:top-4")}>
+          <div className="space-y-1.5">
+            <Label htmlFor="ex-title">Titre (facultatif)</Label>
+            <Input id="ex-title" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={160} placeholder={sources[0] ? `Exercice — ${sources[0].name}` : "Exercice"} />
           </div>
-        </fieldset>
 
-        <fieldset className="space-y-2">
-          <legend className="text-sm font-medium">Couverture du cours</legend>
-          {([
-            ["all", "Tout le document", true],
-            ["sections", "Certaines sections", hasAnalysis && opts.sections.length > 0],
-            ["concepts", "Certaines notions", hasAnalysis && opts.concepts.length > 0],
-            ["hard", "Les notions difficiles ou principales", hasAnalysis && opts.concepts.length > 0],
-          ] as [Coverage, string, boolean][]).map(([v, label, ok]) => (
-            <label key={v} className={cn("flex items-center gap-2 text-sm", !ok && "opacity-50")}>
-              <input type="radio" name="coverage" checked={coverage === v} disabled={!ok} onChange={() => setCoverage(v)} />
-              {label}
-              {!ok && <span className="typo-meta">— {hasAnalysis ? "aucune notion extraite" : "analysez d'abord le document"}</span>}
-            </label>
-          ))}
-          {coverage === "sections" && (
-            <ul className="max-h-56 space-y-1 overflow-y-auto rounded-lg border p-2" aria-label="Sections">
-              {opts.sections.map((s) => (
-                <li key={s.id} style={{ paddingLeft: s.level * 14 }}>
-                  <label className="flex items-center gap-2 text-sm">
-                    <Checkbox checked={sectionIds.has(s.id)} onCheckedChange={(c) => setSectionIds(toggle(sectionIds, s.id, c === true))} />
-                    {s.numbering && <span className="text-xs font-semibold text-muted-foreground">{s.numbering}</span>} {s.label}
-                  </label>
-                </li>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="ex-count">Questions</Label>
+              <Input id="ex-count" type="number" min={1} max={setup.maxQuestions} value={count} onChange={(e) => setCount(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Difficulté</Label>
+              <Select value={difficulty} onValueChange={(v) => setDifficulty(v as typeof difficulty)}>
+                <SelectTrigger aria-label="Difficulté" className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>{DIFFICULTIES.map((d) => <SelectItem key={d} value={d}>{DIFFICULTY_LABEL[d]}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+          </div>
+          <p className="typo-meta -mt-2">Maximum {setup.maxQuestions}. Si les documents manquent de matière, l&apos;exercice contiendra moins de questions.</p>
+
+          <fieldset className="space-y-1.5">
+            <legend className="text-sm font-medium">Barème</legend>
+            <div className="flex flex-wrap gap-1.5">
+              {(["10", "20", "100", "custom"] as Scale[]).map((s) => (
+                <label key={s} className={cn("flex cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm", scale === s && "border-primary bg-primary/5")}>
+                  <input type="radio" name="scale" className="sr-only" checked={scale === s} onChange={() => setScale(s)} />
+                  {s === "custom" ? "Autre" : `Sur ${s}`}
+                </label>
               ))}
-            </ul>
-          )}
-          {coverage === "concepts" && (
-            <ul className="max-h-56 space-y-1 overflow-y-auto rounded-lg border p-2" aria-label="Notions">
-              {opts.concepts.map((c) => (
-                <li key={c.id}>
-                  <label className="flex items-center gap-2 text-sm">
-                    <Checkbox checked={conceptIds.has(c.id)} onCheckedChange={(v) => setConceptIds(toggle(conceptIds, c.id, v === true))} />
-                    {c.name}{c.importance === 3 && <span className="typo-meta">principale</span>}
+              {scale === "custom" && <Input aria-label="Barème personnalisé (maximum 100)" inputMode="decimal" value={custom} onChange={(e) => setCustom(e.target.value)} className="h-9 w-20" />}
+            </div>
+          </fieldset>
+
+          <fieldset className="space-y-1.5">
+            <legend className="text-sm font-medium">Correction</legend>
+            <div className="grid grid-cols-2 gap-2">
+              {CORRECTION_MODES.map((m) => {
+                const meta = CORRECTION_LABEL[m];
+                return (
+                  <label key={m} className={cn("flex cursor-pointer flex-col gap-1 rounded-2xl border p-3 text-sm transition-colors", correctionMode === m && "border-primary bg-primary/5")}>
+                    <input type="radio" name="correction" className="sr-only" checked={correctionMode === m} onChange={() => setCorrectionMode(m)} />
+                    <span className="flex items-center gap-1.5 font-medium"><meta.icon className="h-3.5 w-3.5" aria-hidden /> {meta.title}{correctionMode === m && <CheckCircle2 className="ml-auto h-3.5 w-3.5" aria-hidden />}</span>
+                    <span className="typo-meta">{meta.text}</span>
                   </label>
-                </li>
-              ))}
-            </ul>
+                );
+              })}
+            </div>
+          </fieldset>
+
+          {showGauge && (
+            <div className="space-y-2">
+              <div className="flex items-baseline justify-between gap-2">
+                <Label>Théorie et pratique</Label>
+                <span className="tnum text-xs font-medium">{100 - practicePercent} % théorie · {practicePercent} % pratique</span>
+              </div>
+              <Slider min={0} max={100} step={10} value={[practicePercent]} disabled={!hasTheory} onValueChange={([v]) => setPractice(v)} aria-label="Part de pratique en pourcentage" />
+              <p className="typo-meta">{hasTheory ? (Number.isInteger(n) && n > 0 ? `Environ ${n - practiceCount} question(s) de théorie et ${practiceCount} de pratique.` : "") : "Cochez un type théorique (QCM, définition…) pour répartir l'exercice."}</p>
+            </div>
           )}
-          {coverage === "hard" && <p className="typo-meta">Notions que vous maîtrisez le moins ; à défaut d&apos;historique, notions principales du cours.</p>}
-        </fieldset>
 
-        <div className="space-y-1.5">
-          <Label>Difficulté</Label>
-          <Select value={difficulty} onValueChange={(v) => setDifficulty(v as typeof difficulty)}>
-            <SelectTrigger aria-label="Difficulté" className="w-56"><SelectValue /></SelectTrigger>
-            <SelectContent>{DIFFICULTIES.map((d) => <SelectItem key={d} value={d}>{DIFFICULTY_LABEL[d]}</SelectItem>)}</SelectContent>
-          </Select>
-          <p className="typo-meta">« Progressive » : de plus en plus difficile ; « Mélangée » : alternance. Les questions difficiles valent plus de points.</p>
-        </div>
-      </div>
-
-      <div className="sticky bottom-0 mt-8 border-t bg-background/95 py-4 backdrop-blur">
-        {problems.length > 0 && <ul role="alert" className="mb-2 text-sm text-destructive">{problems.map((p) => <li key={p}>{p}</li>)}</ul>}
-        {submitError && <p role="alert" className="mb-2 text-sm font-medium text-destructive">{submitError}</p>}
-        <div className="flex flex-wrap items-center gap-3">
-          <p className="typo-meta flex-1">{Number.isFinite(total) && n ? `${n} question(s) · ${fmtPoints(total)} points${per ? ` · ≈ ${fmtPoints(Math.round(per * 100) / 100)} pt/question` : ""}` : ""}</p>
-          <Button type="submit" disabled={busy || blocked || problems.length > 0} className="gap-2">
-            {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Sparkles className="h-4 w-4" aria-hidden />}
-            {busy ? "Génération en cours… (jusqu'à une minute)" : "Générer l'exercice"}
-          </Button>
-        </div>
+          <div className="border-t pt-3">
+            {problems.length > 0 && <ul role="alert" className="mb-2 text-sm text-destructive">{problems.map((p) => <li key={p}>{p}</li>)}</ul>}
+            {submitError && <p role="alert" className="mb-2 text-sm font-medium text-destructive">{submitError}</p>}
+            <p className="typo-meta mb-2">{Number.isFinite(total) && n ? `${n} question(s) · ${fmtPoints(total)} points${per ? ` · ≈ ${fmtPoints(Math.round(per * 100) / 100)} pt/question` : ""}` : ""}</p>
+            <Button type="submit" disabled={busy || !setup.aiConfigured || problems.length > 0} className="w-full gap-2">
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Sparkles className="h-4 w-4" aria-hidden />}
+              {busy ? "Génération en cours…" : "Générer l'exercice"}
+            </Button>
+          </div>
+        </aside>
       </div>
     </form>
   );

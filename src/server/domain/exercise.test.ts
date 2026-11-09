@@ -4,6 +4,29 @@ import { gradeKeywords, gradeObjective, normalizeAnswer } from "./exercise-gradi
 
 const sum = (a: number[]) => Math.round(a.reduce((x, y) => x + y, 0) * 100) / 100;
 
+describe("répartition théorie / pratique", () => {
+  const practice = (slots: { type: string }[]) => slots.filter((s) => s.type === "code").length;
+  const types = ["qcm_single", "code"] as const;
+
+  it("respecte le pourcentage demandé", () => {
+    expect(practice(buildSlots(10, [...types], "moyenne", 90))).toBe(9);
+    expect(practice(buildSlots(10, [...types], "moyenne", 10))).toBe(1);
+    expect(practice(buildSlots(10, [...types], "moyenne", 0))).toBe(0);
+    expect(practice(buildSlots(10, [...types], "moyenne", 100))).toBe(10);
+  });
+
+  it("répartit les questions pratiques régulièrement dans l'exercice", () => {
+    const seq = buildSlots(10, [...types], "moyenne", 50).map((s) => s.type);
+    expect(seq.slice(0, 5).filter((t) => t === "code")).toHaveLength(2 + (seq[4] === "code" ? 1 : 0));
+    expect(seq.filter((t) => t === "code")).toHaveLength(5);
+  });
+
+  it("sans type théorique, tout est pratique ; sans pourcentage, les types alternent", () => {
+    expect(practice(buildSlots(4, ["code"], "moyenne", 30))).toBe(4);
+    expect(buildSlots(4, [...types], "moyenne").map((s) => s.type)).toEqual(["qcm_single", "code", "qcm_single", "code"]);
+  });
+});
+
 describe("barème exact", () => {
   it("la somme des points égale toujours le barème demandé", () => {
     for (const [total, n] of [[10, 3], [20, 7], [100, 13], [7.5, 6], [20, 40], [1, 4]] as const) {

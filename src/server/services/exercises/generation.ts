@@ -25,8 +25,8 @@ import { loadVersionPages, pagesBetween } from "@/server/services/analysis/analy
 import { verifyCodeReference, verifySqlSpec } from "@/server/services/labs/execute";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ExerciseGenerationService. Source de connaissances UNIQUE : le document choisi (jamais les autres
-// documents de la matière). L'IA propose ; le serveur décide : nombre de questions, types, barème,
+// ExerciseGenerationService. Sources de connaissances : uniquement les documents choisis par l'étudiant
+// (jamais les autres documents de ses matières). L'IA propose ; le serveur décide : nombre de questions, types, barème,
 // bonnes réponses cohérentes, et chaque question doit citer un passage RÉEL du document.
 // Pas assez de matière → moins de questions (jamais d'invention pour atteindre le nombre demandé).
 // ─────────────────────────────────────────────────────────────────────────────
@@ -35,32 +35,45 @@ export const GENERATION_PROMPT_VERSION = "exercise-v2";
 const WINDOW_CHARS = 12_000;
 const MAX_SLOTS_PER_CALL = 8;
 
+interface SourceDocument {
+  id: string;
+  name: string;
+  subjectId: string | null;
+}
 interface Window {
   label: string;
   pages: PageText[];
   text: string;
+  source: SourceDocument;
 }
 interface Target {
   window: Window;
   focus?: string;
 }
 
-const windowOf = (label: string, pages: PageText[]): Window => ({ label, pages, text: pages.map((p) => p.text).join("\n").slice(0, WINDOW_CHARS) });
+const windowOf = (label: string, pages: PageText[], source: SourceDocument): Window => ({ label, pages, source, text: pages.map((p) => p.text).join("\n").slice(0, WINDOW_CHARS) });
 
-function windowsForAll(pages: PageText[]): Window[] {
+/** Alterne les documents : chacun alimente l'exercice, quelle que soit sa longueur. */
+function interleave<T>(lists: T[][]): T[] {
+  const longest = Math.max(0, ...lists.map((l) => l.length));
+  return Array.from({ length: longest }, (_, i) => lists.flatMap((l) => (i < l.length ? [l[i]] : []))).flat();
+}
+
+function windowsForAll(pages: PageText[], source: SourceDocument, named: boolean): Window[] {
+  const label = (from: PageText, to: PageText) => `${named ? `${source.name}, ` : ""}Pages ${from.page ?? 1}–${to.page ?? 1}`;
   const out: Window[] = [];
   let cur: PageText[] = [];
   let size = 0;
   for (const p of pages) {
     if (cur.length && size + p.text.length > WINDOW_CHARS) {
-      out.push(windowOf(`Pages ${cur[0].page ?? 1}–${cur.at(-1)!.page ?? 1}`, cur));
+      out.push(windowOf(label(cur[0], cur.at(-1)!), cur, source));
       cur = [];
       size = 0;
     }
     cur.push(p);
     size += p.text.length;
   }
-  if (cur.length) out.push(windowOf(`Pages ${cur[0].page ?? 1}–${cur.at(-1)!.page ?? 1}`, cur));
+  if (cur.length) out.push(windowOf(label(cur[0], cur.at(-1)!), cur, source));
   return out.filter((w) => w.text.replace(/\s/g, "").length >= 120);
 }
 
@@ -110,7 +123,7 @@ interface Accepted {
   slot: Slot;
   built: BuiltQuestion;
   explanation: string | null;
-  refs: { quote: string; page: number | null }[];
+  refs: { quote: string; page: number | null; documentId: string; documentName: string; subjectId: string | null }[];
   concepts: string[];
 }
 
@@ -138,28 +151,39 @@ export async function generateExercise(userId: string, rawConfig: unknown) {
   if (!isAiConfigured()) {
     throw new ApiHttpError("La génération d'exercices nécessite le service d'IA, qui n'est pas configuré (GEMINI_API_KEY).", 503);
   }
-  const doc = await db.document.findFirst({ where: { id: config.documentId, userId }, include: { currentVersion: true } });
-  if (!doc) throw new ApiHttpError("Document introuvable.", 404);
+  const documentIds = [...new Set([config.documentId, ...(config.documentIds ?? [])])];
+  const found = await db.document.findMany({ where: { id: { in: documentIds }, userId }, include: { currentVersion: true } });
+  if (found.length !== documentIds.length) throw new ApiHttpError("Document introuvable.", 404);
+  const severalSources = documentIds.length > 1;
+  const about = (name: string) => (severalSources ? `« ${name} »` : "ce document");
+  const sources = await Promise.all(
+    documentIds.map(async (id) => {
+      const document = found.find((d) => d.id === id)!;
+      const current = document.currentVersion;
+      if (!current || !["READY", "PARTIAL"].includes(current.extractStatus)) throw new ApiHttpError(`Le texte de ${about(document.name)} n'a pas pu être extrait : impossible de créer un exercice.`, 409);
+      const documentPages = await loadVersionPages(userId, current.id);
+      if (documentPages.every((p) => p.text.replace(/\s/g, "").length < 120)) throw new ApiHttpError(`${severalSources ? about(document.name) : "Ce document"} contient trop peu de texte pour créer un exercice.`, 409);
+      return { document, version: current, pages: documentPages };
+    })
+  );
+  const { document: doc, version, pages } = sources[0];
   if (!doc.subjectId) throw new ApiHttpError("Ce document n'est rattaché à aucune matière.", 409);
-  const version = doc.currentVersion;
-  if (!version || !["READY", "PARTIAL"].includes(version.extractStatus)) throw new ApiHttpError("Le texte de ce document n'a pas pu être extrait : impossible de créer un exercice.", 409);
-  const pages = await loadVersionPages(userId, version.id);
-  if (pages.every((p) => p.text.replace(/\s/g, "").length < 120)) throw new ApiHttpError("Ce document contient trop peu de texte pour créer un exercice.", 409);
 
   const subjectId = doc.subjectId;
   const analysis = await db.documentAnalysis.findFirst({ where: { userId, versionId: version.id, status: "READY" }, orderBy: { createdAt: "desc" } });
-  const knownConcepts = analysis
-    ? (await db.conceptSource.findMany({ where: { analysisId: analysis.id, userId }, include: { concept: true }, take: 200 })).map((s) => s.concept.name)
+  const analyses = await db.documentAnalysis.findMany({ where: { userId, versionId: { in: sources.map((s) => s.version.id) }, status: "READY" }, select: { id: true } });
+  const knownConcepts = analyses.length
+    ? [...new Set((await db.conceptSource.findMany({ where: { analysisId: { in: analyses.map((a) => a.id) }, userId }, include: { concept: true }, take: 200 })).map((s) => s.concept.name))]
     : [];
 
   // ── Couverture → cibles (fenêtres de texte du document sélectionné uniquement) ──
   let targets: Target[] = [];
   if (config.coverage.mode === "all") {
-    targets = windowsForAll(pages).map((window) => ({ window }));
+    targets = interleave(sources.map((s) => windowsForAll(s.pages, { id: s.document.id, name: s.document.name, subjectId: s.document.subjectId }, severalSources))).map((window) => ({ window }));
   } else {
     if (!analysis) throw new ApiHttpError("Analysez d'abord ce document (onglet Analyse du lecteur) pour choisir des sections ou des notions.", 409);
     const sections = await db.courseSection.findMany({ where: { analysisId: analysis.id, userId } });
-    const sectionWindow = (s: (typeof sections)[number]) => windowOf(`${s.numbering ? s.numbering + " " : ""}${s.label}`, pagesBetween(pages, s.pageStart, s.pageEnd));
+    const sectionWindow = (s: (typeof sections)[number]) => windowOf(`${s.numbering ? s.numbering + " " : ""}${s.label}`, pagesBetween(pages, s.pageStart, s.pageEnd), { id: doc.id, name: doc.name, subjectId: doc.subjectId });
     if (config.coverage.mode === "sections") {
       const picked = sections.filter((s) => config.coverage.sectionIds!.includes(s.id));
       if (picked.length !== new Set(config.coverage.sectionIds).size) throw new ApiHttpError("Section introuvable dans l'analyse de ce document.", 404);
@@ -188,7 +212,7 @@ export async function generateExercise(userId: string, rawConfig: unknown) {
   if (targets.length === 0) throw new ApiHttpError("La partie choisie du document ne contient pas assez de texte.", 409);
 
   // ── Créneaux ──
-  const slots = buildSlots(config.questionCount, config.types, config.difficulty);
+  const slots = buildSlots(config.questionCount, config.types, config.difficulty, config.practicePercent);
   const byWindow = new Map<Window, (Slot & { focus?: string })[]>();
   slots.forEach((s, i) => {
     const t = targets[i % targets.length];
@@ -245,7 +269,7 @@ export async function generateExercise(userId: string, rawConfig: unknown) {
           continue;
         }
         seenStatements.add(key);
-        accepted.push({ slot, built: buildQuestion(q), explanation: q.explanation ?? null, refs: [{ quote: q.source.quote, page }], concepts: q.concepts });
+        accepted.push({ slot, built: buildQuestion(q), explanation: q.explanation ?? null, refs: [{ quote: q.source.quote, page, documentId: w.source.id, documentName: w.source.name, subjectId: w.source.subjectId }], concepts: q.concepts });
       }
     }
   }
@@ -314,9 +338,9 @@ export async function generateExercise(userId: string, rawConfig: unknown) {
         subjectId,
         documentId: doc.id,
         versionId: version.id,
-        title: config.title?.trim() || `Exercice — ${doc.name}`.slice(0, 160),
+        title: config.title?.trim() || `Exercice — ${doc.name}${severalSources ? ` et ${documentIds.length - 1} autre${documentIds.length > 2 ? "s" : ""}` : ""}`.slice(0, 160),
         totalPoints: config.totalPoints,
-        config: { ...config, generated: accepted.length, notice: notes.join(" ") || null, promptVersion: GENERATION_PROMPT_VERSION, windows: targets.length } as unknown as Prisma.InputJsonValue,
+        config: { ...config, documentIds, sources: sources.map((s) => ({ id: s.document.id, name: s.document.name })), generated: accepted.length, notice: notes.join(" ") || null, promptVersion: GENERATION_PROMPT_VERSION, windows: targets.length } as unknown as Prisma.InputJsonValue,
       },
     });
     for (let i = 0; i < accepted.length; i++) {
@@ -345,5 +369,5 @@ export async function generateExercise(userId: string, rawConfig: unknown) {
     return ex.id;
   }, { timeout: 30_000 });
 
-  return { id: exerciseId, created: accepted.length, requested: config.questionCount, notice: notes.join(" ") || null };
+  return { id: exerciseId, subjectId, created: accepted.length, requested: config.questionCount, notice: notes.join(" ") || null };
 }

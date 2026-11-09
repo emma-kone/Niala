@@ -3,7 +3,9 @@ import type { ErrorCategory, Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { ApiHttpError } from "@/lib/api-helpers";
 import type { QuestionType } from "@/server/domain/exercise-model";
+import type { CorrectionMode } from "@/server/domain/exercise-types";
 import { gradeAnswer } from "./evaluation";
+import type { AttemptReview } from "./review";
 import { refreshProgress } from "@/server/services/progress/progress";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -19,12 +21,14 @@ interface SnapshotQuestion {
   payload: Record<string, unknown>;
   answerKey: Record<string, unknown>;
   explanation: string | null;
-  sourceRefs: { quote: string; page: number | null }[];
+  sourceRefs: { quote: string; page: number | null; documentId?: string; documentName?: string; subjectId?: string | null }[];
   concepts: { id: string; name: string }[];
 }
-interface Snapshot {
-  exercise: { id: string; title: string; totalPoints: number; documentId: string | null; documentName: string | null; versionId: string | null; versionNumber: number | null; subjectId: string };
+export interface Snapshot {
+  exercise: { id: string; title: string; totalPoints: number; documentId: string | null; documentName: string | null; versionId: string | null; versionNumber: number | null; subjectId: string; correctionMode?: CorrectionMode };
   questions: SnapshotQuestion[];
+  /** Bilan rédigé par l'IA après la correction : seul ajout à la copie figée, qui ne modifie aucune question. */
+  review?: AttemptReview;
 }
 
 const round = (n: number) => Math.round(n * 100) / 100;
@@ -55,6 +59,7 @@ export async function startAttempt(userId: string, exerciseId: string, opts: { f
       versionId: exercise.versionId,
       versionNumber: exercise.version?.number ?? null,
       subjectId: exercise.subjectId,
+      correctionMode: (exercise.config as { correctionMode?: CorrectionMode } | null)?.correctionMode ?? "final",
     },
     questions: exercise.questions.map((q) => ({
       position: q.position,
@@ -77,7 +82,7 @@ export async function startAttempt(userId: string, exerciseId: string, opts: { f
   return { id: attempt.id, resumed: false };
 }
 
-async function ownedAttempt(userId: string, id: string) {
+export async function ownedAttempt(userId: string, id: string) {
   const a = await db.exerciseAttempt.findFirst({ where: { id, userId }, include: { answers: true } });
   if (!a) throw new ApiHttpError("Tentative introuvable.", 404);
   return a;
@@ -100,11 +105,15 @@ export interface AttemptQuestionDto {
   difficulty: string;
   payload: Record<string, unknown>;
   answer: unknown;
-  /** Présents uniquement une fois la tentative corrigée. */
+  /** Présents une fois la question corrigée : à la fin de la tentative, ou dès sa validation en correction immédiate. */
   result?: (FeedbackJson & { questionExplanation: string | null }) | null;
-  sourceRefs?: { quote: string; page: number | null }[];
+  sourceRefs?: { quote: string; page: number | null; documentId?: string; documentName?: string; subjectId?: string | null }[];
   concepts?: { id: string; name: string }[];
 }
+
+const isImmediate = (snap: Snapshot) => snap.exercise.correctionMode === "immediate";
+/** Une question corrigée est figée, sauf si l'IA n'a pas pu la corriger : elle reste alors à revalider. */
+const isLocked = (answer: { feedback: unknown; verdict: string | null } | undefined) => !!answer?.feedback && answer.verdict !== "ungraded";
 
 export async function getAttempt(userId: string, id: string) {
   const a = await ownedAttempt(userId, id);
@@ -122,7 +131,7 @@ export async function getAttempt(userId: string, id: string) {
       payload: q.payload,
       answer: ans?.value ?? null,
     };
-    if (!graded) return base;
+    if (!graded && !(isImmediate(snap) && ans?.feedback)) return base;
     const fb = (ans?.feedback as FeedbackJson | null) ?? null;
     return {
       ...base,
@@ -137,6 +146,8 @@ export async function getAttempt(userId: string, id: string) {
     id: a.id,
     status: a.status,
     exercise: snap.exercise,
+    correctionMode: snap.exercise.correctionMode ?? "final",
+    review: snap.review ?? null,
     startedAt: a.startedAt,
     finishedAt: a.finishedAt,
     lastPosition: a.lastPosition,
@@ -174,6 +185,7 @@ export async function saveAnswer(userId: string, attemptId: string, position: nu
   if (!q) throw new ApiHttpError("Question introuvable.", 404);
   const parsed = valueSchemas[q.type].safeParse(value);
   if (!parsed.success) throw new ApiHttpError("Réponse invalide pour ce type de question.", 422);
+  if (isImmediate(a.snapshot as unknown as Snapshot) && isLocked(a.answers.find((x) => x.position === position))) throw new ApiHttpError("Cette question est déjà corrigée : sa réponse ne peut plus être modifiée.", 409);
   await db.$transaction([
     db.answer.upsert({
       where: { attemptId_position: { attemptId, position } },
@@ -187,6 +199,16 @@ export async function saveAnswer(userId: string, attemptId: string, position: nu
 }
 
 // ── Correction ───────────────────────────────────────────────────────────────
+
+/** Correction immédiate : enregistre la réponse, corrige cette question seule et renvoie son résultat. */
+export async function checkAnswer(userId: string, attemptId: string, position: number, value: unknown) {
+  const a = await ownedAttempt(userId, attemptId);
+  if (!isImmediate(a.snapshot as unknown as Snapshot)) throw new ApiHttpError("Cet exercice est corrigé à la fin.", 409);
+  if (isLocked(a.answers.find((x) => x.position === position))) return getAttempt(userId, attemptId);
+  await saveAnswer(userId, attemptId, position, value);
+  await gradePositions(userId, await ownedAttempt(userId, attemptId), new Set([position]));
+  return getAttempt(userId, attemptId);
+}
 
 async function gradePositions(userId: string, a: Awaited<ReturnType<typeof ownedAttempt>>, only?: Set<number>) {
   const snap = a.snapshot as unknown as Snapshot;
@@ -241,7 +263,10 @@ export async function submitAttempt(userId: string, attemptId: string) {
     return getAttempt(userId, attemptId);
   }
   try {
-    await gradePositions(userId, await ownedAttempt(userId, attemptId));
+    const claimed = await ownedAttempt(userId, attemptId);
+    // Correction immédiate : seules les questions restées sans correction définitive sont traitées ici.
+    const remaining = isImmediate(claimed.snapshot as unknown as Snapshot) ? new Set((claimed.snapshot as unknown as Snapshot).questions.map((q) => q.position).filter((p) => !isLocked(claimed.answers.find((x) => x.position === p)))) : undefined;
+    await gradePositions(userId, claimed, remaining);
     await finalize(userId, attemptId);
   } catch (e) {
     // La correction a échoué : la tentative redevient modifiable, aucune réponse n'est perdue
@@ -315,7 +340,7 @@ export async function getExercise(userId: string, id: string) {
     },
   });
   if (!e) throw new ApiHttpError("Exercice introuvable.", 404);
-  const cfg = e.config as { notice?: string | null; requested?: number; questionCount?: number; types?: string[]; difficulty?: string; coverage?: { mode: string } };
+  const cfg = e.config as { notice?: string | null; requested?: number; questionCount?: number; types?: string[]; difficulty?: string; coverage?: { mode: string }; correctionMode?: CorrectionMode; practicePercent?: number; sources?: { id: string; name: string }[] };
   return {
     id: e.id,
     title: e.title,
@@ -326,7 +351,7 @@ export async function getExercise(userId: string, id: string) {
     totalPoints: e.totalPoints,
     notice: cfg.notice ?? null,
     requested: cfg.questionCount ?? null,
-    config: { types: cfg.types ?? [], difficulty: cfg.difficulty ?? null, coverage: cfg.coverage?.mode ?? null },
+    config: { types: cfg.types ?? [], difficulty: cfg.difficulty ?? null, coverage: cfg.coverage?.mode ?? null, correctionMode: cfg.correctionMode ?? "final", practicePercent: cfg.practicePercent ?? null, sources: cfg.sources ?? [] },
     questions: e.questions,
     attempts: await listAttempts(userId, id),
   };
