@@ -30,7 +30,7 @@ interface FinalizeResponse {
 /** Import en 3 temps : préparation → dépôt du fichier → contrôle et extraction côté serveur. */
 export async function uploadFiles(
   files: File[],
-  target: { subjectId: string; folderId: string | null },
+  target: { subjectId: string | null; folderId: string | null },
   onUpdate: (key: string, patch: Partial<UploadItem>) => void,
   keys: string[]
 ): Promise<void> {

@@ -4,7 +4,8 @@ import { handle, limit, readJson } from "@/lib/api-helpers";
 import { prepareUploads } from "@/server/services/documents";
 
 const schema = z.object({
-  subjectId: z.string().min(1),
+  // null : cours ou sujet importé directement depuis le module Exercices, sans matière enregistrée.
+  subjectId: z.string().min(1).nullable(),
   folderId: z.string().min(1).nullable().default(null),
   files: z.array(z.object({ name: z.string().min(1).max(300), size: z.number().int().positive() })).min(1).max(50),
 });

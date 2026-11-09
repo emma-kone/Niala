@@ -9,12 +9,11 @@ import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/s
 import { AccountMenu } from "@/components/layout/account-menu";
 import { NAV_GROUPS, isNavActive } from "@/config/navigation";
 import { cn } from "@/lib/utils";
-import { useAppStore } from "@/store/app-store";
+import type { AppUser } from "@/store/app-store";
 
 /** En dessous de 1024 px : une barre compacte et un menu burger qui reprend la navigation complète. */
-export function MobileNav({ onLogout }: { onLogout: () => void }) {
+export function MobileNav({ user, onLogout }: { user: AppUser | null; onLogout: () => void }) {
   const pathname = usePathname();
-  const user = useAppStore((s) => s.user);
   const [open, setOpen] = useState(false);
 
   return (

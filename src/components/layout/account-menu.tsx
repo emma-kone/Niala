@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { ArrowRight, Monitor, Moon, Sun, type LucideIcon } from "lucide-react";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { ArrowRight, Monitor, Moon, Sun, UserRound, type LucideIcon } from "lucide-react";
 import { api } from "@/lib/client-api";
 import { routes } from "@/config/routes";
 import { cn } from "@/lib/utils";
@@ -11,12 +12,8 @@ import { useTheme, type ThemeChoice } from "@/components/theme/theme-provider";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { AppUser } from "@/store/app-store";
-
-interface AccountDetails {
-  settings: { exerciseLang: string; retentionDays: number };
-  ai?: { configured: boolean; provider: string | null; model: string | null };
-  user: { id: string; email: string; name: string | null };
-}
+import { PROFILE_KEY, fetchProfile, profileSummary } from "@/features/profile/types";
+import { UserAvatar } from "@/features/profile/user-avatar";
 
 const THEMES: { value: ThemeChoice; label: string; icon: LucideIcon }[] = [
   { value: "light", label: "Clair", icon: Sun },
@@ -24,40 +21,23 @@ const THEMES: { value: ThemeChoice; label: string; icon: LucideIcon }[] = [
   { value: "system", label: "Système", icon: Monitor },
 ];
 
-function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-baseline justify-between gap-4">
       <dt className="shrink-0 text-xs text-muted-foreground">{label}</dt>
-      <dd className={cn("min-w-0 truncate text-right text-xs font-medium", mono && "font-code")} title={value}>{value}</dd>
+      <dd className="min-w-0 truncate text-right text-xs font-medium" title={value}>{value}</dd>
     </div>
   );
 }
 
-/** Compte de l'étudiant : informations, thème et accès aux réglages, au clic sur son icône. */
+/** Compte de l'étudiant : résumé de son profil, thème et accès à « Mon profil » et aux paramètres. */
 export function AccountMenu({ user, collapsed = false, onNavigate }: { user: AppUser | null; collapsed?: boolean; onNavigate?: () => void }) {
   const { toast } = useToast();
   const { theme, setTheme } = useTheme();
   const [open, setOpen] = useState(false);
-  const [details, setDetails] = useState<AccountDetails | null>(null);
-  const [failed, setFailed] = useState(false);
-  const initial = (user?.name?.trim() || user?.email || "?").charAt(0).toUpperCase();
+  // Chargé à la première ouverture seulement, puis conservé.
+  const { data: profile, isError: failed } = useQuery({ queryKey: PROFILE_KEY, queryFn: fetchProfile, enabled: open });
   const name = user?.name ?? "Mon compte";
-
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    api
-      .get<AccountDetails>("/api/settings")
-      .then((r) => {
-        if (cancelled) return;
-        setDetails(r);
-        setFailed(false);
-      })
-      .catch(() => !cancelled && setFailed(true));
-    return () => {
-      cancelled = true;
-    };
-  }, [open]);
 
   async function changeTheme(value: ThemeChoice) {
     if (value === theme) return;
@@ -71,7 +51,11 @@ export function AccountMenu({ user, collapsed = false, onNavigate }: { user: App
     }
   }
 
-  const avatar = <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--accent-sun)] text-sm font-semibold text-on-pastel" aria-hidden>{initial}</span>;
+  const avatar = <UserAvatar name={user?.name} email={user?.email} avatar={profile?.avatar ?? user?.avatar} />;
+  const close = () => {
+    setOpen(false);
+    onNavigate?.();
+  };
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -105,7 +89,7 @@ export function AccountMenu({ user, collapsed = false, onNavigate }: { user: App
 
         {failed ? (
           <p role="status" className="text-xs text-muted-foreground">Informations du compte indisponibles pour l&apos;instant.</p>
-        ) : !details ? (
+        ) : !profile ? (
           <div className="space-y-2" aria-busy>
             <Skeleton className="h-3.5 w-full" />
             <Skeleton className="h-3.5 w-5/6" />
@@ -113,16 +97,19 @@ export function AccountMenu({ user, collapsed = false, onNavigate }: { user: App
           </div>
         ) : (
           <dl className="space-y-1.5">
-            <Row label="Identifiant" value={details.user.id} mono />
-            <Row label="Modèle IA" value={details.ai?.configured ? `${details.ai.model} (${details.ai.provider})` : "Service d'IA non configuré"} />
-            <Row label="Langue des exercices" value={details.settings.exerciseLang === "fr" ? "Français" : details.settings.exerciseLang} />
-            <Row label="Conservation des données" value={details.settings.retentionDays === 0 ? "Illimitée" : `${details.settings.retentionDays} jours`} />
+            {profileSummary(profile).map((r) => <Row key={r.label} label={r.label} value={r.value} />)}
+            {!profile.category && <p className="text-xs text-muted-foreground">Complétez votre parcours pour des exercices adaptés.</p>}
           </dl>
         )}
 
-        <Link href={routes.settings} onClick={() => { setOpen(false); onNavigate?.(); }} className="flex items-center justify-between rounded-2xl bg-muted/60 px-3 py-2 text-sm font-medium transition-colors hover:bg-muted">
-          Tous les réglages <ArrowRight className="h-3.5 w-3.5" aria-hidden />
-        </Link>
+        <div className="grid gap-1.5">
+          <Link href={routes.profile} onClick={close} className="flex items-center justify-between rounded-2xl bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">
+            <span className="flex items-center gap-2"><UserRound className="h-4 w-4" aria-hidden /> Mon profil</span> <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+          </Link>
+          <Link href={routes.settings} onClick={close} className="flex items-center justify-between rounded-2xl bg-muted/60 px-3 py-2 text-sm font-medium transition-colors hover:bg-muted">
+            Paramètres <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+          </Link>
+        </div>
       </PopoverContent>
     </Popover>
   );

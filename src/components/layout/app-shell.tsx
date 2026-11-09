@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { usePathname } from "next/navigation";
 import { api } from "@/lib/client-api";
 import { cn } from "@/lib/utils";
 import { routes } from "@/config/routes";
@@ -11,10 +12,29 @@ import { SidebarNav } from "@/components/layout/sidebar-nav";
 import { MobileNav } from "@/components/layout/mobile-nav";
 import { FloatingToolbar, useToolbarVisible } from "@/components/layout/floating-toolbar";
 import { useCourseReminders } from "@/features/agenda/use-course-reminders";
+import { useRevisionReminder } from "@/features/settings/use-revision-reminder";
+import { SETTINGS_KEY, useSettings } from "@/features/settings/use-settings";
 import { ContextHintLayer } from "@/components/context-hint";
+import { applyTextSize, isThemeChoice, useTheme } from "@/components/theme/theme-provider";
+import type { SessionBootstrap } from "@/server/services/session";
 
-export function AppShell({ children }: { children: React.ReactNode }) {
-  const router = useRouter();
+/** Les données déjà chargées restent affichées pendant leur actualisation : changer de module ne repart plus de zéro. */
+function makeQueryClient(initial: SessionBootstrap) {
+  const client = new QueryClient({ defaultOptions: { queries: { staleTime: 30_000, gcTime: 10 * 60_000, retry: 1, refetchOnWindowFocus: false } } });
+  if (initial.settings) client.setQueryData(SETTINGS_KEY, initial.settings);
+  return client;
+}
+
+export function AppShell({ children, initial }: { children: React.ReactNode; initial: SessionBootstrap }) {
+  const [client] = useState(() => makeQueryClient(initial));
+  return (
+    <QueryClientProvider client={client}>
+      <Shell initial={initial}>{children}</Shell>
+    </QueryClientProvider>
+  );
+}
+
+function Shell({ children, initial }: { children: React.ReactNode; initial: SessionBootstrap }) {
   const pathname = usePathname();
   const dashboard = pathname === routes.home;
   const toolbar = useToolbarVisible();
@@ -23,14 +43,24 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     content.current?.scrollTo({ top: 0 });
   }, [pathname]);
-  const user = useAppStore((s) => s.user);
+  // Le compte connu du serveur sert dès le premier rendu, avant que le magasin côté navigateur ne soit renseigné.
+  const storedUser = useAppStore((s) => s.user);
+  const user = storedUser ?? initial.user;
   const setAuthenticated = useAppStore((s) => s.setAuthenticated);
-  useCourseReminders(!!user);
+  const { syncTheme } = useTheme();
+  const { settings } = useSettings();
+  useCourseReminders(settings?.notifyActivities ?? false);
+  useRevisionReminder(settings?.notifyRevision ?? false);
+
+  useEffect(() => {
+    setAuthenticated(true, initial.user);
+    if (isThemeChoice(initial.settings?.theme)) syncTheme(initial.settings.theme);
+    if (initial.settings) applyTextSize(initial.settings.textSize);
+  }, [initial, setAuthenticated, syncTheme]);
 
   async function logout() {
     await api.post("/api/auth/logout");
-    setAuthenticated(false, null);
-    router.replace(routes.login);
+    window.location.replace(routes.login);
   }
 
   return (
@@ -39,7 +69,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <ContextHintLayer />
         <SidebarNav user={user} onLogout={logout} />
         <div className="flex min-h-0 min-w-0 flex-1 flex-col lg:py-3 lg:pr-3">
-          <MobileNav onLogout={logout} />
+          <MobileNav user={user} onLogout={logout} />
           {/* --toolbar-clearance : hauteur de la barre, pour que seuls les écrans défilants laissent leur dernière ligne atteignable. */}
           <div className={cn("relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden lg:rounded-[50px]", dashboard ? "bg-[var(--dash-surface)]" : "bg-background")} style={toolbar ? ({ "--toolbar-clearance": "65px" } as React.CSSProperties) : undefined}>
             {/* Le contenu forme son propre contexte d'empilement : quels que soient ses z-index internes, la barre reste devant. */}

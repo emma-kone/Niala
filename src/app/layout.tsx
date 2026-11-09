@@ -41,9 +41,8 @@ export const metadata: Metadata = {
   title: "Niala — Plateforme d'apprentissage assistée par IA",
   description:
     "Importez vos cours, générez des exercices personnalisés, codez et pratiquez le SQL, suivez votre progression. Plateforme personnelle d'apprentissage assistée par intelligence artificielle.",
-  icons: {
-    icon: "/logo.svg",
-  },
+  applicationName: "Niala",
+  appleWebApp: { title: "Niala", capable: true, statusBarStyle: "default" },
 };
 
 export const viewport: Viewport = {

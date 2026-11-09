@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, ArrowUpRight, BookOpen, CalendarDays, CalendarPlus, Check, ChevronDown, ClipboardList, Coffee, FileText, FileUp, Lightbulb, X } from "lucide-react";
 import { api } from "@/lib/client-api";
 import { routes } from "@/config/routes";
@@ -353,36 +354,32 @@ const REFRESH_MS = 5 * 60_000;
 
 export default function DashboardView() {
   const user = useAppStore((s) => s.user);
-  const [data, setData] = useState<DashboardData | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [clock, setClock] = useState(() => localClock());
-
-  const load = useCallback(async () => {
-    const c = localClock();
-    try {
-      setData(await api.get<DashboardData>(`/api/dashboard?date=${c.date}&minutes=${c.minutes}`));
-      setClock(c);
-      setError(null);
-    } catch (e) {
-      setError(errText(e, "Chargement impossible."));
-    }
-  }, []);
+  const query = useQuery({
+    queryKey: ["dashboard"],
+    queryFn: () => {
+      const c = localClock();
+      return api.get<DashboardData>(`/api/dashboard?date=${c.date}&minutes=${c.minutes}`);
+    },
+    staleTime: 20_000,
+    refetchInterval: REFRESH_MS,
+    refetchOnWindowFocus: true, // retour sur l'onglet : classement et journée sont remis à jour
+  });
+  const data = query.data ?? null;
+  const error = actionError ?? (query.error ? errText(query.error, "Chargement impossible.") : null);
+  const { refetch } = query;
+  const load = useCallback(() => {
+    setActionError(null);
+    return refetch();
+  }, [refetch]);
 
   useEffect(() => {
-    void load();
-    const refresh = setInterval(() => void load(), REFRESH_MS);
     const tick = setInterval(() => setClock((prev) => {
       const c = localClock();
       return prev.date === c.date && prev.minutes === c.minutes ? prev : c;
     }), CLOCK_TICK_MS);
-    // Retour sur l'onglet (lecture d'un cours ailleurs, veille) : classement et journée sont remis à jour.
-    const onVisible = () => { if (document.visibilityState === "visible") void load(); };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      clearInterval(refresh);
-      clearInterval(tick);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
+    return () => clearInterval(tick);
   }, [load]);
 
   // Nouvelle journée ou bascule de 19 h : les données du serveur (tâches, suggestions) suivent.
@@ -401,7 +398,7 @@ export default function DashboardView() {
       await api.patch(`/api/recommendations/${r.id}`, { status: "DISMISSED" });
       void load();
     } catch (e) {
-      setError(errText(e, "Action impossible."));
+      setActionError(errText(e, "Action impossible."));
     }
   }
 
@@ -426,6 +423,12 @@ export default function DashboardView() {
   const name = user?.name?.trim().split(/\s+/)[0] ?? "";
   return (
     <div className="mx-auto w-full max-w-[1500px] p-3 sm:p-4">
+      {user?.profileComplete === false && (
+        <Link href={routes.profile} className="mb-3 flex items-center justify-between gap-3 rounded-2xl border bg-card px-4 py-3 text-sm transition-colors hover:bg-muted/40">
+          <span><span className="font-medium">Complétez votre profil</span><span className="text-muted-foreground"> pour des exercices adaptés à votre niveau.</span></span>
+          <ArrowRight className="h-4 w-4 shrink-0" aria-hidden />
+        </Link>
+      )}
       {/* Maquette Figma : bloc en L à gauche, emploi du temps dans son encoche, cartes empilées et suggestions à droite. */}
       <div className="grid gap-4 lg:h-[max(620px,calc(100dvh-3.5rem))] lg:grid-rows-[minmax(0,1fr)] lg:grid-cols-[minmax(0,971fr)_minmax(260px,400fr)] lg:gap-x-[clamp(16px,2.7vw,39px)] lg:gap-y-0">
         <div className="relative grid gap-4 lg:grid-cols-[376fr_595fr] lg:grid-rows-[minmax(0,540fr)_minmax(0,451fr)] lg:gap-0">

@@ -11,6 +11,8 @@ export const routes = {
   sql: "/sql",
   progress: "/progression",
   settings: "/reglages",
+  profile: "/profil",
+  newExercise: "/exercices/nouveau",
   privacy: "/confidentialite",
   terms: "/conditions",
 } as const;

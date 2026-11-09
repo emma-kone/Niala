@@ -193,6 +193,10 @@
 /* ── Application systématique de la police ────────────────────────────────
    Tout élément natif hérite de Bricolage Grotesque : titres, paragraphes,
    boutons, formulaires, tableaux, cartes, modales, notifications…          */
+html[data-text-size="large"] {
+  font-size: 112.5%;
+}
+
 html,
 body,
 button,

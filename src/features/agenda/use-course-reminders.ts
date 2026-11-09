@@ -8,6 +8,8 @@ import { addDays, formatMinutes } from "@/server/domain/schedule";
 import { dueLabel, localClock, type AgendaData, type OccurrenceDto, type TaskDto } from "./types";
 
 const REFRESH_MS = 5 * 60_000;
+/** Les rappels ne sont pas urgents à l'ouverture : la page consultée passe d'abord. */
+const FIRST_LOAD_DELAY_MS = 5_000;
 const CHECK_MS = 30_000;
 const SESSION_BEFORE = 10;
 /** Un rappel manqué parce que Niala était fermé reste valable une heure. */
@@ -86,10 +88,13 @@ export function useCourseReminders(enabled: boolean) {
       if (shown) writeSent(sent, date);
     };
 
-    refresh();
-    const r = setInterval(refresh, REFRESH_MS);
+    const first = setTimeout(refresh, FIRST_LOAD_DELAY_MS);
+    const r = setInterval(() => {
+      if (document.visibilityState === "visible") refresh();
+    }, REFRESH_MS);
     const c = setInterval(check, CHECK_MS);
     return () => {
+      clearTimeout(first);
       clearInterval(r);
       clearInterval(c);
     };

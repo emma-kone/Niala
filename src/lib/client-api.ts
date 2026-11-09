@@ -12,12 +12,22 @@ export class ApiError extends Error {
   }
 }
 
+/** Une lecture qui ne répond pas ne doit pas laisser un écran en chargement indéfiniment. */
+const READ_TIMEOUT_MS = 45_000;
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, {
-    ...init,
-    headers: init?.body instanceof FormData ? init?.headers : { "Content-Type": "application/json", ...init?.headers },
-    credentials: "same-origin",
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      ...init,
+      signal: init?.signal ?? (!init?.method || init.method === "GET" ? AbortSignal.timeout(READ_TIMEOUT_MS) : undefined),
+      headers: init?.body instanceof FormData ? init?.headers : { "Content-Type": "application/json", ...init?.headers },
+      credentials: "same-origin",
+    });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "TimeoutError") throw new ApiError("Le serveur met trop de temps à répondre. Réessayez dans un instant.", 408);
+    throw new ApiError("Connexion impossible. Vérifiez votre accès à internet.", 0);
+  }
   const text = await res.text();
   let data: unknown = null;
   try {
@@ -73,4 +83,6 @@ export const api = {
   put: <T>(url: string, body?: unknown) => request<T>(url, { method: "PUT", body: JSON.stringify(body ?? {}) }),
   patch: <T>(url: string, body?: unknown) => request<T>(url, { method: "PATCH", body: JSON.stringify(body ?? {}) }),
   del: <T>(url: string) => request<T>(url, { method: "DELETE" }),
+  /** Requête dont la méthode porte aussi un corps (suppression confirmée, par exemple). */
+  request: <T>(method: string, url: string, body?: unknown) => request<T>(url, { method, body: JSON.stringify(body ?? {}) }),
 };

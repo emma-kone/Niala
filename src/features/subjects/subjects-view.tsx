@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { FileText, FolderOpen, MoreVertical, Pencil, Plus, Sparkles, Trash2 } from "lucide-react";
 import { api } from "@/lib/client-api";
@@ -44,7 +45,8 @@ function errorText(e: unknown, fallback: string) {
 
 export default function SubjectsView() {
   const { toast } = useToast();
-  const [subjects, setSubjects] = useState<SubjectDto[] | null>(null);
+  const qc = useQueryClient();
+  const [subjects, setSubjects] = useState<SubjectDto[] | null>(() => qc.getQueryData<SubjectDto[]>(["subjects"]) ?? null);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ subject: SubjectDto | null } | null>(null);
   // Action demandée depuis la barre d'outils du module.
@@ -62,11 +64,12 @@ export default function SubjectsView() {
     try {
       setError(null);
       const res = await api.get<{ subjects: SubjectDto[] }>("/api/subjects");
+      qc.setQueryData(["subjects"], res.subjects);
       setSubjects(res.subjects);
     } catch (e) {
       setError(errorText(e, "Impossible de charger vos matières."));
     }
-  }, []);
+  }, [qc]);
 
   useEffect(() => {
     void load();

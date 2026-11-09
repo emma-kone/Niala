@@ -13,9 +13,21 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 export type ThemeChoice = "light" | "dark" | "system";
 export const DEFAULT_THEME: ThemeChoice = "system";
 const STORAGE_KEY = "niala-theme";
+const TEXT_SIZE_KEY = "niala-text-size";
 const EVENT = "niala-theme-change";
 
-export const THEME_INIT_SCRIPT = `try{var t=localStorage.getItem("${STORAGE_KEY}");if(t!=="light"&&t!=="dark"&&t!=="system")t="${DEFAULT_THEME}";var d=t==="dark"||(t==="system"&&window.matchMedia("(prefers-color-scheme: dark)").matches);var e=document.documentElement;e.classList.toggle("dark",d);e.style.colorScheme=d?"dark":"light"}catch(_){}`;
+export const THEME_INIT_SCRIPT = `try{var t=localStorage.getItem("${STORAGE_KEY}");if(t!=="light"&&t!=="dark"&&t!=="system")t="${DEFAULT_THEME}";var d=t==="dark"||(t==="system"&&window.matchMedia("(prefers-color-scheme: dark)").matches);var e=document.documentElement;e.classList.toggle("dark",d);e.style.colorScheme=d?"dark":"light";if(localStorage.getItem("${TEXT_SIZE_KEY}")==="large")e.dataset.textSize="large"}catch(_){}`;
+
+/** Taille du texte : posée sur <html>, mémorisée localement pour être appliquée avant le premier rendu. */
+export function applyTextSize(value: string) {
+  if (value === "large") document.documentElement.dataset.textSize = "large";
+  else delete document.documentElement.dataset.textSize;
+  try {
+    localStorage.setItem(TEXT_SIZE_KEY, value);
+  } catch {
+    /* stockage indisponible : la taille s'applique quand même pour cette session */
+  }
+}
 
 export const isThemeChoice = (v: unknown): v is ThemeChoice => v === "light" || v === "dark" || v === "system";
 
@@ -52,6 +64,8 @@ interface ThemeContextValue {
   resolvedTheme: "light" | "dark";
   /** Applique et mémorise localement le thème (l'enregistrement serveur est fait par l'appelant). */
   setTheme: (theme: ThemeChoice) => void;
+  /** Aligne l'appareil sur la préférence enregistrée du compte, sans fondu. */
+  syncTheme: (theme: ThemeChoice) => void;
 }
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
@@ -97,23 +111,12 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     fade.current = false;
   }, [resolvedTheme, hydrated]);
 
-  // La préférence enregistrée du compte l'emporte sur la valeur locale (autre appareil, navigateur neuf).
-  // Sans session (page de connexion), la requête échoue en silence : on garde le thème par défaut.
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/settings", { credentials: "same-origin" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((body: { settings?: { theme?: unknown } } | null) => {
-        const server = body?.settings?.theme;
-        if (!cancelled && isThemeChoice(server) && server !== readTheme()) remember(server);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
+  // La préférence enregistrée du compte est transmise par la coquille de l'application (AppShell) : aucune requête ici.
+  const syncTheme = useCallback((server: ThemeChoice) => {
+    if (server !== readTheme()) remember(server);
   }, [remember]);
 
-  const value = useMemo(() => ({ theme, resolvedTheme, setTheme }), [theme, resolvedTheme, setTheme]);
+  const value = useMemo(() => ({ theme, resolvedTheme, setTheme, syncTheme }), [theme, resolvedTheme, setTheme, syncTheme]);
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }
 

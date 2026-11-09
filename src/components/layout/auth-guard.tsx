@@ -2,32 +2,17 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2 } from "lucide-react";
 import { routes } from "@/config/routes";
-import { useAuth } from "@/hooks/use-auth";
+import { useAppStore } from "@/store/app-store";
 
+/** La session est vérifiée par la mise en page serveur ; seule une déconnexion en cours de navigation est traitée ici. */
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const { authenticated } = useAuth();
+  const authenticated = useAppStore((s) => s.authenticated);
 
   useEffect(() => {
-    if (authenticated === false) {
-      router.replace(routes.login);
-    }
+    if (authenticated === false) router.replace(routes.login);
   }, [authenticated, router]);
 
-  if (authenticated === null) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-background">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" aria-hidden />
-        <p className="typo-subtitle">Chargement de Niala…</p>
-      </div>
-    );
-  }
-
-  if (!authenticated) {
-    return null;
-  }
-
-  return <>{children}</>;
+  return authenticated === false ? null : <>{children}</>;
 }
