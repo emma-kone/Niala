@@ -66,6 +66,55 @@ function verifyToken(token: string): string | null {
   return userId;
 }
 
+// ── Liaison Google en attente ────────────────────────────────────────────────
+// Après un retour Google dont l'adresse correspond à un compte protégé par mot de passe, le profil Google (déjà vérifié
+// par Supabase) est gardé 10 minutes dans un cookie signé, le temps que l'étudiant confirme son mot de passe Niala.
+const LINK_COOKIE = "sfs_google_link";
+const LINK_TTL_MS = 10 * 60 * 1000;
+
+export interface PendingGoogleLink {
+  sub: string;
+  email: string;
+  name: string | null;
+}
+
+const signLink = (payload: string) => createHmac("sha256", getSecret()).update(`google-link.${payload}`).digest("base64url");
+
+export function createLinkToken(link: PendingGoogleLink, now = Date.now()): string {
+  const payload = Buffer.from(JSON.stringify({ ...link, exp: now + LINK_TTL_MS })).toString("base64url");
+  return `${payload}.${signLink(payload)}`;
+}
+
+export function verifyLinkToken(token: string, now = Date.now()): PendingGoogleLink | null {
+  const [payload, sig, extra] = token.split(".");
+  if (!payload || !sig || extra !== undefined) return null;
+  const expected = Buffer.from(signLink(payload));
+  const given = Buffer.from(sig);
+  if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null;
+  try {
+    const data = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as Partial<PendingGoogleLink> & { exp?: number };
+    if (typeof data.exp !== "number" || data.exp < now) return null;
+    if (typeof data.sub !== "string" || !data.sub || typeof data.email !== "string" || !data.email) return null;
+    return { sub: data.sub, email: data.email, name: typeof data.name === "string" ? data.name : null };
+  } catch {
+    return null;
+  }
+}
+
+export async function setLinkCookie(link: PendingGoogleLink) {
+  const jar = await cookies();
+  jar.set(LINK_COOKIE, createLinkToken(link), { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/", maxAge: LINK_TTL_MS / 1000 });
+}
+
+export async function getPendingLink(): Promise<PendingGoogleLink | null> {
+  const token = (await cookies()).get(LINK_COOKIE)?.value;
+  return token ? verifyLinkToken(token) : null;
+}
+
+export async function clearLinkCookie() {
+  (await cookies()).set(LINK_COOKIE, "", { httpOnly: true, path: "/", maxAge: 0 });
+}
+
 // ── Cookie de session (httpOnly, sameSite lax) ───────────────────────────────
 export async function setSessionCookie(userId: string) {
   const jar = await cookies();

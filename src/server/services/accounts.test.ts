@@ -17,7 +17,7 @@ const google = (o: Partial<import("./accounts").GoogleProfile> = {}) => ({ sub: 
 
 beforeAll(async () => {
   pg = await PGlite.create();
-  for (const name of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261110000000_niala_agenda", "20261111000000_niala_academic", "20261112000000_niala_subject_icon"]) {
+  for (const name of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261110000000_niala_agenda", "20261111000000_niala_academic", "20261112000000_niala_subject_icon", "20261113000000_niala_google_link"]) {
     await pg.exec(readFileSync(path.join(process.cwd(), "prisma", "migrations", name, "migration.sql"), "utf8"));
   }
   const port = 45000 + Math.floor(Math.random() * 4000);
@@ -104,6 +104,51 @@ describe("connexion Google", () => {
   });
 
   it("refuse un autre compte Google qui présenterait la même adresse", async () => {
-    await expect(accounts.signInWithGoogle(google({ sub: "autre" }))).rejects.toMatchObject({ reason: "account_exists" });
+    await expect(accounts.signInWithGoogle(google({ sub: "autre" }))).rejects.toMatchObject({ reason: "account_conflict" });
+  });
+});
+
+describe("liaison de Google à un compte par mot de passe", () => {
+  const link = { sub: "g-bob", email: "Bob@Example.fr", name: "Bob Google" };
+
+  it("refuse un mot de passe incorrect sans rien lier", async () => {
+    await expect(accounts.linkGoogleAccount(link, "mauvais-mot-de-passe")).rejects.toMatchObject({ reason: "invalid_password" });
+    expect((await db.user.findUniqueOrThrow({ where: { email: "bob@example.fr" } })).googleSub).toBeNull();
+  });
+
+  it("lie l'identité Google après confirmation, en gardant le mot de passe et les données", async () => {
+    const before = await db.user.findUniqueOrThrow({ where: { email: "bob@example.fr" } });
+    const user = await accounts.linkGoogleAccount(link, PASSWORD);
+    expect(user.id).toBe(before.id);
+    const after = await db.user.findUniqueOrThrow({ where: { id: before.id } });
+    expect(after.googleSub).toBe("g-bob");
+    expect(after.passwordHash).toBe(before.passwordHash);
+    expect(auth.verifyPassword(PASSWORD, after.passwordHash)).toBe(true);
+  });
+
+  it("connecte ensuite directement avec Google, sans second compte", async () => {
+    const count = await db.user.count();
+    const user = await accounts.signInWithGoogle(google({ sub: "g-bob", email: "bob@example.fr" }));
+    expect(user.email).toBe("bob@example.fr");
+    expect(await db.user.count()).toBe(count);
+  });
+
+  it("reconnaît le compte lié même si l'adresse Google a changé", async () => {
+    expect((await accounts.signInWithGoogle(google({ sub: "g-bob", email: "autre-adresse@example.fr" }))).email).toBe("bob@example.fr");
+  });
+
+  it("refuse de lier une autre identité Google à un compte déjà lié", async () => {
+    await expect(accounts.signInWithGoogle(google({ sub: "g-intrus", email: "bob@example.fr" }))).rejects.toMatchObject({ reason: "account_conflict" });
+    await expect(accounts.linkGoogleAccount({ ...link, sub: "g-intrus" }, PASSWORD)).rejects.toMatchObject({ reason: "unavailable" });
+  });
+
+  it("refuse la liaison d'un compte Google ou d'une adresse inconnue", async () => {
+    await expect(accounts.linkGoogleAccount({ sub: "x", email: "google@example.fr", name: null }, PASSWORD)).rejects.toMatchObject({ reason: "unavailable" });
+    await expect(accounts.linkGoogleAccount({ sub: "x", email: "inconnu@example.fr", name: null }, PASSWORD)).rejects.toMatchObject({ reason: "unavailable" });
+  });
+
+  it("refuse une identité Google déjà liée à un autre compte", async () => {
+    await accounts.registerUser({ name: "Cleo", email: "cleo@example.fr", password: PASSWORD });
+    await expect(accounts.linkGoogleAccount({ sub: "g-bob", email: "cleo@example.fr", name: null }, PASSWORD)).rejects.toMatchObject({ reason: "unavailable" });
   });
 });

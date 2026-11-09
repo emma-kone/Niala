@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { ApiHttpError } from "@/lib/api-helpers";
-import { hashPassword } from "@/lib/auth";
+import { hashPassword, verifyPassword } from "@/lib/auth";
 import { db } from "@/lib/db";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -75,25 +75,61 @@ export function googleProfileOf(user: SupabaseAuthUser): GoogleProfile | null {
 }
 
 export class GoogleSignInError extends Error {
-  constructor(readonly reason: "unverified" | "account_exists") {
+  constructor(readonly reason: "unverified" | "account_exists" | "account_conflict") {
     super(reason);
   }
 }
 
+const hasPassword = (hash: string) => hash.startsWith("scrypt$");
+
 /**
  * Connecte ou crée le compte associé à un profil Google vérifié.
- * Une adresse déjà inscrite par mot de passe n'est pas rattachée automatiquement : Niala ne vérifie pas les e-mails à
- * l'inscription, et un inconnu aurait pu réserver cette adresse pour accéder ensuite au compte de son vrai propriétaire.
+ * Un compte déjà lié à cet identifiant Google est ouvert directement. Une adresse inscrite par mot de passe n'est jamais
+ * rattachée automatiquement : Niala ne vérifie pas les e-mails à l'inscription, et un inconnu aurait pu réserver cette
+ * adresse pour accéder ensuite au compte de son vrai propriétaire. Il faut alors confirmer le mot de passe (linkGoogleAccount).
  */
 export async function signInWithGoogle(profile: GoogleProfile) {
   if (!profile.emailVerified) throw new GoogleSignInError("unverified");
   const email = normalizeEmail(profile.email);
   const marker = googleMarker(profile.sub);
+
+  const withLatestName = async (u: { id: string; email: string; name: string | null }) =>
+    profile.name && u.name !== profile.name ? publicUser(await db.user.update({ where: { id: u.id }, data: { name: profile.name } })) : publicUser(u);
+
+  const linked = await db.user.findUnique({ where: { googleSub: profile.sub } });
+  if (linked) return withLatestName(linked);
+
   const existing = await db.user.findUnique({ where: { email } });
   if (existing) {
-    if (existing.passwordHash !== marker) throw new GoogleSignInError("account_exists");
-    if (!profile.name || existing.name === profile.name) return publicUser(existing);
-    return publicUser(await db.user.update({ where: { id: existing.id }, data: { name: profile.name } }));
+    if (existing.passwordHash === marker) {
+      return withLatestName(await db.user.update({ where: { id: existing.id }, data: { googleSub: profile.sub } }));
+    }
+    // Adresse prise par un compte Google différent (ou lié à un autre identifiant) : rien à confirmer par mot de passe.
+    if (!hasPassword(existing.passwordHash) || existing.googleSub) throw new GoogleSignInError("account_conflict");
+    throw new GoogleSignInError("account_exists");
   }
-  return publicUser(await db.user.create({ data: { email, name: profile.name?.trim() || email.split("@")[0], passwordHash: marker, settings: { create: {} } } }));
+  return publicUser(await db.user.create({ data: { email, googleSub: profile.sub, name: profile.name?.trim() || email.split("@")[0], passwordHash: marker, settings: { create: {} } } }));
+}
+
+export class LinkError extends Error {
+  constructor(readonly reason: "invalid_password" | "unavailable") {
+    super(reason);
+  }
+}
+
+/**
+ * Lie une identité Google au compte à mot de passe de même adresse, après confirmation du mot de passe Niala.
+ * Les deux preuves sont nécessaires : Google atteste l'adresse, le mot de passe atteste le compte.
+ */
+export async function linkGoogleAccount(link: { sub: string; email: string; name: string | null }, password: string) {
+  const user = await db.user.findUnique({ where: { email: normalizeEmail(link.email) } });
+  if (!user || !hasPassword(user.passwordHash) || (user.googleSub && user.googleSub !== link.sub)) throw new LinkError("unavailable");
+  if (!verifyPassword(password, user.passwordHash)) throw new LinkError("invalid_password");
+  try {
+    const linked = user.googleSub === link.sub ? user : await db.user.update({ where: { id: user.id }, data: { googleSub: link.sub } });
+    return publicUser(linked);
+  } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") throw new LinkError("unavailable"); // identité déjà liée ailleurs
+    throw e;
+  }
 }

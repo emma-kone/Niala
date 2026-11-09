@@ -4,10 +4,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const exchangeCodeForSession = vi.fn();
 const signOut = vi.fn(async () => ({ error: null }));
 const setSessionCookie = vi.fn(async () => undefined);
+const setLinkCookie = vi.fn(async () => undefined);
 const signInWithGoogle = vi.fn();
 
 vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ auth: { exchangeCodeForSession, signOut } }) }));
-vi.mock("@/lib/auth", async (original) => ({ ...(await original<typeof import("@/lib/auth")>()), setSessionCookie }));
+vi.mock("@/lib/auth", async (original) => ({ ...(await original<typeof import("@/lib/auth")>()), setSessionCookie, setLinkCookie }));
 vi.mock("@/server/services/accounts", async (original) => ({ ...(await original<typeof import("@/server/services/accounts")>()), signInWithGoogle }));
 
 const { GET } = await import("./route");
@@ -45,11 +46,19 @@ describe("retour de la connexion Google", () => {
     expect(setSessionCookie).not.toHaveBeenCalled();
   });
 
-  it("n'ouvre aucune session en cas de conflit avec un compte par mot de passe", async () => {
+  it("propose de lier Google, sans ouvrir de session, quand l'adresse a un compte par mot de passe", async () => {
     signInWithGoogle.mockRejectedValue(new GoogleSignInError("account_exists"));
-    expect(await call("?code=abc")).toBe("https://niala.test/login?error=google_account_exists");
+    expect(await call("?code=abc")).toBe("https://niala.test/auth/link");
+    expect(setLinkCookie).toHaveBeenCalledWith({ sub: "g-1", email: "ada@example.fr", name: "Ada Test" });
     expect(setSessionCookie).not.toHaveBeenCalled();
     expect(signOut).toHaveBeenCalled();
+  });
+
+  it("n'ouvre aucune session et n'offre pas la liaison en cas de conflit d'identité", async () => {
+    signInWithGoogle.mockRejectedValue(new GoogleSignInError("account_conflict"));
+    expect(await call("?code=abc")).toBe("https://niala.test/login?error=google_failed");
+    expect(setLinkCookie).not.toHaveBeenCalled();
+    expect(setSessionCookie).not.toHaveBeenCalled();
   });
 
   it("refuse un utilisateur Supabase qui n'a pas d'identité Google", async () => {
