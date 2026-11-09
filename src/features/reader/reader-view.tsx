@@ -17,13 +17,15 @@ import { cn } from "@/lib/utils";
 import { Properties } from "@/features/subject-files/properties";
 import { STATUS_LABEL, type DocumentDetails } from "@/features/subject-files/types";
 import { ExtractedTextViewer, OriginalTextViewer } from "./text-viewers";
-import { NotesPanel } from "./notes-panel";
 import { AnalysisPanel } from "./analysis-panel";
 import ChatPanel from "@/features/chat/chat-panel";
 import type { NoteListItem } from "@/features/notes/types";
 import type { PdfAnnotation, PdfSelection } from "./pdf-viewer";
 
 // pdf.js dépend du navigateur : jamais rendu côté serveur
+// L'éditeur riche des notes n'est téléchargé que lorsque ce panneau s'affiche.
+const NotesPanel = dynamic(() => import("./notes-panel").then((m) => m.NotesPanel), { ssr: false });
+
 const PdfViewer = dynamic(() => import("./pdf-viewer"), {
   ssr: false,
   loading: () => (

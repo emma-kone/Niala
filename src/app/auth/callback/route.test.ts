@@ -34,6 +34,12 @@ describe("retour de la connexion Google", () => {
     expect(signOut).toHaveBeenCalledWith({ scope: "local" });
   });
 
+  it("amène un compte tout juste créé à son profil", async () => {
+    signInWithGoogle.mockResolvedValue({ id: "niala-2", email: "ada@example.fr", name: "Ada Test", created: true });
+    expect(await call("?code=abc")).toBe("https://niala.test/profil");
+    expect(setSessionCookie).toHaveBeenCalledWith("niala-2");
+  });
+
   it("signale un refus de l'utilisateur chez Google", async () => {
     expect(await call("?error=access_denied")).toBe("https://niala.test/login?error=google_cancelled");
     expect(exchangeCodeForSession).not.toHaveBeenCalled();

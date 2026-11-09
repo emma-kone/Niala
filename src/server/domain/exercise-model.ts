@@ -8,7 +8,8 @@ import { randomBytes } from "node:crypto";
 // bonnes réponses) est décidé ici, jamais par l'IA.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { DIFFICULTIES, POINT_STEP, QUESTION_TYPES, TYPE_LABEL, type QuestionType, CORRECTION_MODES, MAX_SOURCE_DOCUMENTS, PRACTICE_TYPES } from "./exercise-types";
+import { DIFFICULTIES, EXERCISE_MODES, POINT_STEP, QUESTION_TYPES, TYPE_LABEL, type QuestionType, CORRECTION_MODES, MAX_SOURCE_DOCUMENTS, PRACTICE_TYPES } from "./exercise-types";
+import { LEVEL_CHOICES, OTHER_LEVEL } from "@/config/academic";
 export { DIFFICULTIES, POINT_STEP, QUESTION_TYPES, TYPE_LABEL };
 export type { QuestionType };
 
@@ -22,6 +23,12 @@ export type Difficulty = "facile" | "moyenne" | "difficile";
 export const maxQuestions = () => Math.min(100, Math.max(1, Number(process.env.EXERCISE_MAX_QUESTIONS) || 40));
 
 const id = z.string().min(1).max(64);
+
+function scaleProblems(c: { questionCount: number; totalPoints: number }, ctx: z.RefinementCtx) {
+  if (c.questionCount > maxQuestions()) ctx.addIssue({ code: "custom", path: ["questionCount"], message: `Maximum ${maxQuestions()} questions.` });
+  if (Math.abs(c.totalPoints / POINT_STEP - Math.round(c.totalPoints / POINT_STEP)) > 1e-9) ctx.addIssue({ code: "custom", path: ["totalPoints"], message: "Le barème doit être un multiple de 0,25." });
+  if (c.totalPoints / POINT_STEP < c.questionCount) ctx.addIssue({ code: "custom", path: ["totalPoints"], message: "Barème trop petit pour ce nombre de questions (0,25 point minimum par question)." });
+}
 
 export const exerciseConfigSchema = z
   .object({
@@ -43,16 +50,43 @@ export const exerciseConfigSchema = z
     correctionMode: z.enum(CORRECTION_MODES).default("final"),
     /** Part de questions pratiques en pourcentage ; absente, tous les types sont alternés. */
     practicePercent: z.number().int().min(0).max(100).optional(),
+    /** Mode de l'exercice : détermine l'aide disponible pendant la résolution. */
+    mode: z.enum(EXERCISE_MODES).default("personnalise"),
+    /** false : exercice ponctuel, non conservé dans « Mes exercices ». */
+    saved: z.boolean().default(true),
   })
   .superRefine((c, ctx) => {
-    if (c.questionCount > maxQuestions()) ctx.addIssue({ code: "custom", path: ["questionCount"], message: `Maximum ${maxQuestions()} questions.` });
-    if (Math.abs(c.totalPoints / POINT_STEP - Math.round(c.totalPoints / POINT_STEP)) > 1e-9) ctx.addIssue({ code: "custom", path: ["totalPoints"], message: "Le barème doit être un multiple de 0,25." });
-    if (c.totalPoints / POINT_STEP < c.questionCount) ctx.addIssue({ code: "custom", path: ["totalPoints"], message: "Barème trop petit pour ce nombre de questions (0,25 point minimum par question)." });
+    scaleProblems(c, ctx);
     if (c.coverage.mode !== "all" && new Set([c.documentId, ...(c.documentIds ?? [])]).size > 1) ctx.addIssue({ code: "custom", path: ["coverage"], message: "Avec plusieurs documents, l'exercice couvre obligatoirement tous leurs contenus." });
     if (c.coverage.mode === "sections" && !c.coverage.sectionIds?.length) ctx.addIssue({ code: "custom", path: ["coverage"], message: "Choisissez au moins une section." });
     if (c.coverage.mode === "concepts" && !c.coverage.conceptIds?.length) ctx.addIssue({ code: "custom", path: ["coverage"], message: "Choisissez au moins une notion." });
   });
 export type ExerciseConfig = z.infer<typeof exerciseConfigSchema>;
+
+/** Génération libre : matière et chapitre saisis librement, sans document ni matière enregistrée. */
+export const freeExerciseConfigSchema = z
+  .object({
+    source: z.literal("free"),
+    subject: z.string({ error: "Indiquez la matière." }).trim().min(2, "Indiquez la matière.").max(120, "Nom de matière trop long."),
+    chapter: z.string({ error: "Indiquez le chapitre ou le thème." }).trim().min(2, "Indiquez le chapitre ou le thème.").max(200, "Chapitre trop long."),
+    level: z.enum(LEVEL_CHOICES, { error: "Choisissez le niveau d'études." }),
+    /** Niveau précisé par l'étudiant quand il a choisi « Autre ». */
+    levelOther: z.string().trim().max(80, "Niveau trop long.").optional(),
+    title: z.string().trim().max(160).optional(),
+    questionCount: z.number().int().min(1),
+    totalPoints: z.number().finite().min(POINT_STEP).max(100),
+    types: z.array(z.enum(QUESTION_TYPES)).min(1).max(QUESTION_TYPES.length),
+    difficulty: z.enum(DIFFICULTIES),
+    correctionMode: z.enum(CORRECTION_MODES).default("final"),
+    practicePercent: z.number().int().min(0).max(100).optional(),
+    mode: z.enum(EXERCISE_MODES).default("personnalise"),
+    saved: z.boolean().default(true),
+  })
+  .superRefine((c, ctx) => {
+    scaleProblems(c, ctx);
+    if (c.level === OTHER_LEVEL && (c.levelOther?.length ?? 0) < 2) ctx.addIssue({ code: "custom", path: ["levelOther"], message: "Précisez le niveau d'études." });
+  });
+export type FreeExerciseConfig = z.infer<typeof freeExerciseConfigSchema>;
 
 // ── Barème exact ─────────────────────────────────────────────────────────────
 
@@ -99,6 +133,7 @@ function typeSequence(count: number, types: QuestionType[], practicePercent?: nu
   });
 }
 
+/** Un créneau par question ; le nombre de questions est borné par le schéma de configuration. */
 export function buildSlots(count: number, types: QuestionType[], difficulty: ExerciseConfig["difficulty"], practicePercent?: number): Slot[] {
   const sequence = typeSequence(count, types, practicePercent);
   const cycle: Difficulty[] = ["facile", "moyenne", "difficile", "moyenne"];

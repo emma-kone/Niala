@@ -33,7 +33,8 @@ export async function GET(req: Request) {
     if (!profile) return fail("failed");
     const user = await signInWithGoogle(profile);
     await setSessionCookie(user.id);
-    return NextResponse.redirect(`${origin}/`);
+    // Un compte tout juste créé par Google n'a pas encore de parcours : on l'amène directement à son profil.
+    return NextResponse.redirect(`${origin}${(user as { created?: boolean }).created ? "/profil" : "/"}`);
   } catch (e) {
     if (e instanceof GoogleSignInError && e.reason === "account_exists" && profile) {
       // Compte à mot de passe : l'étudiant confirme son mot de passe Niala pour lier Google à ce compte.

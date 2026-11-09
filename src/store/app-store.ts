@@ -20,6 +20,8 @@ export interface AppUser {
   id: string;
   email: string;
   name: string | null;
+  avatar?: string | null;
+  profileComplete?: boolean;
 }
 
 /** Métadonnées de fichier (les objets File eux-mêmes ne sont pas sérialisables). */

@@ -3,7 +3,9 @@ import type { ErrorCategory, Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { ApiHttpError } from "@/lib/api-helpers";
 import type { QuestionType } from "@/server/domain/exercise-model";
-import type { CorrectionMode } from "@/server/domain/exercise-types";
+import { assistanceOf, type Assistance, type CorrectionMode, type ExerciseMode } from "@/server/domain/exercise-types";
+import { runPool } from "@/lib/concurrency";
+import { deleteDocuments } from "@/server/services/documents";
 import { gradeAnswer } from "./evaluation";
 import type { AttemptReview } from "./review";
 import { refreshProgress } from "@/server/services/progress/progress";
@@ -25,7 +27,7 @@ interface SnapshotQuestion {
   concepts: { id: string; name: string }[];
 }
 export interface Snapshot {
-  exercise: { id: string; title: string; totalPoints: number; documentId: string | null; documentName: string | null; versionId: string | null; versionNumber: number | null; subjectId: string; correctionMode?: CorrectionMode };
+  exercise: { id: string; title: string; totalPoints: number; documentId: string | null; documentName: string | null; versionId: string | null; versionNumber: number | null; subjectId: string | null; correctionMode?: CorrectionMode; assistance?: Assistance; level?: string | null };
   questions: SnapshotQuestion[];
   /** Bilan rédigé par l'IA après la correction : seul ajout à la copie figée, qui ne modifie aucune question. */
   review?: AttemptReview;
@@ -60,6 +62,8 @@ export async function startAttempt(userId: string, exerciseId: string, opts: { f
       versionNumber: exercise.version?.number ?? null,
       subjectId: exercise.subjectId,
       correctionMode: (exercise.config as { correctionMode?: CorrectionMode } | null)?.correctionMode ?? "final",
+      assistance: assistanceOf((exercise.config as { mode?: ExerciseMode } | null)?.mode),
+      level: (exercise.config as { free?: { level?: string } } | null)?.free?.level ?? null,
     },
     questions: exercise.questions.map((q) => ({
       position: q.position,
@@ -147,6 +151,8 @@ export async function getAttempt(userId: string, id: string) {
     status: a.status,
     exercise: snap.exercise,
     correctionMode: snap.exercise.correctionMode ?? "final",
+    assistance: snap.exercise.assistance ?? "full",
+    saved: a.exerciseId ? ((await db.exercise.findFirst({ where: { id: a.exerciseId, userId }, select: { saved: true } }))?.saved ?? true) : true,
     review: snap.review ?? null,
     startedAt: a.startedAt,
     finishedAt: a.finishedAt,
@@ -213,8 +219,8 @@ export async function checkAnswer(userId: string, attemptId: string, position: n
 async function gradePositions(userId: string, a: Awaited<ReturnType<typeof ownedAttempt>>, only?: Set<number>) {
   const snap = a.snapshot as unknown as Snapshot;
   const answers = new Map(a.answers.map((x) => [x.position, x]));
-  for (const q of snap.questions) {
-    if (only && !only.has(q.position)) continue;
+  // Les questions rédigées passent par l'IA : les corriger en parallèle évite d'additionner leurs délais.
+  await runPool(snap.questions.filter((q) => !only || only.has(q.position)), 4, async (q) => {
     const prev = answers.get(q.position);
     const g = await gradeAnswer(userId, q, prev?.value ?? null);
     const feedback: FeedbackJson = { verdict: g.verdict, points: g.points, max: q.points, expected: g.expected, detail: g.detail, explanation: g.explanation, method: g.method };
@@ -238,7 +244,7 @@ async function gradePositions(userId: string, a: Awaited<ReturnType<typeof owned
         data: diagnoses.map((d) => ({ userId, answerId: saved.id, conceptId: q.concepts[0]?.id ?? null, category: d.category, confidence: d.confidence, evidence: { source: "tests", kind: d.kind, label: d.label, tests: d.tests, questionPosition: q.position } as unknown as Prisma.InputJsonValue })),
       });
     }
-  }
+  });
 }
 
 async function finalize(userId: string, attemptId: string) {
@@ -296,9 +302,45 @@ export async function listAttempts(userId: string, exerciseId: string) {
 
 // ── Exercices ────────────────────────────────────────────────────────────────
 
+export const languageName = (code: string | null | undefined) => (code === "en" ? "anglais" : "français");
+
+/** Exercice ponctuel non conservé : disparaît 24 h après sa création, sauf tentative commencée depuis moins de 24 h. */
+const OCCASIONAL_TTL_MS = 24 * 3600 * 1000;
+
+export async function purgeOccasionalExercises(userId: string) {
+  const limit = new Date(Date.now() - OCCASIONAL_TTL_MS);
+  const stale = await db.exercise.findMany({
+    where: { userId, saved: false, createdAt: { lt: limit }, attempts: { none: { status: "IN_PROGRESS", updatedAt: { gte: limit } } } },
+    select: { id: true, documentId: true, document: { select: { subjectId: true } } },
+    take: 50,
+  });
+  if (stale.length === 0) return;
+  const ids = stale.map((e) => e.id);
+  await db.exerciseAttempt.deleteMany({ where: { userId, exerciseId: { in: ids } } });
+  await db.learningActivity.deleteMany({ where: { userId, refType: "attempt", refId: { notIn: (await db.exerciseAttempt.findMany({ where: { userId }, select: { id: true } })).map((a) => a.id) } } });
+  await db.exercise.deleteMany({ where: { userId, id: { in: ids } } });
+  await removeOrphanImports(userId, stale.map((e) => (e.document && !e.document.subjectId ? e.documentId! : null)));
+}
+
+/** Un fichier importé directement (sans matière) n'existe que pour ses exercices : il part avec le dernier d'entre eux. */
+async function removeOrphanImports(userId: string, candidates: (string | null)[]) {
+  const ids = [...new Set(candidates.filter((c): c is string => !!c))];
+  if (ids.length === 0) return;
+  const stillUsed = new Set((await db.exercise.findMany({ where: { userId, documentId: { in: ids } }, select: { documentId: true } })).map((e) => e.documentId));
+  const orphans = ids.filter((id) => !stillUsed.has(id));
+  if (orphans.length) await deleteDocuments(userId, orphans).catch((e) => console.error("[exercise] fichier importé non retiré :", e instanceof Error ? e.message : e));
+}
+
+export async function setExerciseSaved(userId: string, id: string, saved: boolean) {
+  const res = await db.exercise.updateMany({ where: { id, userId }, data: { saved } });
+  if (res.count === 0) throw new ApiHttpError("Exercice introuvable.", 404);
+  return { ok: true, saved };
+}
+
 export async function listExercises(userId: string, filter: { subjectId?: string; documentId?: string }) {
+  await purgeOccasionalExercises(userId).catch((e) => console.warn("[exercise] purge :", e instanceof Error ? e.message : e));
   const rows = await db.exercise.findMany({
-    where: { userId, ...(filter.subjectId ? { subjectId: filter.subjectId } : {}), ...(filter.documentId ? { documentId: filter.documentId } : {}) },
+    where: { userId, saved: true, ...(filter.subjectId ? { subjectId: filter.subjectId } : {}), ...(filter.documentId ? { documentId: filter.documentId } : {}) },
     orderBy: { createdAt: "desc" },
     take: 200,
     include: {
@@ -316,6 +358,8 @@ export async function listExercises(userId: string, filter: { subjectId?: string
       title: e.title,
       subject: e.subject,
       document: e.document,
+      origin: e.origin,
+      freeSubject: ((e.config as { free?: { subject?: string } } | null)?.free?.subject) ?? null,
       versionNumber: e.version?.number ?? null,
       createdAt: e.createdAt,
       totalPoints: e.totalPoints,
@@ -340,25 +384,29 @@ export async function getExercise(userId: string, id: string) {
     },
   });
   if (!e) throw new ApiHttpError("Exercice introuvable.", 404);
-  const cfg = e.config as { notice?: string | null; requested?: number; questionCount?: number; types?: string[]; difficulty?: string; coverage?: { mode: string }; correctionMode?: CorrectionMode; practicePercent?: number; sources?: { id: string; name: string }[] };
+  const cfg = e.config as { notice?: string | null; requested?: number; questionCount?: number; types?: string[]; difficulty?: string; coverage?: { mode: string }; correctionMode?: CorrectionMode; practicePercent?: number; sources?: { id: string; name: string }[]; mode?: ExerciseMode; free?: { subject: string; chapter: string; level: string } };
   return {
     id: e.id,
     title: e.title,
     subject: e.subject,
     document: e.document,
+    origin: e.origin,
+    saved: e.saved,
     versionNumber: e.version?.number ?? null,
     createdAt: e.createdAt,
     totalPoints: e.totalPoints,
     notice: cfg.notice ?? null,
     requested: cfg.questionCount ?? null,
-    config: { types: cfg.types ?? [], difficulty: cfg.difficulty ?? null, coverage: cfg.coverage?.mode ?? null, correctionMode: cfg.correctionMode ?? "final", practicePercent: cfg.practicePercent ?? null, sources: cfg.sources ?? [] },
+    config: { types: cfg.types ?? [], difficulty: cfg.difficulty ?? null, coverage: cfg.coverage?.mode ?? null, correctionMode: cfg.correctionMode ?? "final", practicePercent: cfg.practicePercent ?? null, sources: cfg.sources ?? [], mode: cfg.mode ?? null, free: cfg.free ?? null },
     questions: e.questions,
     attempts: await listAttempts(userId, id),
   };
 }
 
 export async function deleteExercise(userId: string, id: string) {
+  const exercise = await db.exercise.findFirst({ where: { id, userId }, select: { documentId: true, document: { select: { subjectId: true } } } });
   const res = await db.exercise.deleteMany({ where: { id, userId } });
   if (res.count === 0) throw new ApiHttpError("Exercice introuvable.", 404);
+  if (exercise?.document && !exercise.document.subjectId) await removeOrphanImports(userId, [exercise.documentId]);
   return { ok: true };
 }

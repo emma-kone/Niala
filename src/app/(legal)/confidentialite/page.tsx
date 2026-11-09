@@ -21,6 +21,7 @@ export default function PrivacyPage() {
       <LegalSection id="donnees" title="2. Les données que nous traitons">
         <ul>
           <li><strong>Votre compte :</strong> votre nom, votre adresse e-mail et, si vous vous inscrivez avec un mot de passe, ce mot de passe, conservé uniquement sous forme chiffrée (jamais en clair).</li>
+          <li><strong>Votre profil :</strong> votre catégorie (étudiant ESATIC, étudiant d&apos;un autre établissement ou testeur) et, selon le cas, votre établissement, votre filière, votre niveau d&apos;études, votre situation et votre motif d&apos;utilisation, ainsi que la photo que vous choisissez d&apos;ajouter. Ces informations servent à adapter les exercices et les explications ; vous pouvez les modifier à tout moment.</li>
           <li><strong>La connexion avec Google :</strong> Google nous transmet votre nom, votre adresse e-mail (vérifiée) et votre photo de profil. Nous conservons le nom et l&apos;adresse e-mail ; la photo n&apos;est pas enregistrée. Nous ne recevons ni votre mot de passe Google, ni l&apos;accès à votre Gmail, votre Drive, vos contacts ou votre agenda Google.</li>
           <li><strong>Vos contenus :</strong> vos matières, les documents que vous importez (PDF, Word, PowerPoint, texte, Markdown) et le texte qui en est extrait et analysé, vos notes et cartes, vos exercices, réponses et résultats, votre progression, vos conversations avec l&apos;assistant, votre emploi du temps et vos tâches, ainsi que le code et les requêtes SQL saisis dans les laboratoires.</li>
           <li><strong>Vos préférences :</strong> thème, mode d&apos;exercice par défaut, taille maximale d&apos;import, etc.</li>
@@ -67,7 +68,7 @@ export default function PrivacyPage() {
       <LegalSection id="duree" title="7. Combien de temps nous les gardons">
         <ul>
           <li>Vos données de compte et vos contenus sont conservés tant que votre compte existe.</li>
-          <li>Si vous demandez la suppression de votre compte, vos données sont effacées. Des copies peuvent subsister quelque temps dans les sauvegardes de nos prestataires, jusqu&apos;à leur renouvellement.</li>
+          <li>Vous pouvez télécharger une copie de vos données et supprimer votre compte depuis Paramètres. La suppression efface vos données. Des copies peuvent subsister quelque temps dans les sauvegardes de nos prestataires, jusqu&apos;à leur renouvellement.</li>
           <li>Les journaux techniques sont conservés pour une durée limitée, selon les règles de nos hébergeurs.</li>
         </ul>
       </LegalSection>

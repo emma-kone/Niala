@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -14,8 +15,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { SubjectTabs } from "@/features/subject-files/tabs";
-import { NoteEditor } from "@/features/notes/note-editor";
 import { NOTE_KIND_LABEL, type NoteKind, type NoteListItem } from "@/features/notes/types";
+
+// L'éditeur riche est volumineux : la liste des notes s'affiche sans l'attendre.
+const NoteEditor = dynamic(() => import("@/features/notes/note-editor").then((m) => m.NoteEditor), { ssr: false, loading: () => <Skeleton className="h-96 rounded-2xl" /> });
 
 const errText = (e: unknown, fb: string) => (e instanceof Error ? e.message : fb);
 

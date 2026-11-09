@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { ApiHttpError } from "@/lib/api-helpers";
 import { hashPassword, verifyPassword } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { profileColumns, profileInputSchema, type ProfileInput } from "@/server/domain/profile";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Création de comptes : e-mail et mot de passe, ou Google (authentifié par Supabase Auth).
@@ -18,14 +19,17 @@ export const registerSchema = z.object({
   password: z.string().min(MIN_PASSWORD_LENGTH, `Le mot de passe doit contenir au moins ${MIN_PASSWORD_LENGTH} caractères.`).max(200, "Mot de passe trop long."),
 });
 
+/** Formulaire d'inscription : la catégorie (ESATIC, autre établissement, testeur) est obligatoire. */
+export const signupSchema = registerSchema.extend({ profile: profileInputSchema });
+
 const normalizeEmail = (email: string) => email.trim().toLowerCase();
 const googleMarker = (sub: string) => `oauth:google:${sub}`;
 const publicUser = (u: { id: string; email: string; name: string | null }) => ({ id: u.id, email: u.email, name: u.name });
 
-export async function registerUser(input: z.infer<typeof registerSchema>) {
+export async function registerUser(input: z.infer<typeof registerSchema> & { profile?: ProfileInput }) {
   const email = normalizeEmail(input.email);
   try {
-    const user = await db.user.create({ data: { email, name: input.name.trim(), passwordHash: hashPassword(input.password), settings: { create: {} } } });
+    const user = await db.user.create({ data: { email, name: input.name.trim(), passwordHash: hashPassword(input.password), settings: { create: {} }, ...(input.profile ? { profile: { create: profileColumns(input.profile) } } : {}) } });
     return publicUser(user);
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") throw new ApiHttpError("Un compte existe déjà avec cette adresse e-mail.", 409);
@@ -108,7 +112,8 @@ export async function signInWithGoogle(profile: GoogleProfile) {
     if (!hasPassword(existing.passwordHash) || existing.googleSub) throw new GoogleSignInError("account_conflict");
     throw new GoogleSignInError("account_exists");
   }
-  return publicUser(await db.user.create({ data: { email, googleSub: profile.sub, name: profile.name?.trim() || email.split("@")[0], passwordHash: marker, settings: { create: {} } } }));
+  // `created` : premier passage de ce compte, l'étudiant est invité à compléter son profil.
+  return { ...publicUser(await db.user.create({ data: { email, googleSub: profile.sub, name: profile.name?.trim() || email.split("@")[0], passwordHash: marker, settings: { create: {} } } })), created: true as const };
 }
 
 export class LinkError extends Error {

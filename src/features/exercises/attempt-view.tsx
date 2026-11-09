@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, CheckCircle2, ExternalLink, FlaskConical, Loader2, RefreshCw, RotateCcw, Sparkles } from "lucide-react";
+import { ArrowLeft, ArrowRight, BookmarkPlus, CheckCircle2, ExternalLink, FlaskConical, Loader2, MessageCircleQuestion, RefreshCw, RotateCcw, Sparkles } from "lucide-react";
 import { api } from "@/lib/client-api";
 import { routes } from "@/config/routes";
 import { cn } from "@/lib/utils";
@@ -15,16 +16,36 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { AnswerText, ExpectedText, QuestionInput } from "./question-input";
 import { TestOutcomes } from "@/features/labs/test-outcomes";
 import type { Diagnosis, TestOutcome, TestSummary } from "@/features/labs/types";
-import { VERDICT_LABEL, fmtPoints, type AttemptDetail, type AttemptQuestion, type AttemptReview } from "./types";
-import { confirmAction } from "@/components/notifications";
+import { VERDICT_LABEL, exercisesBase, fmtPoints, type AttemptDetail, type AttemptQuestion, type AttemptReview } from "./types";
+import { confirmAction, notify } from "@/components/notifications";
+import { useSettings } from "@/features/settings/use-settings";
+import { TutorPanel } from "./tutor-panel";
+
+// Formules et tableaux : le rendu n'est chargé que pour les énoncés qui en ont besoin.
+const RichText = dynamic(() => import("./rich-text"));
 
 type SaveState = "saved" | "saving" | "error";
 const errText = (e: unknown, fb: string) => (e instanceof Error ? e.message : fb);
 const isFilled = (v: unknown) =>
   v != null && v !== "" && !(Array.isArray(v) && v.length === 0) && !(typeof v === "object" && !Array.isArray(v) && Object.values(v as object).every((x) => !x));
 
-export default function AttemptView({ subjectId, exerciseId, attemptId }: { subjectId: string; exerciseId: string; attemptId: string }) {
+/** Consigne générale et données communes d'un exercice importé, affichées au-dessus de ses questions. */
+function ExerciseContext({ group }: { group: { title?: string; instructions?: string | null; context?: string | null } }) {
+  return (
+    <section aria-label="Consigne de l'exercice" className="mb-3 space-y-2 rounded-xl border bg-muted/30 p-4 text-sm">
+      {group.title && <h2 className="font-semibold">{group.title}</h2>}
+      {group.instructions && <RichText text={group.instructions} />}
+      {group.context && <RichText text={group.context} />}
+    </section>
+  );
+}
+
+export default function AttemptView({ subjectId, exerciseId, attemptId }: { subjectId: string | null; exerciseId: string; attemptId: string }) {
   const router = useRouter();
+  const { settings } = useSettings();
+  const [reviewPosition, setReviewPosition] = useState<number | null>(null);
+  const [saved, setSaved] = useState(true);
+  const base = exercisesBase(subjectId);
   const [attempt, setAttempt] = useState<AttemptDetail | null>(null);
   const [error, setError] = useState<{ message: string; status?: number } | null>(null);
   const [current, setCurrent] = useState(1);
@@ -44,6 +65,7 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
     try {
       const r = await api.get<{ attempt: AttemptDetail }>(`/api/attempts/${attemptId}`);
       setAttempt(r.attempt);
+      setSaved(r.attempt.saved);
       setAnswers(Object.fromEntries(r.attempt.questions.map((q) => [q.position, q.answer])));
       setCurrent(r.attempt.status === "IN_PROGRESS" ? Math.min(Math.max(1, r.attempt.lastPosition || 1), r.attempt.questions.length) : 1);
       setError(null);
@@ -125,6 +147,7 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
       if (pending.current.size > 0) throw new Error("Certaines réponses n'ont pas pu être enregistrées. Réessayez.");
       const r = await api.post<{ attempt: AttemptDetail }>(`/api/attempts/${attemptId}/submit`);
       setAttempt(r.attempt);
+      if (settings?.notifyProgress) notify({ title: "Exercice corrigé", description: `Résultat : ${fmtPoints(r.attempt.score)} / ${fmtPoints(r.attempt.maxScore)}. Votre progression est à jour.`, variant: "success" });
       void requestReview();
     } catch (e) {
       setActionError(errText(e, "La correction a échoué. Vos réponses sont conservées."));
@@ -183,24 +206,36 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
   async function again() {
     try {
       const r = await api.post<{ id: string }>(`/api/exercises/${exerciseId}/attempts`, { fresh: true });
-      router.push(`${routes.subject(subjectId)}/exercices/${exerciseId}/tentatives/${r.id}`);
+      router.push(`${base}/${exerciseId}/tentatives/${r.id}`);
     } catch (e) {
       setActionError(errText(e, "Impossible de démarrer une nouvelle tentative (l'exercice a peut-être été supprimé)."));
     }
   }
+
+  async function keep() {
+    try {
+      await api.patch(`/api/exercises/${exerciseId}`, { saved: true });
+      setSaved(true);
+      notify({ title: "Exercice conservé", description: "Retrouvez-le dans Mes exercices.", variant: "success" });
+    } catch (e) {
+      setActionError(errText(e, "Impossible de conserver cet exercice."));
+    }
+  }
+
+  const keepButton = !saved && <Button variant="outline" size="sm" className="gap-1.5" onClick={() => void keep()}><BookmarkPlus className="h-4 w-4" aria-hidden /> Conserver</Button>;
 
   if (error) {
     return (
       <div className="mx-auto max-w-xl px-4 py-16 text-center">
         <h1 className="typo-h2">{error.status === 404 ? "Tentative introuvable" : "Chargement impossible"}</h1>
         <p className="typo-subtitle mt-2">{error.message}</p>
-        <Button asChild variant="outline" className="mt-6"><Link href={`${routes.subject(subjectId)}/exercices`}>Retour aux exercices</Link></Button>
+        <Button asChild variant="outline" className="mt-6"><Link href={base}>Retour aux exercices</Link></Button>
       </div>
     );
   }
   if (!attempt) return <div className="mx-auto max-w-3xl space-y-3 px-4 py-8" aria-busy><Skeleton className="h-8 w-64" /><Skeleton className="h-64 rounded-xl" /></div>;
 
-  const back = `${routes.subject(subjectId)}/exercices/${exerciseId}`;
+  const back = `${base}/${exerciseId}`;
   const total = attempt.questions.length;
   const graded = attempt.status === "GRADED";
 
@@ -208,7 +243,8 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
   if (graded) {
     const pct = attempt.gradedMax ? Math.round(((attempt.score ?? 0) / attempt.gradedMax) * 100) : 0;
     return (
-      <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6">
+      <div className={cn("mx-auto w-full px-4 py-6 sm:px-6", reviewPosition ? "grid max-w-6xl items-start gap-5 lg:grid-cols-[minmax(0,1fr)_380px]" : "max-w-3xl")}>
+        <div className="min-w-0">
         <Link href={back} className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="h-4 w-4" aria-hidden /> Retour à l&apos;exercice</Link>
         <h1 className="typo-h1">{attempt.exercise.title}</h1>
         <p className="typo-subtitle mt-1">Correction de votre tentative du {new Date(attempt.startedAt).toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" })}</p>
@@ -230,6 +266,7 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
           <div className="mt-4 flex flex-wrap gap-2">
             <Button className="gap-2" onClick={() => void again()}><RotateCcw className="h-4 w-4" aria-hidden /> Refaire l&apos;exercice</Button>
             <Button asChild variant="outline"><Link href={back}>Voir l&apos;historique</Link></Button>
+            {keepButton}
           </div>
         </section>
 
@@ -237,9 +274,11 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
 
         <ol className="space-y-4">
           {attempt.questions.map((q) => (
-            <ResultCard key={q.position} q={q} subjectId={subjectId} exerciseId={exerciseId} documentId={attempt.exercise.documentId} comment={attempt.review?.questions.find((c) => c.position === q.position)?.comment} />
+            <ResultCard key={q.position} q={q} subjectId={subjectId} exerciseId={exerciseId} documentId={attempt.exercise.documentId} comment={attempt.review?.questions.find((c) => c.position === q.position)?.comment} onAskTutor={() => setReviewPosition(q.position)} />
           ))}
         </ol>
+        </div>
+        {reviewPosition && <TutorPanel key={reviewPosition} attemptId={attemptId} position={reviewPosition} answer={answers[reviewPosition] ?? null} className="lg:sticky lg:top-4" />}
       </div>
     );
   }
@@ -254,8 +293,13 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
     if (immediate && x.result) return VERDICT_LABEL[x.result.verdict].className;
     return isFilled(answers[x.position]) ? "border-emerald-400 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300" : "hover:bg-muted";
   };
+  const group = q.payload.group as { index?: number; title?: string; instructions?: string | null; context?: string | null } | undefined;
+  const rich = q.payload.rich === true;
+  const label = q.payload.label ? String(q.payload.label) : null;
+  const blanks = q.type === "fill_choices" || q.type === "fill_blank";
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6">
+    <div className="mx-auto grid w-full max-w-6xl items-start gap-5 px-4 py-6 sm:px-6 lg:grid-cols-[minmax(0,1fr)_380px]">
+    <div className="min-w-0">
       <div className="mb-1 flex items-center justify-between gap-3">
         <Link href={back} className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="h-4 w-4" aria-hidden /> Quitter (vos réponses sont enregistrées)</Link>
         <span role="status" aria-live="polite" className={cn("flex items-center gap-1.5 text-xs", save === "error" ? "text-destructive" : "text-muted-foreground")} title={saveError ?? undefined}>
@@ -264,7 +308,7 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
           {save === "error" && <button className="underline" onClick={() => void flushAll()}>Réessayer</button>}
         </span>
       </div>
-      <h1 className="typo-h2">{attempt.exercise.title}</h1>
+      <div className="flex items-start justify-between gap-3"><h1 className="typo-h2">{attempt.exercise.title}</h1>{keepButton}</div>
       <p className="typo-meta mt-0.5">{immediate ? "Correction expliquée après chaque réponse" : "Correction détaillée à la fin de l'exercice"}</p>
       <div className="mt-3 flex items-center gap-3">
         <Progress value={(answered / total) * 100} className="h-2 flex-1" aria-label="Progression" />
@@ -286,14 +330,16 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
         ))}
       </nav>
 
+      {group && <ExerciseContext group={group} />}
       <section aria-labelledby="question-title" className="rounded-xl border bg-card p-5">
         <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          {label && <span className="font-semibold text-foreground">{label}</span>}
           <Badge variant="outline">{TYPE_LABEL[q.type]}</Badge>
           <span>{fmtPoints(q.points)} point{q.points > 1 ? "s" : ""}</span>
           <span>· {q.difficulty}</span>
         </div>
         <h2 id="question-title" className="mb-4 text-base font-semibold leading-relaxed">
-          {q.type === "fill_choices" || q.type === "fill_blank" ? "Complétez la phrase :" : String(q.payload.statement)}
+          {blanks ? "Complétez la phrase :" : rich ? <RichText text={String(q.payload.statement)} /> : String(q.payload.statement)}
         </h2>
         <QuestionInput key={q.position} q={q} value={answers[q.position]} onChange={(v) => change(q.position, v)} disabled={corrected || checking} />
         {immediate && !corrected && (
@@ -325,6 +371,8 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
           <Button variant="ghost" size="sm" onClick={() => void submit()} disabled={submitting}>Terminer maintenant</Button>
         </div>
       )}
+    </div>
+    <TutorPanel key={current} attemptId={attemptId} position={q.position} answer={answers[q.position] ?? null} className="lg:sticky lg:top-4" />
     </div>
   );
 }
@@ -383,7 +431,7 @@ function LabLink({ exerciseId, position, kind }: { exerciseId: string; position:
   );
 }
 
-function ResultCard({ q, subjectId, exerciseId, documentId, comment, hideStatement }: { q: AttemptQuestion; subjectId: string; exerciseId: string; documentId: string | null; comment?: string; hideStatement?: boolean }) {
+function ResultCard({ q, subjectId, exerciseId, documentId, comment, hideStatement, onAskTutor }: { q: AttemptQuestion; subjectId: string | null; exerciseId: string; documentId: string | null; comment?: string; hideStatement?: boolean; onAskTutor?: () => void }) {
   const r = q.result;
   const tests = (r?.detail as { tests?: TestOutcome[]; summary?: TestSummary; diagnoses?: Diagnosis[] } | undefined);
   const v = VERDICT_LABEL[r?.verdict ?? "ungraded"];
@@ -396,7 +444,7 @@ function ResultCard({ q, subjectId, exerciseId, documentId, comment, hideStateme
         <Badge variant="outline" className={cn("ml-auto font-medium", v.className)}>{v.label}</Badge>
         <span className="font-semibold">{fmtPoints(r?.points)} / {fmtPoints(q.points)}</span>
       </div>
-      {!hideStatement && <p className="font-medium">{statement}</p>}
+      {!hideStatement && (q.payload.rich === true && q.type !== "fill_blank" && q.type !== "fill_choices" ? <RichText text={statement} className="font-medium" /> : <p className="font-medium">{statement}</p>)}
       <dl className="mt-3 space-y-2 text-sm">
         <div>
           <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Votre réponse</dt>
@@ -419,14 +467,14 @@ function ResultCard({ q, subjectId, exerciseId, documentId, comment, hideStateme
       {Array.isArray((r?.detail as { missing?: string[] } | undefined)?.missing) && (r!.detail as { missing: string[] }).missing.length > 0 && (
         <div className="mt-2 text-sm"><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Ce qui manque</p><ul className="list-disc pl-5">{(r!.detail as { missing: string[] }).missing.map((m, i) => <li key={i}>{m}</li>)}</ul></div>
       )}
-      {r?.explanation && <p className="mt-3 rounded-md bg-muted/60 p-3 text-sm"><span className="font-semibold">Explication : </span>{r.explanation}</p>}
+      {r?.explanation && <div className="mt-3 rounded-md bg-muted/60 p-3 text-sm"><span className="font-semibold">Explication : </span>{q.payload.rich === true ? <RichText text={r.explanation} className="mt-1" /> : r.explanation}</div>}
       {comment && <p className="mt-2 rounded-md bg-muted/60 p-3 text-sm"><span className="font-semibold">Analyse de votre réponse : </span>{comment}</p>}
       {q.sourceRefs?.map((s, i) => (
         <p key={i} className="mt-2 border-l-2 border-emerald-500 pl-2 text-xs italic text-muted-foreground">
           « {s.quote} »{" "}
           {s.documentName && <span className="not-italic">{s.documentName}{s.page ? " · " : ""}</span>}
-          {(s.documentId ?? documentId) && s.page && (
-            <Link href={`${routes.subject(s.subjectId ?? subjectId)}/documents/${s.documentId ?? documentId}?page=${s.page}`} className="not-italic text-primary hover:underline">
+          {(s.documentId ?? documentId) && s.page && (s.subjectId ?? subjectId) && (
+            <Link href={`${routes.subject((s.subjectId ?? subjectId)!)}/documents/${s.documentId ?? documentId}?page=${s.page}`} className="not-italic text-primary hover:underline">
               Relire p. {s.page} <ExternalLink className="inline h-3 w-3" aria-hidden />
             </Link>
           )}
@@ -435,6 +483,7 @@ function ResultCard({ q, subjectId, exerciseId, documentId, comment, hideStateme
       {q.concepts && q.concepts.length > 0 && (
         <p className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">Notions : {q.concepts.map((c) => <span key={c.id} className="rounded-full bg-muted px-2 py-0.5">{c.name}</span>)}</p>
       )}
+      {onAskTutor && <Button variant="ghost" size="sm" className="mt-2 gap-1.5" onClick={onAskTutor}><MessageCircleQuestion className="h-4 w-4" aria-hidden /> Comprendre avec le tuteur</Button>}
     </li>
   );
 }

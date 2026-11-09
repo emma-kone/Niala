@@ -29,7 +29,7 @@ export async function maxUploadBytes(userId: string): Promise<number> {
 }
 
 export interface PrepareInput {
-  subjectId: string;
+  subjectId: string | null;
   folderId: string | null;
   files: { name: string; size: number }[];
 }
@@ -41,8 +41,9 @@ export type PrepareResult =
 export async function prepareUploads(userId: string, input: PrepareInput): Promise<PrepareResult[]> {
   if (input.files.length === 0) throw new ApiHttpError("Aucun fichier reçu.", 400);
   if (input.files.length > MAX_FILES_PER_IMPORT) throw new ApiHttpError(`Maximum ${MAX_FILES_PER_IMPORT} fichiers par import.`, 400);
-  await requireSubject(userId, input.subjectId);
-  if (input.folderId) {
+  if (input.subjectId) await requireSubject(userId, input.subjectId);
+  else if (input.folderId) throw new ApiHttpError("Dossier introuvable.", 404);
+  if (input.subjectId && input.folderId) {
     const folders = await loadFolders(db, userId, input.subjectId);
     if (!folders.some((f) => f.id === input.folderId)) throw new ApiHttpError("Dossier introuvable.", 404);
   }

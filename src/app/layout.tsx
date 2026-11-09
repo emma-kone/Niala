@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Bricolage_Grotesque, JetBrains_Mono } from "next/font/google";
+import { Bricolage_Grotesque, JetBrains_Mono, MuseoModerno } from "next/font/google";
 import "./globals.css";
 import { Notifications } from "@/components/notifications";
 import { ThemeProvider, THEME_INIT_SCRIPT } from "@/components/theme/theme-provider";
@@ -10,6 +10,8 @@ import { ThemeProvider, THEME_INIT_SCRIPT } from "@/components/theme/theme-provi
  * next/font — auto-hébergée, zéro décalage de mise en page, fallback ajusté
  * automatiquement, `font-display: swap`).
  * Police de code : JetBrains Mono (éditeurs, console, zones SQL).
+ * Police du logo : MuseoModerno, réservée au nom « Niala » et au symbole « NL »
+ * (composants de src/components/brand).
  * ──────────────────────────────────────────────────────────────────────────────
  */
 const bricolageGrotesque = Bricolage_Grotesque({
@@ -28,13 +30,19 @@ const jetbrainsMono = JetBrains_Mono({
   fallback: ["ui-monospace", "Menlo", "Consolas", "monospace"],
 });
 
+const museoModerno = MuseoModerno({
+  variable: "--font-museo",
+  subsets: ["latin"],
+  display: "swap",
+  fallback: ["Segoe UI", "system-ui", "Arial", "sans-serif"],
+});
+
 export const metadata: Metadata = {
   title: "Niala — Plateforme d'apprentissage assistée par IA",
   description:
     "Importez vos cours, générez des exercices personnalisés, codez et pratiquez le SQL, suivez votre progression. Plateforme personnelle d'apprentissage assistée par intelligence artificielle.",
-  icons: {
-    icon: "/logo.svg",
-  },
+  applicationName: "Niala",
+  appleWebApp: { title: "Niala", capable: true, statusBarStyle: "default" },
 };
 
 export const viewport: Viewport = {
@@ -53,7 +61,7 @@ export default function RootLayout({
     <html
       lang="fr"
       suppressHydrationWarning
-      className={`${bricolageGrotesque.variable} ${jetbrainsMono.variable}`}
+      className={`${bricolageGrotesque.variable} ${jetbrainsMono.variable} ${museoModerno.variable}`}
     >
       <head>
         {/* Thème appliqué avant le premier rendu : clair par défaut, sans flash */}

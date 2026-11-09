@@ -16,10 +16,13 @@ model User {
   passwordHash String
   googleSub    String?  @unique // identifiant Google lié à ce compte (connexion Google sur un compte inscrit par mot de passe)
   name         String?
+  sessionVersion Int    @default(0) // incrémenté pour fermer toutes les sessions ouvertes
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
   settings        UserSettings?
+  profile         StudentProfile?
+  tutorMessages   AttemptTutorMessage[]
   subjects        Subject[]
   documents       Document[]
   exercises       LegacyExercise[]
@@ -66,7 +69,7 @@ model User {
 model UserSettings {
   id            String  @id @default(cuid())
   userId        String  @unique
-  theme         String  @default("light") // light | dark | system
+  theme         String  @default("system") // light | dark | system
   scheduleWeekSwap Boolean @default(false) // inverse la convention semaine A / semaine B
   agendaPrefs   Json? // préférences de travail, rappels et heures de tranquillité
   defaultMode   String  @default("apprentissage")
@@ -75,6 +78,32 @@ model UserSettings {
   aiModel       String  @default("claude-sonnet-5-5")
   exerciseLang  String  @default("fr")
   retentionDays Int     @default(0) // 0 = conservation illimitée
+  textSize         String  @default("normal") // normal | large
+  correctionPref   String  @default("final") // immediate | final : valeur proposée à la création d'un exercice
+  explanationLevel String  @default("standard") // simple | standard | detailed
+  notifyProgress   Boolean @default(true)
+  notifyRevision   Boolean @default(true)
+  notifyActivities Boolean @default(true)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+/// Informations personnelles et académiques. Sans ligne ou sans catégorie : compte créé avant l'inscription détaillée, ou par Google.
+model StudentProfile {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  category    String? // ESATIC | OTHER_SCHOOL | TESTER
+  institution String?
+  fieldCode   String? // code de la filière ESATIC (référentiel src/config/academic.ts) ; null ailleurs
+  field       String? // intitulé de la filière ou spécialité
+  className   String? // classe saisie librement (ex. « DASI 3 »)
+  level       String? // BTS1 | BTS2 | L1 | L2 | L3 | M1 | M2 | AUTRE
+  levelOther  String? // niveau précisé par l'étudiant quand level = AUTRE
+  situation   String?
+  usageReason String?
+  avatar      String? // photo réduite côté navigateur (data:image/…) ; jamais la photo Google
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
@@ -163,7 +192,7 @@ model Document {
   conversations    Conversation[]
   academicTasks    AcademicTask[]
 
-  @@index([userId])
+  @@index([userId, lastOpenedAt])
   @@index([subjectId])
   @@index([status])
   @@index([folderId])
@@ -383,7 +412,7 @@ model AIUsageLog {
 
   user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
-  @@index([userId])
+  @@index([userId, createdAt])
   @@index([op])
 }
 
@@ -813,17 +842,19 @@ model MindMapRevision {
 model Exercise {
   id          String         @id @default(cuid())
   userId      String
-  subjectId   String
+  subjectId   String? // null : exercice libre ou importé, sans matière enregistrée
   documentId  String?
   versionId   String?
   title       String
   config      Json // nombre, barème, types, couverture, difficulté (validé par zod)
   totalPoints Float
   status      ExerciseStatus @default(READY)
+  origin      String         @default("DOCUMENT") // DOCUMENT | FREE | IMPORTED
+  saved       Boolean        @default(true) // false : exercice ponctuel, absent de « Mes exercices » et purgé ensuite
   createdAt   DateTime       @default(now())
 
   user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  subject   Subject           @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  subject   Subject?          @relation(fields: [subjectId], references: [id], onDelete: Cascade)
   document  Document?         @relation(fields: [documentId], references: [id], onDelete: SetNull)
   version   DocumentVersion?  @relation(fields: [versionId], references: [id], onDelete: SetNull)
   questions Question[]
@@ -831,7 +862,7 @@ model Exercise {
   labs      LabWorkspace[]
   academicTasks AcademicTask[]
 
-  @@index([userId])
+  @@index([userId, saved, createdAt])
   @@index([subjectId, createdAt])
 }
 
@@ -884,9 +915,28 @@ model ExerciseAttempt {
   user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   exercise Exercise? @relation(fields: [exerciseId], references: [id], onDelete: SetNull)
   answers  Answer[]
+  tutorMessages AttemptTutorMessage[]
 
-  @@index([userId, status])
+  @@index([userId, status, finishedAt])
   @@index([exerciseId])
+}
+
+/// Échanges avec le tuteur pendant une tentative, question par question : reprise et contexte des réponses suivantes.
+model AttemptTutorMessage {
+  id        String   @id @default(cuid())
+  userId    String
+  attemptId String
+  position  Int
+  role      ChatRole
+  kind      String // hint | explain | clarify | why_wrong | correction | steps | free
+  content   String
+  createdAt DateTime @default(now())
+
+  user    User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  attempt ExerciseAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+
+  @@index([attemptId, position, createdAt])
+  @@index([userId])
 }
 
 model Answer {
@@ -1024,7 +1074,7 @@ model LabRun {
   workspace LabWorkspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   diagnoses ErrorDiagnosis[]
 
-  @@index([userId])
+  @@index([userId, createdAt])
   @@index([workspaceId, createdAt])
 }
 

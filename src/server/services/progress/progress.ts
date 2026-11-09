@@ -94,10 +94,11 @@ export async function recomputeMastery(userId: string) {
 
 // ── Recommandations ──────────────────────────────────────────────────────────
 
-async function loadConceptViews(userId: string, subjectId?: string): Promise<(ConceptView & { subjectName: string })[]> {
+/** Le tableau de bord n'affiche pas les prérequis : `light` évite de charger le graphe complet des notions. */
+async function loadConceptViews(userId: string, subjectId?: string, light = false): Promise<(ConceptView & { subjectName: string })[]> {
   const concepts = await db.concept.findMany({
     where: { userId, ...(subjectId ? { subjectId } : {}) },
-    include: { mastery: true, subject: { select: { name: true } }, incoming: { where: { type: "PREREQUISITE" }, include: { from: { include: { mastery: true } } } } },
+    include: { mastery: true, subject: { select: { name: true } }, incoming: light ? { where: { id: "" }, include: { from: { include: { mastery: true } } } } : { where: { type: "PREREQUISITE" }, include: { from: { include: { mastery: true } } } } },
     take: 2000,
   });
   return concepts.map((c) => ({
@@ -194,6 +195,9 @@ export async function updateRecommendation(userId: string, id: string, status: "
 
 const subjectHref = (s: string) => `/matieres/${s}`;
 
+/** Un exercice libre ou importé n'a pas de matière : il est rangé directement sous /exercices. */
+const exerciseHref = (subjectId: string | null, exerciseId: string) => (subjectId ? `${subjectHref(subjectId)}/exercices/${exerciseId}` : `/exercices/${exerciseId}`);
+
 async function activityHref(userId: string, a: { type: string; refType: string | null; refId: string | null; subjectId: string | null; lastPosition: unknown }): Promise<string | null> {
   if (!a.refId) return null;
   if (a.refType === "document" && a.subjectId) {
@@ -202,7 +206,7 @@ async function activityHref(userId: string, a: { type: string; refType: string |
   }
   if (a.refType === "attempt") {
     const att = await db.exerciseAttempt.findFirst({ where: { id: a.refId, userId }, select: { exerciseId: true, exercise: { select: { subjectId: true } } } });
-    return att?.exerciseId && att.exercise ? `${subjectHref(att.exercise.subjectId)}/exercices/${att.exerciseId}/tentatives/${a.refId}` : null;
+    return att?.exerciseId && att.exercise ? `${exerciseHref(att.exercise.subjectId, att.exerciseId)}/tentatives/${a.refId}` : null;
   }
   if (a.refType === "lab") return `${a.type === "LAB_SQL" ? "/sql" : "/code"}/${a.refId}`;
   return null;
@@ -246,20 +250,21 @@ async function agendaOverview(userId: string, clock: { date: string; minutes: nu
 
 export async function dashboard(userId: string, clock: { date: string; minutes: number }) {
   const tomorrow = addDays(clock.date, 1);
-  const [{ courses, schedule }, recentDocs, unopened] = await Promise.all([
+  // Toutes les lectures sont indépendantes : elles partent ensemble pour que le temps de réponse soit celui de la plus lente.
+  const [{ courses, schedule }, recentDocs, unopened, subjects, concepts, activities, recs, failedDocs, attempts, labRuns, academic, breaks] = await Promise.all([
     courseWindow(userId, clock.date, addDays(clock.date, NEXT_COURSE_HORIZON_DAYS)),
     // Classement sur la dernière consultation réelle ; un document n'y figure qu'une fois, même ouvert plusieurs fois.
     db.document.findMany({ where: { userId, lastOpenedAt: { not: null }, subjectId: { not: null } }, orderBy: [{ lastOpenedAt: "desc" }, { id: "asc" }], take: 3, select: { id: true, name: true, type: true, subjectId: true, lastOpenedAt: true, lastPage: true, pageCount: true, currentVersion: { select: { pageCount: true } }, subject: { select: { name: true, color: true, icon: true } } } }),
     db.document.findMany({ where: { userId, lastOpenedAt: null, subjectId: { not: null } }, orderBy: { createdAt: "desc" }, take: 2, select: { id: true, name: true, subjectId: true, subject: { select: { name: true } } } }),
-  ]);
-  const [subjects, concepts, activities, recs, failedDocs, attempts, labRuns] = await Promise.all([
     db.subject.findMany({ where: { userId }, orderBy: { createdAt: "asc" }, select: { id: true, name: true, color: true, icon: true, _count: { select: { documents: true, studyExercises: true, notes: true } } } }),
-    loadConceptViews(userId),
+    loadConceptViews(userId, undefined, true),
     db.learningActivity.findMany({ where: { userId, status: "IN_PROGRESS" }, orderBy: { updatedAt: "desc" }, take: 5 }),
     listRecommendations(userId),
     db.document.findMany({ where: { userId, versions: { some: { extractStatus: "FAILED" } } }, select: { id: true, name: true, subjectId: true }, take: 5 }),
     db.exerciseAttempt.findMany({ where: { userId, status: "GRADED", exerciseId: { not: null } }, orderBy: { finishedAt: "desc" }, take: 5, select: { id: true, score: true, maxScore: true, finishedAt: true, exerciseId: true, exercise: { select: { title: true, subjectId: true } } } }),
     db.labRun.findMany({ where: { userId }, orderBy: { createdAt: "desc" }, take: 5, select: { id: true, createdAt: true, tests: true, workspace: { select: { id: true, title: true, kind: true } } } }),
+    agendaOverview(userId, clock),
+    db.scheduleBreak.findMany({ where: { userId }, select: { label: true, startMinutes: true, endMinutes: true, weekday: true } }).catch(() => []),
   ]);
 
   const perSubject = subjects.map((s) => {
@@ -281,15 +286,16 @@ export async function dashboard(userId: string, clock: { date: string; minutes: 
   });
 
   const resumeA = activities[0];
-  const resume = resumeA ? { type: resumeA.type, title: resumeA.title, subjectId: resumeA.subjectId, updatedAt: resumeA.updatedAt, href: await activityHref(userId, resumeA) } : null;
+  const hrefs = await Promise.all(activities.slice(0, 4).map((a) => activityHref(userId, a)));
+  const resume = resumeA ? { type: resumeA.type, title: resumeA.title, subjectId: resumeA.subjectId, updatedAt: resumeA.updatedAt, href: hrefs[0] } : null;
 
   const attention: { kind: string; text: string; href?: string }[] = [];
   for (const d of failedDocs) attention.push({ kind: "document_failed", text: `Le texte de « ${d.name} » n'a pas pu être extrait : il reste consultable, mais pas analysable.`, href: d.subjectId ? `${subjectHref(d.subjectId)}/documents/${d.id}` : undefined });
   for (const c of concepts.filter((c) => c.confidence >= MIN_CONFIDENCE && c.level < 0.5).sort((a, b) => a.level - b.level).slice(0, 3)) attention.push({ kind: "weak_concept", text: `« ${c.name} » (${c.subjectName}) : maîtrise fragile, ${Math.round(c.level * 100)} % d'après ${c.evidenceCount} réponse(s).`, href: `${subjectHref(c.subjectId)}` });
-  for (const a of activities.slice(1, 4)) attention.push({ kind: "in_progress", text: `Activité en cours : ${a.title}`, href: (await activityHref(userId, a)) ?? undefined });
+  activities.slice(1, 4).forEach((a, i) => attention.push({ kind: "in_progress", text: `Activité en cours : ${a.title}`, href: hrefs[i + 1] ?? undefined }));
 
   const recent = [
-    ...attempts.map((a) => ({ kind: "exercise", title: a.exercise?.title ?? "Exercice", at: a.finishedAt, detail: a.score != null && a.maxScore ? `${Math.round(a.score * 100) / 100} / ${a.maxScore}` : null, href: a.exercise && a.exerciseId ? `${subjectHref(a.exercise.subjectId)}/exercices/${a.exerciseId}/tentatives/${a.id}` : null })),
+    ...attempts.map((a) => ({ kind: "exercise", title: a.exercise?.title ?? "Exercice", at: a.finishedAt, detail: a.score != null && a.maxScore ? `${Math.round(a.score * 100) / 100} / ${a.maxScore}` : null, href: a.exercise && a.exerciseId ? `${exerciseHref(a.exercise.subjectId, a.exerciseId)}/tentatives/${a.id}` : null })),
     ...labRuns.map((r) => {
       const sum = (r.tests as { summary?: { passed: number; total: number } } | null)?.summary;
       return { kind: r.workspace.kind === "SQL" ? "lab_sql" : "lab_code", title: r.workspace.title, at: r.createdAt, detail: sum ? `${sum.passed}/${sum.total} tests` : "exécution libre", href: `${r.workspace.kind === "SQL" ? "/sql" : "/code"}/${r.workspace.id}` };
@@ -302,7 +308,6 @@ export async function dashboard(userId: string, clock: { date: string; minutes: 
   const recentDocuments = recentDocs.map((d) => ({ id: d.id, name: d.name, type: d.type, lastOpenedAt: d.lastOpenedAt, lastPage: d.lastPage, pageCount: d.pageCount ?? d.currentVersion?.pageCount ?? null, subjectId: d.subjectId!, subjectName: d.subject?.name ?? "", subjectColor: d.subject?.color ?? "#8b5cf6", subjectIcon: d.subject?.icon ?? null, href: documentHref(d) }));
   const measuredSubjects = perSubject.filter((s) => s.mastery !== null);
   const overallMastery = measuredSubjects.length ? Math.round((measuredSubjects.reduce((t, s) => t + s.mastery!, 0) / measuredSubjects.length) * 100) / 100 : null;
-  const academic = await agendaOverview(userId, clock);
   const urgent = academic.late[0] ?? academic.upcoming.find((t) => t.dueDate <= tomorrow) ?? null;
   const task = urgent ? { title: urgent.title, late: urgent.status === "EN_RETARD", detail: `Date limite : ${new Date(`${urgent.dueDate}T12:00:00`).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" })}${urgent.subjectName ? ` · ${urgent.subjectName}` : ""}` } : null;
   const highlight = pickHighlight({ date: clock.date, nowMinutes: clock.minutes, today: courses, resume, recommendation: recs[0] ?? null, task, mastery: overallMastery, hasSubjects: subjects.length > 0 });
@@ -321,7 +326,6 @@ export async function dashboard(userId: string, clock: { date: string; minutes: 
     highlight: recentDocs.length ? undefined : highlight,
   });
 
-  const breaks = await db.scheduleBreak.findMany({ where: { userId }, select: { label: true, startMinutes: true, endMinutes: true, weekday: true } }).catch(() => []);
   return { resume, next: recs[0] ?? null, recommendations: recs.slice(0, 5), attention, subjects: perSubject, recent, hasData: subjects.length > 0, recentDocuments, today: courses, schedule, breaks, academic, highlight, suggestions, overallMastery };
 }
 

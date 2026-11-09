@@ -51,3 +51,20 @@ export const DIFFICULTY_LABEL: Record<(typeof DIFFICULTIES)[number], string> = {
 };
 
 export const POINT_STEP = 0.25;
+
+/** Modes d'exercice : le mode détermine l'aide disponible pendant la résolution. */
+export const EXERCISE_MODES = ["apprentissage", "entrainement", "examen", "revision", "personnalise"] as const;
+export type ExerciseMode = (typeof EXERCISE_MODES)[number];
+export const MODE_META: Record<ExerciseMode, { label: string; text: string }> = {
+  apprentissage: { label: "Apprentissage", text: "Le tuteur vous accompagne à chaque question." },
+  entrainement: { label: "Entraînement", text: "Indices et clarifications uniquement, pas d'explication détaillée avant la correction." },
+  examen: { label: "Examen", text: "Aucune aide pendant l'épreuve, correction à la fin." },
+  revision: { label: "Révision ciblée", text: "Priorité aux notions les moins maîtrisées, tuteur disponible." },
+  personnalise: { label: "Personnalisé", text: "Vos réglages, tuteur disponible." },
+};
+
+/** Aide disponible pendant la résolution : tout, indices et clarifications seulement, ou rien. */
+export type Assistance = "full" | "hints" | "none";
+export const assistanceOf = (mode: ExerciseMode | undefined): Assistance => (mode === "examen" ? "none" : mode === "entrainement" ? "hints" : "full");
+
+export const EXERCISE_ORIGIN_LABEL: Record<string, string> = { DOCUMENT: "Depuis un cours", FREE: "Génération libre", IMPORTED: "Sujet importé" };

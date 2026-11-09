@@ -3,11 +3,14 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { GraduationCap, Loader2, ShieldCheck, Sparkles, UserPlus } from "lucide-react";
+import { Loader2, ShieldCheck, UserPlus } from "lucide-react";
+import { NialaLogo } from "@/components/brand/niala-logo";
+import { AcademicFields, EMPTY_ACADEMIC, Required, checkAcademic, type AcademicDraft } from "@/features/profile/academic-fields";
 import { api } from "@/lib/client-api";
 import { createClient } from "@/lib/supabase/client";
 import { routes } from "@/config/routes";
 import { useAuth } from "@/hooks/use-auth";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -23,14 +26,6 @@ const GOOGLE_ERRORS: Record<string, string> = {
   google_unverified: "Votre adresse Google n'est pas vérifiée : validez-la chez Google, puis réessayez.",
   google_account_exists: "Un compte existe déjà avec cette adresse : connectez-vous avec votre mot de passe.",
 };
-
-function LegalFooter() {
-  return (
-    <footer className="border-t px-6 py-3 text-center text-xs text-muted-foreground">
-      <Link href={routes.privacy} className="hover:text-foreground">Confidentialité</Link> · <Link href={routes.terms} className="hover:text-foreground">Conditions d&apos;utilisation</Link>
-    </footer>
-  );
-}
 
 function GoogleMark() {
   return (
@@ -50,6 +45,7 @@ export default function LoginView() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [academic, setAcademic] = useState<AcademicDraft>(EMPTY_ACADEMIC);
   // Le formulaire n'est affiché qu'après le chargement côté navigateur : l'adresse de la page est alors disponible.
   const [error, setError] = useState<string | null>(() => (typeof window === "undefined" ? null : (GOOGLE_ERRORS[new URLSearchParams(window.location.search).get("error") ?? ""] ?? null)));
   const [loading, setLoading] = useState(false);
@@ -65,14 +61,12 @@ export default function LoginView() {
   }, []);
 
   if (authenticated === null) {
-    // Les liens légaux sont dans le HTML initial : visibles des moteurs et des vérificateurs qui n'exécutent pas JavaScript.
     return (
       <div className="min-h-screen flex flex-col bg-background">
         <main className="flex flex-1 flex-col items-center justify-center gap-3">
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" aria-hidden />
           <p className="typo-subtitle">Chargement de Niala…</p>
         </main>
-        <LegalFooter />
       </div>
     );
   }
@@ -103,12 +97,14 @@ export default function LoginView() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (registering && password.length < MIN_PASSWORD_LENGTH) return setError(`Le mot de passe doit contenir au moins ${MIN_PASSWORD_LENGTH} caractères.`);
+    const checked = registering ? checkAcademic(academic) : null;
+    if (checked && !checked.ok) return setError(checked.message);
     setLoading(true);
     setError(null);
     try {
-      const res = await api.post<{ user: AuthUser }>(registering ? "/api/auth/register" : "/api/auth/login", registering ? { name, email, password } : { email, password });
+      const res = await api.post<{ user: AuthUser }>(registering ? "/api/auth/register" : "/api/auth/login", registering ? { name, email, password, profile: checked?.ok ? checked.value : undefined } : { email, password });
       setAuthenticated(true, res.user);
-      router.replace(routes.home);
+      window.location.replace(routes.home); // la mise en page serveur repart du compte qui vient de se connecter
     } catch (err) {
       setError(err instanceof Error ? err.message : registering ? "Inscription impossible." : "Échec de la connexion");
     } finally {
@@ -119,13 +115,9 @@ export default function LoginView() {
   return (
     <div className="min-h-screen flex flex-col bg-background">
       <main className="flex flex-1 items-center justify-center px-4 py-10">
-        <div className="w-full max-w-md">
-          <div className="mb-8 flex flex-col items-center gap-3 text-center">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-lg">
-              <GraduationCap className="h-7 w-7" aria-hidden />
-            </div>
-            <h1 className="typo-display">Niala</h1>
-            <p className="typo-subtitle max-w-sm">Importez vos cours, générez des exercices personnalisés, codez, pratiquez le SQL et suivez votre progression.</p>
+        <div className={cn("w-full transition-[max-width] duration-200", registering ? "max-w-xl" : "max-w-md")}>
+          <div className="mb-8 flex justify-center">
+            <NialaLogo size="lg" wordmarkAs="h1" />
           </div>
 
           <form onSubmit={submit} className="space-y-4 rounded-3xl border bg-card p-6 shadow-sm" aria-labelledby="auth-title">
@@ -144,19 +136,21 @@ export default function LoginView() {
 
             {registering && (
               <div className="space-y-2">
-                <Label htmlFor="name">Nom</Label>
-                <Input id="name" autoComplete="name" required maxLength={80} value={name} onChange={(e) => setName(e.target.value)} placeholder="Votre nom" />
+                <Label htmlFor="name">Nom et prénom<Required /></Label>
+                <Input id="name" autoComplete="name" required maxLength={80} value={name} onChange={(e) => setName(e.target.value)} placeholder="Votre nom et prénom" />
               </div>
             )}
             <div className="space-y-2">
-              <Label htmlFor="email">Adresse e-mail</Label>
+              <Label htmlFor="email">Adresse e-mail{registering && <Required />}</Label>
               <Input id="email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="vous@exemple.fr" />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="password">Mot de passe</Label>
+              <Label htmlFor="password">Mot de passe{registering && <Required />}</Label>
               <Input id="password" type="password" autoComplete={registering ? "new-password" : "current-password"} required minLength={registering ? MIN_PASSWORD_LENGTH : undefined} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••••" />
               {registering && <p className="typo-meta">{MIN_PASSWORD_LENGTH} caractères minimum.</p>}
             </div>
+            {registering && <AcademicFields draft={academic} onChange={setAcademic} idPrefix="signup" />}
+            {registering && <p className="typo-meta"><span className="text-destructive">*</span> Champ obligatoire</p>}
             {error && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm font-medium text-destructive">{error}</p>}
             <Button type="submit" className="w-full gap-2 font-semibold" disabled={loading}>
               {loading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : registering ? <UserPlus className="h-4 w-4" aria-hidden /> : <ShieldCheck className="h-4 w-4" aria-hidden />}
@@ -175,14 +169,8 @@ export default function LoginView() {
             <Link href={routes.terms} className="underline underline-offset-2 hover:text-foreground">conditions d&apos;utilisation</Link> et la{" "}
             <Link href={routes.privacy} className="underline underline-offset-2 hover:text-foreground">politique de confidentialité</Link>.
           </p>
-
-          <div className="mt-6 flex items-center justify-center gap-2 text-muted-foreground">
-            <Sparkles className="h-3.5 w-3.5" aria-hidden />
-            <p className="typo-meta">Analyse IA · Génération d&apos;exercices · Correction hybride · SQL · Éditeur de code</p>
-          </div>
         </div>
       </main>
-      <LegalFooter />
     </div>
   );
 }

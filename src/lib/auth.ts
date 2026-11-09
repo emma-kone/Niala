@@ -47,23 +47,27 @@ function sign(payload: string): string {
   return createHmac("sha256", getSecret()).update(payload).digest("base64url");
 }
 
-function createToken(userId: string): string {
+function createToken(userId: string, version: number): string {
   const exp = Date.now() + SESSION_TTL_MS;
-  const payload = `${userId}.${exp}`;
+  const payload = `${userId}.${exp}.${version}`;
   return `${payload}.${sign(payload)}`;
 }
 
-function verifyToken(token: string): string | null {
+/** Jeton actuel : identifiant.expiration.version.signature. Les jetons émis avant les versions (3 parties) valent version 0. */
+function verifyToken(token: string): { userId: string; version: number } | null {
   const parts = token.split(".");
-  if (parts.length !== 3) return null;
-  const [userId, expStr, sig] = parts;
-  const payload = `${userId}.${expStr}`;
+  if (parts.length !== 3 && parts.length !== 4) return null;
+  const sig = parts.at(-1)!;
+  const [userId, expStr] = parts;
+  const version = parts.length === 4 ? Number(parts[2]) : 0;
+  if (!Number.isInteger(version) || version < 0) return null;
+  const payload = parts.slice(0, -1).join(".");
   const expected = sign(payload);
   const a = Buffer.from(sig);
   const b = Buffer.from(expected);
   if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
   if (Number(expStr) < Date.now()) return null;
-  return userId;
+  return { userId, version };
 }
 
 // ── Liaison Google en attente ────────────────────────────────────────────────
@@ -118,7 +122,8 @@ export async function clearLinkCookie() {
 // ── Cookie de session (httpOnly, sameSite lax) ───────────────────────────────
 export async function setSessionCookie(userId: string) {
   const jar = await cookies();
-  jar.set(COOKIE_NAME, createToken(userId), {
+  const account = await db.user.findUnique({ where: { id: userId }, select: { sessionVersion: true } });
+  jar.set(COOKIE_NAME, createToken(userId, account?.sessionVersion ?? 0), {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
@@ -137,10 +142,12 @@ export async function getCurrentUser() {
   const jar = await cookies();
   const token = jar.get(COOKIE_NAME)?.value;
   if (!token) return null;
-  const userId = verifyToken(token);
-  if (!userId) return null;
+  const session = verifyToken(token);
+  if (!session) return null;
   try {
-    return await db.user.findUnique({ where: { id: userId } });
+    const user = await db.user.findUnique({ where: { id: session.userId } });
+    // Une session ouverte avant « Déconnecter tous les appareils » ou un changement de mot de passe n'est plus valable.
+    return user && user.sessionVersion === session.version ? user : null;
   } catch {
     return null;
   }

@@ -1,10 +1,16 @@
-import type { CorrectionMode, QuestionType } from "@/server/domain/exercise-types";
+import type { Assistance, CorrectionMode, ExerciseMode, QuestionType } from "@/server/domain/exercise-types";
+import { routes } from "@/config/routes";
+
+/** Racine des pages d'un exercice : sous sa matière, ou directement sous /exercices s'il n'en a pas. */
+export const exercisesBase = (subjectId: string | null | undefined) => (subjectId ? `${routes.subject(subjectId)}/exercices` : routes.exercises);
 
 export interface ExerciseListItem {
   id: string;
   title: string;
-  subject: { id: string; name: string; color: string; icon?: string | null };
+  subject: { id: string; name: string; color: string; icon?: string | null } | null;
   document: { id: string; name: string } | null;
+  origin: string;
+  freeSubject: string | null;
   versionNumber: number | null;
   createdAt: string;
   totalPoints: number;
@@ -19,14 +25,16 @@ export interface ExerciseListItem {
 export interface ExerciseDetail {
   id: string;
   title: string;
-  subject: { id: string; name: string; color: string; icon?: string | null };
+  subject: { id: string; name: string; color: string; icon?: string | null } | null;
   document: { id: string; name: string } | null;
+  origin: string;
+  saved: boolean;
   versionNumber: number | null;
   createdAt: string;
   totalPoints: number;
   notice: string | null;
   requested: number | null;
-  config: { types: string[]; difficulty: string | null; coverage: string | null; correctionMode: CorrectionMode; practicePercent: number | null; sources: { id: string; name: string }[] };
+  config: { types: string[]; difficulty: string | null; coverage: string | null; correctionMode: CorrectionMode; practicePercent: number | null; sources: { id: string; name: string }[]; mode: ExerciseMode | null; free: { subject: string; chapter: string; level: string } | null };
   questions: { position: number; type: QuestionType; points: number; difficulty: string }[];
   attempts: { id: string; status: "IN_PROGRESS" | "SUBMITTED" | "GRADED"; score: number | null; maxScore: number | null; startedAt: string; finishedAt: string | null; durationSec: number | null; answered: number }[];
 }
@@ -67,8 +75,10 @@ export interface AttemptDetail {
   id: string;
   status: "IN_PROGRESS" | "SUBMITTED" | "GRADED";
   correctionMode: CorrectionMode;
+  assistance: Assistance;
+  saved: boolean;
   review: AttemptReview | null;
-  exercise: { id: string; title: string; totalPoints: number; documentId: string | null; documentName: string | null; versionNumber: number | null; subjectId: string };
+  exercise: { id: string; title: string; totalPoints: number; documentId: string | null; documentName: string | null; versionNumber: number | null; subjectId: string | null };
   lastPosition: number;
   score: number | null;
   maxScore: number | null;
