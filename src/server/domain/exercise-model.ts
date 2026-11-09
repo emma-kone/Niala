@@ -10,13 +10,18 @@ import { randomBytes } from "node:crypto";
 
 import { DIFFICULTIES, EXERCISE_MODES, POINT_STEP, QUESTION_TYPES, TYPE_LABEL, type QuestionType, CORRECTION_MODES, MAX_SOURCE_DOCUMENTS, PRACTICE_TYPES } from "./exercise-types";
 import { LEVEL_CHOICES, OTHER_LEVEL } from "@/config/academic";
+import { STRUCTURED_ENVIRONMENTS, isStructured, type StructuredEnvironment } from "@/workspaces";
+import { ALGO_LANGUAGES } from "@/workspaces/algo/model";
+import { mathReferenceSchema } from "@/workspaces/math/model";
+import { meriseReferenceSchema } from "@/workspaces/merise/model";
+import { ENVIRONMENTS, inferEnvironment, validateProposal } from "@/workspaces/registry";
 export { DIFFICULTIES, POINT_STEP, QUESTION_TYPES, TYPE_LABEL };
 export type { QuestionType };
 
 /** Types corrigés sans IA (règles déterministes). */
 export const OBJECTIVE_TYPES: QuestionType[] = ["qcm_single", "qcm_multiple", "true_false", "fill_choices", "fill_blank", "short_answer", "matching"];
 /** Types dont la correction relève du jugement : IA (ou mots-clés pour la définition). */
-export const OPEN_TYPES: QuestionType[] = ["definition", "open", "practical", "code", "sql"];
+export const OPEN_TYPES: QuestionType[] = ["definition", "open", "practical", "workspace", "code", "sql"];
 
 export type Difficulty = "facile" | "moyenne" | "difficile";
 
@@ -169,6 +174,18 @@ export const rawQuestionSchema = z.discriminatedUnion("type", [
   z.object({ ...common, type: z.literal("open"), reference: text(1500, 5), criteria: z.array(text(200)).min(2).max(5) }),
   z.object({ ...common, type: z.literal("matching"), pairs: z.array(z.object({ left: text(160), right: text(200) })).min(3).max(6) }),
   z.object({ ...common, type: z.literal("practical"), reference: text(1500, 5), criteria: z.array(text(200)).min(2).max(5) }),
+  z.object({
+    ...common,
+    type: z.literal("workspace"),
+    environment: z.enum(STRUCTURED_ENVIRONMENTS),
+    reference: text(1500, 5),
+    criteria: z.array(text(200)).min(2).max(6),
+    deliverables: z.array(text(120)).max(8).optional(),
+    /** Solution attendue sous forme structurée (Merise, mathématiques) : validée par le serveur avant d'être retenue. */
+    structured: z.unknown().optional(),
+    language: z.enum(ALGO_LANGUAGES).optional(),
+    formalism: z.string().max(400).optional(),
+  }),
   z.object({ ...common, type: z.literal("code"), language: text(20), starterCode: z.string().max(2000).optional(), referenceSolution: text(3000, 3), criteria: z.array(text(200)).min(2).max(5), tests: z.array(z.unknown()).max(10).optional() }),
   z.object({
     ...common,
@@ -225,6 +242,27 @@ export interface BuiltQuestion {
   answerKey: Record<string, unknown>;
 }
 
+/** Question d'atelier : la référence structurée n'est gardée que si elle respecte le schéma de l'environnement. */
+export function workspaceQuestion(env: StructuredEnvironment, statement: string, o: { reference: string; criteria: string[]; structured?: unknown; deliverables?: string[]; language?: string; formalism?: string }): BuiltQuestion {
+  const parsed = env === "merise" ? meriseReferenceSchema.safeParse(o.structured) : env === "math" ? mathReferenceSchema.safeParse(o.structured) : null;
+  const info = ENVIRONMENTS[env];
+  return {
+    type: "workspace",
+    payload: { statement, environment: env, deliverables: o.deliverables?.length ? o.deliverables : info.deliverables, tools: info.tools, ...(env === "algo" ? { language: o.language ?? "pseudo", formalism: o.formalism ?? null } : {}) },
+    answerKey: { reference: o.reference, criteria: o.criteria, structured: parsed?.success ? parsed.data : null },
+  };
+}
+
+/** Un exercice pratique ou ouvert dont la consigne relève nettement d'un atelier (Merise, mathématiques, algorithmique) devient un atelier. */
+export function upgradeToWorkspace(built: BuiltQuestion, context: { subject?: string | null; chapter?: string | null } = {}): BuiltQuestion {
+  if (built.type !== "practical" && built.type !== "open") return built;
+  const statement = String(built.payload.statement ?? "");
+  const found = inferEnvironment({ ...context, statement });
+  if (found.confidence < 0.8 || !isStructured(found.environment)) return built;
+  const key = built.answerKey as { reference?: string; criteria?: string[] };
+  return workspaceQuestion(found.environment, statement, { reference: key.reference ?? "", criteria: key.criteria ?? [] });
+}
+
 export function buildQuestion(q: RawQuestion): BuiltQuestion {
   switch (q.type) {
     case "qcm_single":
@@ -257,6 +295,13 @@ export function buildQuestion(q: RawQuestion): BuiltQuestion {
         payload: { statement: q.statement, left: pairs.map((p) => ({ id: p.lid, label: p.left })), right: shuffled(pairs.map((p) => ({ id: p.rid, label: p.right }))) },
         answerKey: { pairs: Object.fromEntries(pairs.map((p) => [p.lid, p.rid])) },
       };
+    }
+    case "workspace": {
+      // L'IA propose un environnement ; le registre et le moteur de sélection décident.
+      const inferred = inferEnvironment({ statement: q.statement });
+      const proposal = validateProposal({ environment: q.environment, deliverables: q.deliverables }, inferred);
+      const env: StructuredEnvironment = isStructured(inferred.environment) && inferred.confidence >= 0.8 ? inferred.environment : (proposal.environment as StructuredEnvironment);
+      return workspaceQuestion(env, q.statement, { reference: q.reference, criteria: q.criteria, structured: q.structured, deliverables: q.deliverables, language: q.language, formalism: q.formalism });
     }
     case "code":
       // Les tests proposés par l'IA ne sont que des CANDIDATS : ils ne sont retenus qu'après exécution de la solution de référence (voir labs/validate).

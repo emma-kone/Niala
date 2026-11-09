@@ -6,6 +6,8 @@ import { OPEN_TYPES, POINT_STEP, type QuestionType } from "@/server/domain/exerc
 import { isAiConfigured } from "@/server/ai/provider";
 import { languageOf, parseCodeTests, sqlSpecSchema } from "@/server/domain/lab-tests";
 import { runCodeTests, runSqlTests } from "@/server/services/labs/execute";
+import { isWorkspaceFilled } from "@/workspaces";
+import { gradeWorkspace } from "@/server/services/workspaces/grade";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AnswerEvaluationService : règles déterministes d'abord ; l'IA n'intervient que pour les réponses
@@ -107,6 +109,16 @@ export async function gradeAnswer(
   q: { type: QuestionType; payload: Record<string, unknown>; answerKey: Record<string, unknown>; points: number },
   value: unknown
 ): Promise<GradedAnswer> {
+  if (q.type === "workspace") {
+    if (!isWorkspaceFilled(q.payload.environment, value)) return { ...skippedGrade(q.type, q.answerKey), explanation: null };
+    try {
+      const graded = await gradeWorkspace(userId, q, value);
+      if (graded) return graded;
+    } catch (e) {
+      console.warn("[evaluation] atelier :", e instanceof Error ? e.message : e);
+    }
+    return { ...ungradedGrade(q.type, q.answerKey), explanation: null };
+  }
   const objective = gradeObjective(q.type, q.answerKey, value, q.points);
   if (objective) return { ...objective, explanation: null };
 

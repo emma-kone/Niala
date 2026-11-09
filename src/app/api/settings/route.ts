@@ -25,6 +25,7 @@ const patchSchema = z.object({
   notifyProgress: z.boolean().optional(),
   notifyRevision: z.boolean().optional(),
   notifyActivities: z.boolean().optional(),
+  weeklyGoal: z.number().int().min(0).max(50).optional(),
 });
 
 export async function PUT(req: Request) {

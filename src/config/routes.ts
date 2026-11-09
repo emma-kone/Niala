@@ -12,6 +12,7 @@ export const routes = {
   progress: "/progression",
   settings: "/reglages",
   profile: "/profil",
+  maps: "/cartes",
   newExercise: "/exercices/nouveau",
   privacy: "/confidentialite",
   terms: "/conditions",

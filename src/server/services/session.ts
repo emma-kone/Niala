@@ -13,6 +13,7 @@ export const USER_SETTINGS_SELECT = {
   notifyProgress: true,
   notifyRevision: true,
   notifyActivities: true,
+  weeklyGoal: true,
 } as const;
 
 /** Tout ce dont l'interface a besoin à l'ouverture, lu en une fois côté serveur pour éviter autant d'allers-retours du navigateur. */

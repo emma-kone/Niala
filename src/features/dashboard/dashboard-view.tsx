@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { SubjectIcon } from "@/components/subject-icon";
 import { useAppStore } from "@/store/app-store";
 import { TASK_META, dueLabel, formatDay, localClock, planHref } from "@/features/agenda/types";
+import { CoachPanel } from "@/features/progress/coach-panel";
 import { recommendationHref, type DashboardData, type DashboardTask, type Recommendation } from "@/features/progress/types";
 import { buildDayView, referenceDate, type DayView } from "@/server/domain/dashboard";
 import { classifyOccurrence, formatMinutes, weekday } from "@/server/domain/schedule";
@@ -184,6 +185,8 @@ function Suggestions({ data, onDismiss }: { data: DashboardData; onDismiss: (r: 
   return (
     <section aria-label="Suggestions" className="overflow-y-auto rounded-[25px] bg-card p-5 sm:p-6 lg:mt-[42px]">
       <h2 className="flex items-center gap-2 text-lg font-semibold"><Lightbulb className="h-4 w-4" aria-hidden /> Suggestions</h2>
+      <div className="mt-3"><CoachPanel max={3} compact /></div>
+      <Link href={`${routes.progress}#conseils`} className="mt-2 block text-xs text-muted-foreground underline-offset-2 hover:underline">Tous les conseils et leurs justifications</Link>
       {data.suggestions.length === 0 ? (
         <p className="mt-3 text-sm text-muted-foreground">Rien à proposer pour l&apos;instant : les suggestions viennent de vos résultats, de vos activités et de votre agenda.</p>
       ) : (

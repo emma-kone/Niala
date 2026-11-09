@@ -20,6 +20,7 @@ import { VERDICT_LABEL, exercisesBase, fmtPoints, type AttemptDetail, type Attem
 import { confirmAction, notify } from "@/components/notifications";
 import { useSettings } from "@/features/settings/use-settings";
 import { TutorPanel } from "./tutor-panel";
+import { isWorkspaceFilled } from "@/workspaces";
 
 // Formules et tableaux : le rendu n'est chargé que pour les énoncés qui en ont besoin.
 const RichText = dynamic(() => import("./rich-text"));
@@ -44,9 +45,21 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
   const router = useRouter();
   const { settings } = useSettings();
   const [reviewPosition, setReviewPosition] = useState<number | null>(null);
+  /** Une réponse d'atelier est vide tant qu'elle ne contient aucun élément, même si son document JSON existe. */
+  const filledQ = (x: AttemptQuestion) => (x.type === "workspace" ? isWorkspaceFilled(x.payload.environment, answers[x.position]) : isFilled(answers[x.position]));
   const [saved, setSaved] = useState(true);
   const base = exercisesBase(subjectId);
   const [attempt, setAttempt] = useState<AttemptDetail | null>(null);
+  // L'onglet du navigateur porte le nom de l'exercice en cours : on sait toujours dans quel espace on travaille.
+  const tabTitle = attempt?.exercise.title;
+  useEffect(() => {
+    if (!tabTitle) return;
+    const previous = document.title;
+    document.title = `${tabTitle} · Exercice · Niala`;
+    return () => {
+      document.title = previous;
+    };
+  }, [tabTitle]);
   const [error, setError] = useState<{ message: string; status?: number } | null>(null);
   const [current, setCurrent] = useState(1);
   const [answers, setAnswers] = useState<Record<number, unknown>>({});
@@ -79,27 +92,35 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
   }, [load]);
 
   // ── Enregistrement automatique des réponses ──
+  // Les enregistrements d'une même question partent l'un après l'autre : deux requêtes rapprochées pourraient sinon arriver
+  // dans le désordre, et la plus ancienne écraserait la plus récente (travail perdu dans un atelier, par exemple).
+  const chains = useRef(new Map<number, Promise<void>>());
   const flushOne = useCallback(
-    async (position: number) => {
+    (position: number): Promise<void> => {
       const t = timers.current.get(position);
       if (t) clearTimeout(t);
       timers.current.delete(position);
-      if (!pending.current.has(position)) return;
-      const value = pending.current.get(position);
-      pending.current.delete(position);
-      inFlight.current++;
-      setSave("saving");
-      try {
-        await api.put(`/api/attempts/${attemptId}/answers/${position}`, { value });
-        setSaveError(null);
-        if (inFlight.current === 1 && pending.current.size === 0) setSave("saved");
-      } catch (e) {
-        pending.current.set(position, value); // rien n'est perdu : on retentera
-        setSave("error");
-        setSaveError(errText(e, "Enregistrement impossible."));
-      } finally {
-        inFlight.current--;
-      }
+      const send = async () => {
+        if (!pending.current.has(position)) return;
+        const value = pending.current.get(position);
+        pending.current.delete(position);
+        inFlight.current++;
+        setSave("saving");
+        try {
+          await api.put(`/api/attempts/${attemptId}/answers/${position}`, { value });
+          setSaveError(null);
+          if (inFlight.current === 1 && pending.current.size === 0) setSave("saved");
+        } catch (e) {
+          if (!pending.current.has(position)) pending.current.set(position, value); // rien n'est perdu : on retentera
+          setSave("error");
+          setSaveError(errText(e, "Enregistrement impossible."));
+        } finally {
+          inFlight.current--;
+        }
+      };
+      const next = (chains.current.get(position) ?? Promise.resolve()).then(send, send);
+      chains.current.set(position, next);
+      return next;
     },
     [attemptId]
   );
@@ -138,7 +159,7 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
 
   async function submit() {
     if (!attempt) return;
-    const missing = attempt.questions.filter((q) => !isFilled(answers[q.position])).length;
+    const missing = attempt.questions.filter((q) => !filledQ(q)).length;
     if (missing > 0 && !(await confirmAction(`${missing} question(s) sans réponse. Terminer et corriger quand même ?`, { confirmLabel: "Terminer", danger: false }))) return;
     setSubmitting(true);
     setActionError(null);
@@ -285,13 +306,13 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
 
   // ───────────────────────── Passage ─────────────────────────
   const q = attempt.questions[current - 1];
-  const answered = attempt.questions.filter((x) => isFilled(answers[x.position])).length;
+  const answered = attempt.questions.filter((x) => filledQ(x)).length;
   const immediate = attempt.correctionMode === "immediate";
   const corrected = immediate && !!q.result && q.result.verdict !== "ungraded";
   const navClass = (x: AttemptQuestion) => {
     if (current === x.position) return "border-primary bg-primary text-primary-foreground";
     if (immediate && x.result) return VERDICT_LABEL[x.result.verdict].className;
-    return isFilled(answers[x.position]) ? "border-emerald-400 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300" : "hover:bg-muted";
+    return filledQ(x) ? "border-emerald-400 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300" : "hover:bg-muted";
   };
   const group = q.payload.group as { index?: number; title?: string; instructions?: string | null; context?: string | null } | undefined;
   const rich = q.payload.rich === true;
@@ -321,7 +342,7 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
             key={x.position}
             type="button"
             onClick={() => void go(x.position)}
-            aria-label={`Question ${x.position}${isFilled(answers[x.position]) ? " (répondue)" : ""}`}
+            aria-label={`Question ${x.position}${filledQ(x) ? " (répondue)" : ""}`}
             aria-current={current === x.position ? "step" : undefined}
             className={cn("h-8 min-w-8 rounded-md border px-2 text-xs font-medium", navClass(x))}
           >
@@ -339,11 +360,11 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
           <span>· {q.difficulty}</span>
         </div>
         <h2 id="question-title" className="mb-4 text-base font-semibold leading-relaxed">
-          {blanks ? "Complétez la phrase :" : rich ? <RichText text={String(q.payload.statement)} /> : String(q.payload.statement)}
+          {blanks ? "Complétez la phrase :" : rich || q.type === "workspace" ? <RichText text={String(q.payload.statement)} /> : String(q.payload.statement)}
         </h2>
-        <QuestionInput key={q.position} q={q} value={answers[q.position]} onChange={(v) => change(q.position, v)} disabled={corrected || checking} />
+        <QuestionInput key={q.position} q={q} value={answers[q.position]} onChange={(v) => change(q.position, v)} disabled={corrected || checking} attemptId={attemptId} statementNode={<RichText text={String(q.payload.statement)} />} />
         {immediate && !corrected && (
-          <Button className="mt-4 gap-1.5" onClick={() => void check(q.position)} disabled={checking || !isFilled(answers[q.position])}>
+          <Button className="mt-4 gap-1.5" onClick={() => void check(q.position)} disabled={checking || !filledQ(q)}>
             {checking ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <CheckCircle2 className="h-4 w-4" aria-hidden />} {checking ? "Correction en cours…" : "Valider ma réponse"}
           </Button>
         )}
@@ -373,6 +394,37 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
       )}
     </div>
     <TutorPanel key={current} attemptId={attemptId} position={q.position} answer={answers[q.position] ?? null} className="lg:sticky lg:top-4" />
+    </div>
+  );
+}
+
+interface WorkspaceDetail {
+  checks: { label: string; ok: boolean; detail?: string }[];
+  findings: string[];
+  firstIncorrect?: string;
+  errorKind?: string;
+  scores?: { checks: number | null; qualitative: number | null };
+}
+const ERROR_KIND: Record<string, string> = { calcul: "erreur de calcul", methode: "erreur de méthode", modelisation: "erreur de modélisation", forme: "erreur de forme" };
+
+/** Vérifications d'un atelier : ce qui a été contrôlé, la première erreur et sa nature. */
+function WorkspaceResult({ detail }: { detail: WorkspaceDetail }) {
+  return (
+    <div className="mt-3 space-y-2 text-sm">
+      {detail.firstIncorrect && <p className="rounded-md bg-amber-50 p-2 text-amber-900 dark:bg-amber-950/30 dark:text-amber-200"><span className="font-semibold">Première erreur{detail.errorKind && ERROR_KIND[detail.errorKind] ? ` (${ERROR_KIND[detail.errorKind]})` : ""} : </span>{detail.firstIncorrect}</p>}
+      {detail.checks.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Vérifications</p>
+          <ul className="mt-1 space-y-0.5">{detail.checks.map((c, i) => <li key={i} className={cn("text-xs", c.ok ? "text-emerald-700 dark:text-emerald-400" : "text-destructive")}>{c.ok ? "✓" : "✗"} {c.label}{c.detail ? ` — ${c.detail}` : ""}</li>)}</ul>
+        </div>
+      )}
+      {detail.findings.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Cohérence de votre travail</p>
+          <ul className="mt-1 list-disc space-y-0.5 pl-5 text-xs">{detail.findings.slice(0, 8).map((f, i) => <li key={i}>{f}</li>)}</ul>
+        </div>
+      )}
+      {detail.scores && <p className="typo-meta">Une solution différente de la référence mais cohérente avec la consigne n&apos;est pas pénalisée : l&apos;évaluation qualitative peut relever la note issue de la comparaison.</p>}
     </div>
   );
 }
@@ -464,6 +516,7 @@ function ResultCard({ q, subjectId, exerciseId, documentId, comment, hideStateme
       {r?.method === "keywords" && <p className="mt-2 text-xs text-muted-foreground">Correction automatique par mots-clés (le service d&apos;IA n&apos;était pas disponible) : à relire avec la réponse de référence.</p>}
       {r?.method === "ai" && <p className="mt-2 text-xs text-muted-foreground">Correction assistée par IA selon les critères de l&apos;exercice, dont la référence provient de votre cours : à relire en cas de doute.</p>}
       {r?.verdict === "ungraded" && <p className="mt-2 text-xs text-violet-800 dark:text-violet-300">Cette réponse n&apos;a pas été corrigée. Comparez-la à la réponse de référence ci-dessus.</p>}
+      {(r?.detail as { workspace?: boolean } | undefined)?.workspace && <WorkspaceResult detail={r!.detail as unknown as WorkspaceDetail} />}
       {Array.isArray((r?.detail as { missing?: string[] } | undefined)?.missing) && (r!.detail as { missing: string[] }).missing.length > 0 && (
         <div className="mt-2 text-sm"><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Ce qui manque</p><ul className="list-disc pl-5">{(r!.detail as { missing: string[] }).missing.map((m, i) => <li key={i}>{m}</li>)}</ul></div>
       )}
