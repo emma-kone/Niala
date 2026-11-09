@@ -95,7 +95,7 @@ export async function recomputeMastery(userId: string) {
 // ── Recommandations ──────────────────────────────────────────────────────────
 
 /** Le tableau de bord n'affiche pas les prérequis : `light` évite de charger le graphe complet des notions. */
-async function loadConceptViews(userId: string, subjectId?: string, light = false): Promise<(ConceptView & { subjectName: string })[]> {
+export async function loadConceptViews(userId: string, subjectId?: string, light = false): Promise<(ConceptView & { subjectName: string })[]> {
   const concepts = await db.concept.findMany({
     where: { userId, ...(subjectId ? { subjectId } : {}) },
     include: { mastery: true, subject: { select: { name: true } }, incoming: light ? { where: { id: "" }, include: { from: { include: { mastery: true } } } } : { where: { type: "PREREQUISITE" }, include: { from: { include: { mastery: true } } } } },

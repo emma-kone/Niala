@@ -16,6 +16,7 @@ export interface UserSettings {
   notifyProgress: boolean;
   notifyRevision: boolean;
   notifyActivities: boolean;
+  weeklyGoal: number;
 }
 
 export const SETTINGS_KEY = ["settings"] as const;

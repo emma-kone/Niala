@@ -25,7 +25,7 @@ import {
   type NodeChange,
   type NodeProps,
 } from "@xyflow/react";
-import { ArrowLeft, History, LayoutGrid, Loader2, Plus, Save, Trash2 } from "lucide-react";
+import { ArrowLeft, ChevronsDownUp, ChevronsUpDown, GitBranchPlus, History, LayoutGrid, Loader2, Minus, Plus, Save, Trash2 } from "lucide-react";
 import { useTheme } from "@/components/theme/theme-provider";
 import { api, ApiError } from "@/lib/client-api";
 import { routes } from "@/config/routes";
@@ -53,6 +53,10 @@ interface NodeData extends Record<string, unknown> {
   page?: number | null;
   note?: string;
   definition?: string;
+  /** Renseignés à l'affichage (branches repliables) ; jamais enregistrés. */
+  hasChildren?: boolean;
+  collapsed?: boolean;
+  onToggle?: () => void;
   conceptId: string | null;
   sectionId: string | null;
 }
@@ -118,6 +122,11 @@ function CardNode({ id, data, selected }: NodeProps<FlowNode>) {
         </span>
       )}
       <Handle id="r" type="source" position={Position.Right} className="!h-2.5 !w-2.5" />
+      {data.hasChildren && (
+        <button type="button" onClick={(e) => { e.stopPropagation(); data.onToggle?.(); }} aria-label={data.collapsed ? "Développer la branche" : "Réduire la branche"} aria-expanded={!data.collapsed} className="nodrag absolute -right-3 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full border bg-background text-muted-foreground shadow-sm hover:text-foreground">
+          {data.collapsed ? <Plus className="h-3 w-3" aria-hidden /> : <Minus className="h-3 w-3" aria-hidden />}
+        </button>
+      )}
     </div>
   );
 }
@@ -148,7 +157,7 @@ function toFlowEdge(e: MapEdgeDto, showArrows: boolean, handles?: { s: string; t
   };
 }
 
-export default function MapEditor(props: { map: MapDetail }) {
+export default function MapEditor(props: { map: MapDetail; /** Affichée dans une fenêtre (lecteur de cours) : pas de lien de retour. */ embedded?: boolean }) {
   return (
     <ReactFlowProvider>
       <Editor {...props} />
@@ -156,7 +165,7 @@ export default function MapEditor(props: { map: MapDetail }) {
   );
 }
 
-function Editor({ map: initial }: { map: MapDetail }) {
+function Editor({ map: initial, embedded }: { map: MapDetail; embedded?: boolean }) {
   const showArrows = initial.kind === "CONCEPT";
   const [nodes, setNodes, onNodesChangeRaw] = useNodesState<FlowNode>(initial.nodes.map(toFlowNode));
   const [edges, setEdges, onEdgesChangeRaw] = useEdgesState<FlowEdge>(initial.edges.map((e) => toFlowEdge(e, showArrows)));
@@ -166,6 +175,8 @@ function Editor({ map: initial }: { map: MapDetail }) {
   const [revisions, setRevisions] = useState(initial.revisions);
   const [selNode, setSelNode] = useState<string | null>(null);
   const [selEdge, setSelEdge] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const dragStart = useRef<Map<string, { x: number; y: number }> | null>(null);
   const rf = useReactFlow<FlowNode, FlowEdge>();
   const { resolvedTheme } = useTheme();
 
@@ -300,8 +311,72 @@ function Editor({ map: initial }: { map: MapDetail }) {
     markDirty();
   }
 
+  // Hiérarchie : relations « fait partie de », de l'enfant (source) vers le parent (cible).
+  const childrenOf = useMemo(() => {
+    const m = new Map<string, string[]>();
+    for (const e of edges) if (e.data?.type === "PART_OF") m.set(e.target, [...(m.get(e.target) ?? []), e.source]);
+    return m;
+  }, [edges]);
+  const descendantsOf = useCallback(
+    (id: string) => {
+      const out = new Set<string>();
+      const walk = (n: string) => {
+        for (const c of childrenOf.get(n) ?? []) if (!out.has(c)) {
+          out.add(c);
+          walk(c);
+        }
+      };
+      walk(id);
+      return out;
+    },
+    [childrenOf],
+  );
+  const hidden = useMemo(() => {
+    const h = new Set<string>();
+    for (const id of collapsed) for (const d of descendantsOf(id)) h.add(d);
+    return h;
+  }, [collapsed, descendantsOf]);
+  const toggle = useCallback((id: string) => setCollapsed((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; }), []);
+  const displayNodes = useMemo(
+    () => nodes.map((n) => ({ ...n, hidden: hidden.has(n.id), data: { ...n.data, hasChildren: (childrenOf.get(n.id)?.length ?? 0) > 0, collapsed: collapsed.has(n.id), onToggle: () => toggle(n.id) } })),
+    [nodes, hidden, childrenOf, collapsed, toggle],
+  );
+  const displayEdges = useMemo(() => edges.map((e) => (hidden.has(e.source) || hidden.has(e.target) ? { ...e, hidden: true } : e)), [edges, hidden]);
+
+  /** Sous-branche : un nouveau nœud rattaché au nœud sélectionné (ou à la racine à défaut). */
+  function addChild() {
+    const parent = nodesRef.current.find((n) => n.id === selNode) ?? nodesRef.current[0];
+    if (!parent) return addNode();
+    const siblings = childrenOf.get(parent.id)?.length ?? 0;
+    const node: FlowNode = { id: rid("n"), type: "card", position: { x: Math.round(parent.position.x + 280), y: Math.round(parent.position.y + siblings * 64) }, data: { label: "Nouvelle sous-branche", origin: "USER", conceptId: null, sectionId: null } };
+    const link = toFlowEdge({ id: rid("e"), source: node.id, target: parent.id, type: "PART_OF", label: null, origin: "USER" }, showArrows, { s: "l", t: "r" });
+    setCollapsed((s) => { const n = new Set(s); n.delete(parent.id); return n; });
+    setNodes((ns) => [...ns.map((n) => ({ ...n, selected: false })), { ...node, selected: true }]);
+    setEdges((es) => [...es, link]);
+    markDirty();
+  }
+  const allBranches = useMemo(() => [...childrenOf.keys()], [childrenOf]);
+
+  // Déplacer une branche déplace aussi ses sous-branches.
+  const onNodeDragStart = useCallback((_: unknown, node: FlowNode) => {
+    dragStart.current = new Map([[node.id, { ...node.position }], ...[...descendantsOf(node.id)].map((d) => [d, { ...(nodesRef.current.find((n) => n.id === d)?.position ?? { x: 0, y: 0 }) }] as const)]);
+  }, [descendantsOf]);
+  const onNodeDrag = useCallback((_: unknown, node: FlowNode) => {
+    const start = dragStart.current;
+    const origin = start?.get(node.id);
+    if (!start || !origin || start.size < 2) return;
+    const dx = node.position.x - origin.x;
+    const dy = node.position.y - origin.y;
+    setNodes((ns) => ns.map((n) => (n.id !== node.id && start.has(n.id) ? { ...n, position: { x: start.get(n.id)!.x + dx, y: start.get(n.id)!.y + dy } } : n)));
+  }, [setNodes]);
+  const onNodeDragStop = useCallback(() => {
+    dragStart.current = null;
+    markDirty();
+  }, [markDirty]);
+
   function relayout() {
     const lay = initial.kind === "STRUCTURE" ? layoutTree : layoutLayers;
+    setCollapsed(new Set());
     const pos = lay(nodesRef.current.map((n) => ({ id: n.id })), edgesRef.current.map((e) => ({ source: e.source, target: e.target, type: e.data!.type })));
     setNodes((ns) => ns.map((n) => (pos[n.id] ? { ...n, position: pos[n.id] } : n)));
     markDirty();
@@ -384,11 +459,13 @@ function Editor({ map: initial }: { map: MapDetail }) {
   const sel = useMemo(() => nodes.some((n) => n.selected) || edges.some((e) => e.selected), [nodes, edges]);
 
   return (
-    <div className="flex h-[calc(100dvh-3.25rem)] min-h-[30rem] flex-col lg:h-[calc(100dvh-1.5rem)]">
+    <div className={cn("flex min-h-[24rem] flex-col", embedded ? "h-full" : "h-[calc(100dvh-3.25rem)] min-h-[30rem] lg:h-[calc(100dvh-1.5rem)]")}>
       <header className="flex flex-wrap items-center gap-2 border-b bg-background px-3 py-2">
-        <Button asChild variant="ghost" size="icon" className="h-8 w-8">
-          <Link href={`${routes.subject(initial.subjectId)}/cartes`} aria-label="Retour aux cartes"><ArrowLeft className="h-4 w-4" aria-hidden /></Link>
-        </Button>
+        {!embedded && (
+          <Button asChild variant="ghost" size="icon" className="h-8 w-8">
+            <Link href={initial.subjectId ? `${routes.subject(initial.subjectId)}/cartes` : "/cartes"} aria-label="Retour aux cartes"><ArrowLeft className="h-4 w-4" aria-hidden /></Link>
+          </Button>
+        )}
         <Input
           value={title}
           onChange={(e) => {
@@ -400,7 +477,7 @@ function Editor({ map: initial }: { map: MapDetail }) {
           className="h-8 min-w-40 max-w-sm flex-1 border-0 px-1 font-semibold shadow-none focus-visible:ring-1"
         />
         <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">{initial.kind === "STRUCTURE" ? "Carte de structure" : "Carte conceptuelle"}</span>
-        {initial.document && (
+        {initial.document && initial.subjectId && !embedded && (
           <Link href={`${routes.subject(initial.subjectId)}/documents/${initial.document.id}`} className="truncate text-xs text-primary hover:underline">{initial.document.name}</Link>
         )}
         <span role="status" aria-live="polite" className={cn("ml-auto flex items-center gap-1.5 text-xs", save === "error" || save === "conflict" ? "text-destructive" : "text-muted-foreground")} title={saveError ?? undefined}>
@@ -437,9 +514,12 @@ function Editor({ map: initial }: { map: MapDetail }) {
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
         <div className="min-h-0 flex-1" aria-label="Carte interactive">
           <ReactFlow<FlowNode, FlowEdge>
-            nodes={nodes}
-            edges={edges}
+            nodes={displayNodes}
+            edges={displayEdges}
             nodeTypes={nodeTypes}
+            onNodeDragStart={onNodeDragStart}
+            onNodeDrag={onNodeDrag}
+            onNodeDragStop={onNodeDragStop}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
@@ -460,7 +540,11 @@ function Editor({ map: initial }: { map: MapDetail }) {
             <Controls aria-label="Zoom et vue" />
             <MiniMap pannable zoomable className="!hidden sm:!block" />
             <Panel position="top-left" className="flex gap-1.5">
-              <Button size="sm" onClick={addNode} className="gap-1.5"><Plus className="h-4 w-4" aria-hidden /> Nœud</Button>
+              <Button size="sm" onClick={addNode} className="gap-1.5"><Plus className="h-4 w-4" aria-hidden /> Branche</Button>
+              <Button size="sm" variant="outline" onClick={addChild} disabled={!node && nodes.length === 0} className="gap-1.5 bg-background" title="Ajoute un enfant au nœud sélectionné"><GitBranchPlus className="h-4 w-4" aria-hidden /> Sous-branche</Button>
+              <Button size="sm" variant="outline" onClick={() => setCollapsed(collapsed.size ? new Set() : new Set(allBranches.filter((b) => (childrenOf.get(b)?.length ?? 0) > 0)))} disabled={allBranches.length === 0} className="gap-1.5 bg-background" title={collapsed.size ? "Tout développer" : "Tout réduire"}>
+                {collapsed.size ? <ChevronsUpDown className="h-4 w-4" aria-hidden /> : <ChevronsDownUp className="h-4 w-4" aria-hidden />} <span className="hidden sm:inline">{collapsed.size ? "Développer" : "Réduire"}</span>
+              </Button>
               <Button size="sm" variant="outline" onClick={relayout} className="gap-1.5 bg-background"><LayoutGrid className="h-4 w-4" aria-hidden /> Réorganiser</Button>
               <Button size="sm" variant="outline" onClick={deleteSelection} disabled={!sel} className="gap-1.5 bg-background"><Trash2 className="h-4 w-4" aria-hidden /> Supprimer</Button>
             </Panel>
@@ -477,7 +561,7 @@ function Editor({ map: initial }: { map: MapDetail }) {
         <aside aria-label="Propriétés" className="max-h-56 shrink-0 overflow-y-auto border-t bg-background p-3 lg:max-h-none lg:w-72 lg:border-l lg:border-t-0">
           {!node && !edge && (
             <p className="text-sm text-muted-foreground">
-              Sélectionnez un nœud ou une relation pour la modifier. Double-cliquez un nœud pour changer son texte ; tirez d&apos;une poignée à une autre pour créer une relation ; molette pour zoomer.
+              Sélectionnez un nœud ou une relation pour la modifier. Double-cliquez un nœud pour changer son texte ; « Sous-branche » ajoute un enfant au nœud sélectionné ; le bouton + / − d'un nœud développe ou réduit sa branche ; déplacer un nœud déplace ses sous-branches ; tirez d&apos;une poignée à une autre pour créer une relation ; molette pour zoomer.
             </p>
           )}
           {node && (
@@ -493,8 +577,8 @@ function Editor({ map: initial }: { map: MapDetail }) {
               </div>
               {node.data.definition && <p className="text-xs text-muted-foreground"><span className="font-semibold">Définition :</span> {node.data.definition}</p>}
               <p className="text-xs"><span className="font-semibold">Provenance :</span> {ORIGIN_LABEL[node.data.origin]}{node.data.edited ? " (texte modifié)" : ""}</p>
-              {node.data.page && initial.document && (
-                <Button asChild size="sm" variant="outline"><Link href={`${routes.subject(initial.subjectId)}/documents/${initial.document.id}?page=${node.data.page}`}>Voir dans le document (p. {node.data.page})</Link></Button>
+              {node.data.page && initial.document && initial.subjectId && !embedded && (
+                <Button asChild size="sm" variant="outline"><Link href={`${routes.subject(initial.subjectId!)}/documents/${initial.document.id}?page=${node.data.page}`}>Voir dans le document (p. {node.data.page})</Link></Button>
               )}
               <Button size="sm" variant="outline" className="w-full gap-1.5 text-destructive" onClick={deleteSelection}><Trash2 className="h-4 w-4" aria-hidden /> Supprimer le nœud</Button>
             </div>
