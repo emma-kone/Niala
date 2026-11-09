@@ -38,6 +38,9 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  --color-dash-panel: var(--dash-panel);
+  --color-dash-panel-foreground: var(--dash-panel-foreground);
+  --color-on-pastel: var(--on-pastel);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -46,43 +49,69 @@
 
 :root {
   --radius: 0.875rem;
-  --shell: oklch(0.95 0.008 90);
-  --accent-sun: #f4c95d;
-  --accent-sky: #b8cbea;
-  --accent-lilac: #e7c6f5;
-  --accent-mint: #b7e4c7;
-  --accent-rose: #f6b8c8;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+
+  /* ── THÈME CLAIR : lavande désaturée, jamais de blanc pur sur les grandes surfaces.
+     Toutes les couleurs de l'interface passent par ces variables, redéfinies dans .dark. ── */
+  --shell: #ded7e8;
+  --dash-surface: #f1eef5;
+  --dash-panel: #e2daed;
+  --dash-panel-foreground: #292235;
+  --dash-cta: #292235;
+  --dash-cta-foreground: #faf8fc;
+  --stack-base: #faf8fc;
+  --on-pastel: #1f1930;
+  --brand-chip: #faf8fc;
+  --nav-active: #faf8fc;
+  --nav-active-foreground: #292235;
+  --tooltip: #33294a;
+  --tooltip-foreground: #faf8fc;
+  --niala-accent: #8061b3;
+  --niala-accent-foreground: #faf8fc;
+  --accent-sun: #efcb72;
+  --accent-sky: #bfcfe8;
+  --accent-lilac: #dec8f0;
+  --accent-mint: #bce2cb;
+  --accent-rose: #f0bfcd;
+  --chat-sidebar: #eae5f0;
+  --chat-user: #ddd2ec;
+  --chat-user-foreground: #292235;
+  --code-surface: #eae5f0;
+  --code-comment: #7d7389;
+  --code-keyword: #7a3fa8;
+  --code-string: #2f7a57;
+  --code-number: #b0562a;
+  --code-function: #2f62a8;
+  --background: #f1eef5;
+  --foreground: #292235;
+  --card: #faf8fc;
+  --card-foreground: #292235;
+  --popover: #faf8fc;
+  --popover-foreground: #292235;
+  --primary: #6e51a1;
+  --primary-foreground: #faf8fc;
+  --secondary: #eae5f0;
+  --secondary-foreground: #292235;
+  --muted: #eae5f0;
+  --muted-foreground: #6b6278;
+  --accent: #e4ddee;
+  --accent-foreground: #292235;
+  --destructive: #b8384c;
+  --border: #dcd4e5;
+  --input: #d5cce1;
+  --ring: #8061b3;
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
   --chart-3: oklch(0.398 0.07 227.392);
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.16 0.004 286);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.985 0 0);
-  --sidebar-primary-foreground: oklch(0.16 0 0);
-  --sidebar-accent: oklch(0.26 0.004 286);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 12%);
-  --sidebar-ring: oklch(0.708 0 0);
+  --sidebar: #e9e3f0;
+  --sidebar-foreground: #292235;
+  --sidebar-primary: #8061b3;
+  --sidebar-primary-foreground: #faf8fc;
+  --sidebar-accent: #ddd5e8;
+  --sidebar-accent-foreground: #292235;
+  --sidebar-border: #d6cde2;
+  --sidebar-ring: #8061b3;
 
   /* ── TYPOGRAPHIE GLOBALE ────────────────────────────────────────────────
      Police principale : Bricolage Grotesque (variable Google Fonts).
@@ -99,37 +128,65 @@
 }
 
 .dark {
-  --shell: oklch(0.08 0 0);
-  --background: oklch(0.145 0 0);
+  --shell: #392b4b;
+  --dash-surface: #261839;
+  --dash-panel: #d9d9d9;
+  --dash-panel-foreground: #000000;
+  --dash-cta: #000000;
+  --dash-cta-foreground: #ffffff;
+  --stack-base: #ffffff;
+  --on-pastel: #000000;
+  --brand-chip: #ffffff;
+  --nav-active: #ffffff;
+  --nav-active-foreground: #000000;
+  --tooltip: #120c1c;
+  --tooltip-foreground: #ffffff;
+  --niala-accent: #cb6ce6;
+  --niala-accent-foreground: #000000;
+  --accent-sun: #f4c95d;
+  --accent-sky: #b8cbea;
+  --accent-lilac: #e7c6f5;
+  --accent-mint: #b7e4c7;
+  --accent-rose: #f6b8c8;
+  --chat-sidebar: color-mix(in srgb, #3e2e57 22%, transparent);
+  --chat-user: #4a3566;
+  --chat-user-foreground: oklch(0.985 0 0);
+  --code-surface: #1d1230;
+  --code-comment: #a596b8;
+  --code-keyword: #d8a4f2;
+  --code-string: #a6dcb8;
+  --code-number: #f4c95d;
+  --code-function: #a9c4f0;
+  --background: #261839;
   --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
+  --card: #33244a;
   --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
+  --popover: #33244a;
   --popover-foreground: oklch(0.985 0 0);
   --primary: oklch(0.922 0 0);
   --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
+  --secondary: #3e2e57;
   --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
+  --muted: #3e2e57;
+  --muted-foreground: oklch(0.8 0.025 300);
+  --accent: #3e2e57;
   --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
+  --border: oklch(1 0 0 / 13%);
+  --input: oklch(1 0 0 / 18%);
   --ring: oklch(0.556 0 0);
   --chart-1: oklch(0.488 0.243 264.376);
   --chart-2: oklch(0.696 0.17 162.48);
   --chart-3: oklch(0.769 0.188 70.08);
   --chart-4: oklch(0.627 0.265 303.9);
   --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.11 0 0);
+  --sidebar: #120c1c;
   --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary: #cb6ce6;
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.22 0 0);
+  --sidebar-accent: #2b2039;
   --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-border: oklch(1 0 0 / 13%);
   --sidebar-ring: oklch(0.556 0 0);
 }
 
@@ -287,7 +344,11 @@ samp,
   top: 50%;
   translate: 0 -50%;
   border-block: 6px solid transparent;
-  border-left: 7px solid #fff;
+  border-left: 7px solid var(--nav-active);
+}
+/* Angle rentrant du grand bloc en L du tableau de bord. */
+.niala-l-fillet {
+  background: radial-gradient(circle at 100% 100%, transparent 59.5px, var(--dash-panel) 60px);
 }
 .niala-connector {
   position: absolute;
@@ -303,8 +364,149 @@ samp,
   background-image: repeating-linear-gradient(135deg, color-mix(in srgb, var(--foreground) 7%, transparent) 0 6px, transparent 6px 12px);
 }
 @media (prefers-reduced-motion: reduce) {
-  .niala-toolbar a,
   .group {
     transition: none;
+  }
+}
+
+/* ── Changement de thème : fondu court, sans flash ── */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 220ms;
+  animation-timing-function: ease;
+}
+
+/* ── Discussion avec l'IA ─────────────────────────────────────────────────── */
+.niala-orb {
+  background: radial-gradient(circle at 32% 28%, var(--accent-lilac), var(--niala-accent) 58%, color-mix(in srgb, var(--niala-accent) 55%, var(--accent-rose)));
+  box-shadow: inset -3px -4px 8px color-mix(in srgb, var(--niala-accent) 70%, black 10%), 0 0 0 1px color-mix(in srgb, var(--niala-accent) 18%, transparent);
+}
+.niala-orb-float {
+  box-shadow: inset -6px -8px 16px color-mix(in srgb, var(--niala-accent) 70%, black 10%), 0 12px 32px -8px color-mix(in srgb, var(--niala-accent) 55%, transparent);
+  animation: niala-float 5s ease-in-out infinite;
+}
+@keyframes niala-float {
+  50% { transform: translateY(-5px); }
+}
+
+.niala-bubble-user {
+  background: var(--chat-user);
+  color: var(--chat-user-foreground);
+  padding: 0.625rem 1rem;
+  border-radius: 22px 22px 6px 22px;
+  line-height: 1.55;
+}
+
+/* Indicateur de réflexion : les trois points se soulèvent l'un après l'autre. */
+.niala-typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0.7rem 0.95rem;
+  background: var(--muted);
+  border-radius: 18px 18px 18px 6px;
+}
+.niala-typing i {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted-foreground);
+  animation: niala-dot 1.25s ease-in-out infinite;
+}
+.niala-typing i:nth-child(2) { animation-delay: 0.16s; }
+.niala-typing i:nth-child(3) { animation-delay: 0.32s; }
+@keyframes niala-dot {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.45; }
+  30% { transform: translateY(-4px); opacity: 1; }
+}
+
+.niala-composer {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 24px 24px 24px 8px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.niala-composer:focus-within {
+  border-color: color-mix(in srgb, var(--niala-accent) 60%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--niala-accent) 14%, transparent);
+}
+.niala-composer-hero {
+  box-shadow: 0 18px 44px -24px color-mix(in srgb, var(--niala-accent) 60%, transparent);
+}
+
+/* Réponses de l'IA : texte posé directement sur le fond, hiérarchie portée par la typographie. */
+.niala-answer { line-height: 1.7; overflow-wrap: anywhere; }
+.niala-answer > * + * { margin-top: 0.75rem; }
+.niala-answer h1, .niala-answer h2, .niala-answer h3, .niala-answer h4 { font-weight: 650; letter-spacing: -0.01em; line-height: 1.3; }
+.niala-answer h1 { font-size: 1.3rem; margin-top: 1.4rem; }
+.niala-answer h2 { font-size: 1.15rem; margin-top: 1.25rem; }
+.niala-answer h3, .niala-answer h4 { font-size: 1rem; margin-top: 1rem; }
+.niala-answer > :first-child { margin-top: 0; }
+.niala-answer ul { list-style: disc; padding-left: 1.3rem; }
+.niala-answer ol { list-style: decimal; padding-left: 1.4rem; }
+.niala-answer li + li { margin-top: 0.3rem; }
+.niala-answer li > ul, .niala-answer li > ol { margin-top: 0.3rem; }
+.niala-answer li::marker { color: var(--muted-foreground); }
+.niala-answer strong { font-weight: 650; }
+.niala-answer a { text-decoration: underline; text-underline-offset: 2px; text-decoration-color: var(--niala-accent); }
+.niala-answer blockquote { border-left: 3px solid color-mix(in srgb, var(--niala-accent) 50%, var(--border)); padding-left: 0.9rem; color: var(--muted-foreground); }
+.niala-answer hr { border-color: var(--border); margin-block: 1.25rem; }
+.niala-answer .katex-display { overflow-x: auto; overflow-y: hidden; padding-block: 0.25rem; }
+.niala-inline-code { background: var(--muted); border-radius: 6px; padding: 0.1em 0.35em; font-size: 0.875em; }
+.niala-table { overflow-x: auto; border: 1px solid var(--border); border-radius: 14px; }
+.niala-table table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+.niala-table th { background: var(--muted); font-weight: 600; text-align: left; }
+.niala-table th, .niala-table td { padding: 0.45rem 0.75rem; vertical-align: top; }
+.niala-table tr + tr td { border-top: 1px solid var(--border); }
+.niala-cite {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.15rem;
+  height: 1.15rem;
+  margin-inline: 1px;
+  padding-inline: 0.25rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--niala-accent) 20%, transparent);
+  font-size: 0.68rem;
+  font-weight: 600;
+  vertical-align: 0.12em;
+  transition: background 0.15s ease;
+}
+.niala-cite:hover { background: color-mix(in srgb, var(--niala-accent) 38%, transparent); }
+
+.niala-code { border-radius: 14px; overflow: hidden; background: var(--code-surface); }
+.niala-code figcaption { display: flex; align-items: center; justify-content: space-between; padding: 0.3rem 0.5rem 0 0.85rem; font-size: 0.7rem; color: var(--muted-foreground); }
+.niala-code pre { margin: 0; padding: 0.5rem 0.85rem 0.8rem; overflow-x: auto; font-size: 0.82rem; line-height: 1.6; background: transparent; overflow-wrap: normal; }
+.niala-code code { overflow-wrap: normal; }
+.niala-code .token.comment, .niala-code .token.prolog, .niala-code .token.doctype { color: var(--code-comment); font-style: italic; }
+.niala-code .token.keyword, .niala-code .token.tag, .niala-code .token.selector, .niala-code .token.important { color: var(--code-keyword); }
+.niala-code .token.string, .niala-code .token.char, .niala-code .token.attr-value, .niala-code .token.inserted { color: var(--code-string); }
+.niala-code .token.number, .niala-code .token.boolean, .niala-code .token.constant { color: var(--code-number); }
+.niala-code .token.function, .niala-code .token.class-name, .niala-code .token.attr-name { color: var(--code-function); }
+
+/* Curseur de rédaction, à la fin du dernier bloc de texte. */
+.niala-streaming .niala-answer > :last-child:not(figure):not(.niala-table)::after {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: var(--niala-accent);
+  vertical-align: 0.05em;
+  animation: niala-caret 1s ease-in-out infinite;
+}
+@keyframes niala-caret {
+  50% { opacity: 0.25; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .niala-orb-float, .niala-streaming .niala-answer > :last-child::after { animation: none; }
+  .niala-typing i { animation-name: niala-dot-calm; }
+  @keyframes niala-dot-calm {
+    0%, 60%, 100% { opacity: 0.45; }
+    30% { opacity: 1; }
   }
 }

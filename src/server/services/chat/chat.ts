@@ -38,7 +38,16 @@ export const createSchema = z.object({
   documentId: z.string().min(1).optional(),
   subjectId: z.string().min(1).optional(),
 });
-export const messageSchema = z.object({ content: z.string().trim().min(1, "Message vide.").max(MAX_MESSAGE_CHARS, "Message trop long."), web: z.boolean().optional() });
+export const messageSchema = z
+  .object({
+    content: z.string().trim().max(MAX_MESSAGE_CHARS, "Message trop long.").default(""),
+    web: z.boolean().optional(),
+    /** Documents choisis comme contexte pour ce message. */
+    documentIds: z.array(z.string().min(1)).max(12).optional(),
+    /** Relance la dernière question au lieu d'en poser une nouvelle. */
+    regenerate: z.boolean().optional(),
+  })
+  .refine((m) => m.regenerate || m.content.length > 0, { message: "Message vide.", path: ["content"] });
 
 // ── Conversations ────────────────────────────────────────────────────────────
 
@@ -64,6 +73,21 @@ export async function listConversations(userId: string, scope: "GLOBAL" | "DOCUM
     take: 50,
     select: { id: true, title: true, scope: true, documentId: true, subjectId: true, updatedAt: true, createdAt: true },
   });
+}
+
+/** Retire la dernière question et ce qui la suit, et renvoie son texte pour la reposer. */
+export async function takeLastTurn(userId: string, conversationId: string): Promise<string> {
+  await ownedConversation(userId, conversationId);
+  await checkQuota(userId);
+  const question = await db.conversationMessage.findFirst({ where: { conversationId, userId, role: "USER" }, orderBy: { createdAt: "desc" }, select: { content: true, createdAt: true } });
+  if (!question) throw new ApiHttpError("Aucune question à relancer.", 422);
+  const removed = await db.conversationMessage.findMany({ where: { conversationId, userId, createdAt: { gte: question.createdAt } }, select: { id: true } });
+  const ids = removed.map((m) => m.id);
+  await db.$transaction([
+    db.verificationRun.deleteMany({ where: { userId, entityType: "ConversationMessage", entityId: { in: ids } } }),
+    db.conversationMessage.deleteMany({ where: { id: { in: ids }, userId } }),
+  ]);
+  return question.content;
 }
 
 async function ownedConversation(userId: string, id: string) {
@@ -278,7 +302,7 @@ function coverageText(docs: { doc: DocInfo; cov: Coverage }[]): string {
 }
 
 function systemPrompt(scope: "GLOBAL" | "DOCUMENT", docs: { doc: DocInfo; cov: Coverage }[], totalDocs: number, web: boolean): string {
-  return `Tu es l'assistant pédagogique de Niala, une plateforme d'apprentissage personnelle. Tu aides un étudiant : comprendre ses cours, répondre à ses questions de connaissances générales, donner des explications, des exemples, des comparaisons, des approfondissements et des exercices d'application. Réponds en français (sauf demande contraire), de façon structurée et concise, en Markdown simple. N'utilise pas LaTeX ni les symboles $ : écris les formules en texte (n! = n × (n-1)!) ou dans un bloc de code.
+  return `Tu es l'assistant pédagogique de Niala, une plateforme d'apprentissage personnelle. Tu aides un étudiant : comprendre ses cours, répondre à ses questions de connaissances générales, donner des explications, des exemples, des comparaisons, des approfondissements et des exercices d'application. Réponds en français (sauf demande contraire), de façon structurée et concise, en Markdown simple. Écris les formules mathématiques en LaTeX entre doubles dollars, par exemple $$n! = n \\times (n-1)!$$ ; n'utilise jamais un dollar seul pour une formule.
 
 ${scope === "DOCUMENT" ? "Tu discutes d'UN SEUL cours. Tu n'as accès à aucun autre document." : `Tu as accès à la bibliothèque de l'étudiant (${totalDocs} document(s) consultables). L'étudiant peut aussi te poser des questions sans rapport avec ses cours : réponds alors directement, sans chercher dans ses documents.`}
 
@@ -340,7 +364,14 @@ export interface SendOptions {
   emit?: (event: ChatEvent) => void;
   /** Exécute une tâche après l'envoi de la réponse. Absent : tout est fait avant de répondre. */
   defer?: (task: () => Promise<unknown>) => void;
+  /** Conversation globale : limite ce message aux documents choisis par l'étudiant. */
+  documentIds?: string[];
+  /** Interruption demandée par l'étudiant : le texte déjà rédigé est conservé. */
+  signal?: AbortSignal;
 }
+
+/** Code renvoyé quand l'étudiant interrompt une génération avant le moindre texte. */
+export const INTERRUPTED_STATUS = 499;
 
 export async function sendMessage(userId: string, conversationId: string, content: string, options: SendOptions = {}): Promise<ChatReply> {
   const conv = await ownedConversation(userId, conversationId);
@@ -348,7 +379,7 @@ export async function sendMessage(userId: string, conversationId: string, conten
   if (!provider?.converse) throw new ApiHttpError("Le chat nécessite le service d'IA Gemini, qui n'est pas configuré (variable GEMINI_API_KEY).", 503);
 
   const scope = conv.scope;
-  const scopeFilter: Scope = scope === "DOCUMENT" ? { documentIds: [conv.documentId!] } : { subjectId: conv.subjectId };
+  const scopeFilter: Scope = scope === "DOCUMENT" ? { documentIds: [conv.documentId!] } : { subjectId: conv.subjectId, ...(options.documentIds?.length ? { documentIds: options.documentIds } : {}) };
   // Lectures groupées : chaque aller-retour vers la base coûte environ 0,5 s.
   const [, docs, history] = await Promise.all([
     checkQuota(userId),
@@ -373,7 +404,7 @@ export async function sendMessage(userId: string, conversationId: string, conten
 
   const webOn = options.web !== false && (await webStatus()) !== null;
   const ev = new Evidence();
-  const ctx: ToolContext = { userId, scope, scopeFilter, docs, ev, signal: AbortSignal.timeout(110_000), web: webOn };
+  const ctx: ToolContext = { userId, scope, scopeFilter, docs, ev, signal: options.signal ? AbortSignal.any([AbortSignal.timeout(110_000), options.signal]) : AbortSignal.timeout(110_000), web: webOn };
   const system = systemPrompt(scope, withCoverage, docs.length, webOn);
   const tools = webOn ? [...TOOLS[scope], WEB_TOOL] : TOOLS[scope];
   const turns: ChatTurn[] = [
@@ -383,17 +414,21 @@ export async function sendMessage(userId: string, conversationId: string, conten
 
   const started = Date.now();
   let answer = "";
+  /** Texte de l'étape en cours : c'est ce qui est conservé si l'étudiant interrompt la rédaction. */
+  let partial = "";
+  let interrupted = false;
   let model = provider.model;
   try {
     for (let step = 0; step <= MAX_STEPS; step++) {
       const last = step === MAX_STEPS;
-      const res = await provider.converse({ system, turns, tools: last ? undefined : tools, maxTokens: 4000, temperature: 0.3, signal: ctx.signal, onText: options.emit ? (d) => options.emit!({ type: "delta", text: d }) : undefined });
+      const res = await provider.converse({ system, turns, tools: last ? undefined : tools, maxTokens: 4000, temperature: 0.3, signal: ctx.signal, onText: options.emit ? (d) => { partial += d; options.emit!({ type: "delta", text: d }); } : undefined });
       model = res.model;
       if (!res.calls.length || last) {
         answer = res.text;
         break;
       }
       turns.push({ role: "model", parts: res.modelParts });
+      partial = "";
       // Un nouveau statut annonce une étape : le client efface le texte provisoire éventuel.
       options.emit?.({ type: "status", text: TOOL_STATUS[res.calls[0].name] ?? "Recherche…" });
       const responses: ChatPart[] = await Promise.all(res.calls.slice(0, 4).map(async (call) => ({ functionResponse: { name: call.name, response: await runTool(ctx, call.name, call.args) } })));
@@ -402,10 +437,16 @@ export async function sendMessage(userId: string, conversationId: string, conten
     if (!answer.trim()) throw new AiCallError("Réponse vide.");
     await logUsage(userId, model, system.length + content.length, answer.length, true, undefined, started);
   } catch (e) {
-    const message = e instanceof Error ? e.message : "Erreur inconnue";
-    console.warn(`[chat] ${message}`);
-    await logUsage(userId, model, system.length + content.length, 0, false, message, started);
-    throw new ApiHttpError("Le service d'IA est momentanément indisponible. Votre message est conservé : réessayez dans un instant.", 502);
+    if (options.signal?.aborted) {
+      interrupted = true;
+      if (!partial.trim()) throw new ApiHttpError("Génération interrompue.", INTERRUPTED_STATUS);
+      answer = partial;
+    } else {
+      const message = e instanceof Error ? e.message : "Erreur inconnue";
+      console.warn(`[chat] ${message}`);
+      await logUsage(userId, model, system.length + content.length, 0, false, message, started);
+      throw new ApiHttpError("Le service d'IA est momentanément indisponible. Votre message est conservé : réessayez dans un instant.", 502);
+    }
   }
 
   // 1. Citations inventées retirées ; 2. contrôle de chaque affirmation ; 3. avertissements placés à côté de ce qui est incertain.
@@ -448,6 +489,11 @@ export async function sendMessage(userId: string, conversationId: string, conten
     ]);
     return { reply: { message: { id: saved.id, role: "ASSISTANT" as const, content: text, citations, consulted, model, createdAt: saved.createdAt }, userMessageId: userMsg.id, title }, messageId: saved.id };
   };
+  // Réponse interrompue : conservée telle quelle et signalée, sans vérification d'un texte incomplet.
+  if (interrupted) {
+    const { verification: _none, ...consulted } = consultedWith(pendingVerification(webState));
+    return (await store(resolved.text, resolved.citations, { ...consulted, interrupted: true })).reply;
+  }
   const trace = (messageId: string, verification: VerificationReport) => saveVerification(userId, { feature: "chat", entityType: "ConversationMessage", entityId: messageId }, verification, sourcesOf(ev));
 
   // L'étudiant reçoit la réponse tout de suite, annoncée « en cours de vérification » ; le résultat la complète ensuite.

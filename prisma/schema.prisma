@@ -46,6 +46,9 @@ model User {
   verificationRuns VerificationRun[]
   scheduleEvents   ScheduleEvent[]
   scheduleImports  ScheduleImport[]
+  scheduleBreaks   ScheduleBreak[]
+  academicTasks    AcademicTask[]
+  studySessions    StudySession[]
   questions        Question[]
   attempts         ExerciseAttempt[]
   answers          Answer[]
@@ -64,6 +67,7 @@ model UserSettings {
   userId        String  @unique
   theme         String  @default("light") // light | dark | system
   scheduleWeekSwap Boolean @default(false) // inverse la convention semaine A / semaine B
+  agendaPrefs   Json? // préférences de travail, rappels et heures de tranquillité
   defaultMode   String  @default("apprentissage")
   maxUploadMB   Int     @default(20)
   hintsEnabled  Boolean @default(true)
@@ -81,6 +85,8 @@ model Subject {
   userId    String
   name      String
   color     String   @default("#8b5cf6")
+  icon      String? // identifiant d'icône (voir domain/subject-icon.ts) ; null tant qu'elle n'a pas été attribuée
+  iconAuto  Boolean  @default(true) // false dès que l'étudiant choisit lui-même l'icône
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -101,6 +107,7 @@ model Subject {
   labWorkspaces  LabWorkspace[]
   conversations  Conversation[]
   scheduleEvents ScheduleEvent[]
+  academicTasks  AcademicTask[]
 
   @@index([userId])
 }
@@ -153,6 +160,7 @@ model Document {
   noteLinks        NoteLink[]
   studyExercises   Exercise[]
   conversations    Conversation[]
+  academicTasks    AcademicTask[]
 
   @@index([userId])
   @@index([subjectId])
@@ -820,6 +828,7 @@ model Exercise {
   questions Question[]
   attempts  ExerciseAttempt[]
   labs      LabWorkspace[]
+  academicTasks AcademicTask[]
 
   @@index([userId])
   @@index([subjectId, createdAt])
@@ -1160,7 +1169,12 @@ model ScheduleEvent {
   date         String // première séance
   startMinutes Int
   endMinutes   Int
-  recurrence   String    @default("NONE") // NONE | WEEKLY
+  recurrence   String    @default("NONE") // NONE | WEEKLY | DATES
+  dates        Json? // liste explicite des séances (semaines précises d'un emploi du temps)
+  endDate      String? // fin d'une période sur plusieurs jours (congés, examens)
+  allDay       Boolean   @default(false)
+  code         String? // code de la matière dans le document
+  sessionType  String? // CM | TD | TP | …
   until        String?
   weekPattern  String    @default("ALL") // ALL | A | B
   room         String?
@@ -1217,6 +1231,74 @@ model ScheduleImport {
 
   user   User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   events ScheduleEvent[]
+  breaks ScheduleBreak[]
 
   @@index([userId, createdAt])
+}
+
+/// Pause d'un emploi du temps : extraite d'un document ou saisie par l'étudiant, jamais imposée.
+model ScheduleBreak {
+  id           String          @id @default(cuid())
+  userId       String
+  importId     String?
+  label        String          @default("Pause")
+  startMinutes Int
+  endMinutes   Int
+  weekday      Int? // null : tous les jours
+
+  user   User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  import ScheduleImport? @relation(fields: [importId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+/// Échéance de l'agenda académique personnel (devoir, TD à rendre, projet, révision…).
+model AcademicTask {
+  id                 String    @id @default(cuid())
+  userId             String
+  subjectId          String?
+  documentId         String?
+  exerciseId         String?
+  parentId           String? // étape intermédiaire d'un projet
+  title              String
+  description        String?
+  type               String    @default("DEVOIR")
+  priority           String    @default("NORMALE") // BASSE | NORMALE | HAUTE
+  status             String    @default("A_COMMENCER")
+  dueDate            String
+  dueMinutes         Int?
+  estimatedMinutes   Int?
+  requiresSubmission Boolean   @default(false)
+  reminderMinutes    Json? // minutes avant l'échéance
+  recurrence         String    @default("NONE") // NONE | WEEKLY
+  completedAt        DateTime?
+  submittedAt        DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject  Subject?       @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+  document Document?      @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  exercise Exercise?      @relation(fields: [exerciseId], references: [id], onDelete: SetNull)
+  parent   AcademicTask?  @relation("TaskSteps", fields: [parentId], references: [id], onDelete: Cascade)
+  steps    AcademicTask[] @relation("TaskSteps")
+  sessions StudySession[]
+
+  @@index([userId, dueDate])
+}
+
+/// Séance de travail acceptée par l'étudiant pour une échéance.
+model StudySession {
+  id           String       @id @default(cuid())
+  userId       String
+  taskId       String
+  date         String
+  startMinutes Int
+  endMinutes   Int
+  done         Boolean      @default(false)
+
+  user User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  task AcademicTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([userId, date])
 }

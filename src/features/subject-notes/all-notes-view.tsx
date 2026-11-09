@@ -4,12 +4,13 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { NotebookPen } from "lucide-react";
 import { api } from "@/lib/client-api";
+import { SubjectIcon } from "@/components/subject-icon";
 import { routes } from "@/config/routes";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 
 interface Group {
-  subject: { id: string; name: string; color: string };
+  subject: { id: string; name: string; color: string; icon?: string | null };
   notes: { id: string; title: string; updatedAt: string }[];
 }
 
@@ -39,7 +40,7 @@ export default function AllNotesView() {
         {groups?.map((g) => (
           <section key={g.subject.id} aria-label={g.subject.name} className="rounded-3xl border bg-card p-5">
             <div className="flex items-center justify-between gap-2">
-              <h2 className="flex items-center gap-2 font-semibold"><span className="h-3 w-3 rounded-full" style={{ backgroundColor: g.subject.color }} aria-hidden /> {g.subject.name}</h2>
+              <h2 className="flex items-center gap-2 font-semibold"><SubjectIcon icon={g.subject.icon} name={g.subject.name} color={g.subject.color} /> {g.subject.name}</h2>
               <Button asChild size="sm" variant="outline" className="rounded-full"><Link href={`${routes.subject(g.subject.id)}/notes`}>Ouvrir</Link></Button>
             </div>
             {g.notes.length === 0 ? <p className="mt-3 text-sm text-muted-foreground">Aucune note pour l&apos;instant.</p> : (

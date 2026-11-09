@@ -69,7 +69,7 @@ async function makeQuestion(position: number, type: "code" | "sql", payload: obj
 
 beforeAll(async () => {
   pg = await PGlite.create();
-  for (const n of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261110000000_niala_agenda"]) {
+  for (const n of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261110000000_niala_agenda", "20261111000000_niala_academic", "20261112000000_niala_subject_icon"]) {
     await pg.exec(readFileSync(path.join(process.cwd(), "prisma", "migrations", n, "migration.sql"), "utf8"));
   }
   const port = 55000 + Math.floor(Math.random() * 4000);
@@ -382,4 +382,68 @@ describe("isolation entre utilisateurs", () => {
     expect(await db.labRun.count({ where: { workspaceId: w.id } })).toBe(0);
     expect(await db.learningActivity.count({ where: { refType: "lab", refId: w.id } })).toBe(0);
   }, 60_000);
+});
+
+describe("assistant IA des laboratoires", () => {
+  const ask = async (user: string, id: string, emit?: (e: { type: "delta"; text: string }) => void) => {
+    const { askLabAssistant, assistantSchema } = await import("./assistant");
+    return askLabAssistant(user, id, assistantSchema.parse({ message: "Aide-moi", code: "print(1)" }), emit);
+  };
+  const reply = (text: string, seen: { system: string; turns: unknown[] }[]) => {
+    prov.__setProviderForTests(fake);
+    fake.converse = async (req) => {
+      seen.push(req);
+      if (req.onText) req.onText(text);
+      return { text, calls: [], modelParts: [{ text }], model: "fake-model" };
+    };
+  };
+  const exercise = () => db.labWorkspace.create({ data: { userId: A, kind: "CODE", mode: "EXERCISE", title: "Ex", files: [{ name: "a.py", language: "python", content: "" }], brief: { origin: "manual", statement: "Renvoyer 42", reference: "def secret_solution():\n    return 42\n", verified: false } } });
+
+  it("espace libre : diffuse la réponse, voit le code et n'invente pas d'exécution", async () => {
+    const seen: { system: string; turns: unknown[] }[] = [];
+    reply("Voici une idée.", seen);
+    const w = await labs.createFree(A, { kind: "CODE", language: "python" });
+    const deltas: string[] = [];
+    const r = await ask(A, w.id, (e) => deltas.push(e.text));
+    expect(r).toEqual({ text: "Voici une idée.", guided: false });
+    expect(deltas).toEqual(["Voici une idée."]);
+    expect(seen[0].system).toContain("MODE LIBRE");
+    expect(JSON.stringify(seen[0].turns)).toContain("print(1)");
+    expect(JSON.stringify(seen[0].turns)).toContain("jamais été exécuté");
+  });
+
+  it("le même module sert au laboratoire SQL, avec son moteur", async () => {
+    const seen: { system: string; turns: unknown[] }[] = [];
+    reply("Regardez la jointure.", seen);
+    const w = await labs.createFree(A, { kind: "SQL", fixtureId: "entreprise" });
+    await ask(A, w.id);
+    expect(seen[0].system).toContain("SQLite");
+    expect(JSON.stringify(seen[0].turns)).toContain("Schéma et données");
+  });
+
+  it("exercice : ne transmet pas la solution au modèle et ne diffuse rien avant contrôle", async () => {
+    const seen: { system: string; turns: unknown[] }[] = [];
+    reply("Pensez à la valeur renvoyée.", seen);
+    const w = await exercise();
+    const deltas: string[] = [];
+    const r = await ask(A, w.id, (e) => deltas.push(e.text));
+    expect(r).toMatchObject({ guided: true, text: "Pensez à la valeur renvoyée." });
+    expect(deltas).toEqual([]);
+    expect(seen[0].system).toContain("MODE EXERCICE");
+    expect(JSON.stringify(seen[0])).not.toContain("secret_solution");
+  });
+
+  it("exercice : une réponse contenant du code est remplacée", async () => {
+    reply("```python\nprint(42)\n```", []);
+    const w = await exercise();
+    const r = await ask(A, w.id);
+    expect(r.text).toContain("ne pas écrire la solution");
+    expect(r.text).not.toContain("print(42)");
+  });
+
+  it("un autre étudiant n'y a pas accès", async () => {
+    reply("x", []);
+    const w = await exercise();
+    await expect(ask(B, w.id)).rejects.toMatchObject({ status: 404 });
+  });
 });

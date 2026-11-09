@@ -74,7 +74,7 @@ async function importText(user: string, name: string, content: string) {
 
 beforeAll(async () => {
   pg = await PGlite.create();
-  for (const name of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261110000000_niala_agenda", "20261109000000_niala_reliability"]) {
+  for (const name of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261110000000_niala_agenda", "20261111000000_niala_academic", "20261112000000_niala_subject_icon", "20261109000000_niala_reliability"]) {
     await pg.exec(readFileSync(path.join(migrations, name, "migration.sql"), "utf8"));
   }
   const port = 30000 + Math.floor(Math.random() * 10000);
@@ -106,6 +106,78 @@ afterAll(async () => {
   await server?.stop();
   await pg?.close();
   rmSync(dir, { recursive: true, force: true });
+});
+
+describe("génération : interruption, relance et contexte", () => {
+  const newConversation = async () => (await chat.createConversation(A, { scope: "GLOBAL" })).id;
+  const stored = async (id: string) => (await chat.getConversation(A, id)).messages.map((m) => [m.role, m.content]);
+
+  it("conserve le texte déjà rédigé quand l'étudiant interrompt", async () => {
+    const stop = new AbortController();
+    const id = await newConversation();
+    const original = fake.converse!;
+    fake.converse = async (req) => {
+      req.onText?.("Début de réponse");
+      stop.abort();
+      throw new Error("aborted");
+    };
+    try {
+      const r = await chat.sendMessage(A, id, "Question longue", { signal: stop.signal, emit: () => undefined });
+      expect(r.message.content).toBe("Début de réponse");
+      expect((r.message.consulted as { interrupted?: boolean }).interrupted).toBe(true);
+      expect(await stored(id)).toEqual([["USER", "Question longue"], ["ASSISTANT", "Début de réponse"]]);
+    } finally {
+      fake.converse = original;
+    }
+  });
+
+  it("interruption avant tout texte : aucune réponse enregistrée, la question reste", async () => {
+    const stop = new AbortController();
+    const id = await newConversation();
+    const original = fake.converse!;
+    fake.converse = async () => {
+      stop.abort();
+      throw new Error("aborted");
+    };
+    try {
+      await expect(chat.sendMessage(A, id, "Question", { signal: stop.signal })).rejects.toMatchObject({ status: chat.INTERRUPTED_STATUS });
+      expect(await stored(id)).toEqual([["USER", "Question"]]);
+    } finally {
+      fake.converse = original;
+    }
+  });
+
+  it("relancer remplace la dernière réponse sans dupliquer la question", async () => {
+    const id = await newConversation();
+    script = () => ({ text: "Première réponse" });
+    await chat.sendMessage(A, id, "Ma question");
+    script = () => ({ text: "Deuxième réponse" });
+    await chat.sendMessage(A, id, await chat.takeLastTurn(A, id));
+    expect(await stored(id)).toEqual([["USER", "Ma question"], ["ASSISTANT", "Deuxième réponse"]]);
+    await expect(chat.takeLastTurn(B, id)).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("limite un message aux documents choisis, sans ouvrir ceux d'un autre étudiant", async () => {
+    const id = await newConversation();
+    seen.length = 0;
+    script = () => ({ text: "Ok" });
+    await chat.sendMessage(A, id, "Résume", { documentIds: [docCours, docB] });
+    const system = seen[0].system;
+    expect(system).toContain("recursivite");
+    expect(system).not.toContain("tris");
+    expect(system).not.toContain("secret");
+  });
+
+  it("le registre des générations n'interrompt que celles de leur propriétaire", async () => {
+    const { beginTurn, stopTurn } = await import("./turns");
+    const turn = beginTurn("conv-1", A);
+    expect(stopTurn("conv-1", B)).toBe(false);
+    expect(turn.signal.aborted).toBe(false);
+    expect(stopTurn("conv-1", A)).toBe(true);
+    expect(turn.signal.aborted).toBe(true);
+    turn.end();
+    expect(stopTurn("conv-1", A)).toBe(false);
+  });
 });
 
 describe("conversations : propriété et isolement", () => {

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { ChevronRight, ClipboardList, FileText, Play } from "lucide-react";
 import { api } from "@/lib/client-api";
+import { SubjectIcon } from "@/components/subject-icon";
 import { routes } from "@/config/routes";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -18,7 +19,7 @@ const errText = (e: unknown, fb: string) => (e instanceof Error ? e.message : fb
 export default function ExercisesView({ subjectId }: { subjectId?: string }) {
   const [items, setItems] = useState<ExerciseListItem[] | null>(null);
   const [error, setError] = useState<{ message: string; status?: number } | null>(null);
-  const [subject, setSubject] = useState<{ name: string; color: string } | null>(null);
+  const [subject, setSubject] = useState<{ name: string; color: string; icon?: string | null } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -32,7 +33,7 @@ export default function ExercisesView({ subjectId }: { subjectId?: string }) {
 
   useEffect(() => {
     void load();
-    if (subjectId) api.get<{ subject: { name: string; color: string } }>(`/api/subjects/${subjectId}`).then((r) => setSubject(r.subject)).catch(() => undefined);
+    if (subjectId) api.get<{ subject: { name: string; color: string; icon?: string | null } }>(`/api/subjects/${subjectId}`).then((r) => setSubject(r.subject)).catch(() => undefined);
   }, [subjectId, load]);
 
   return (
@@ -45,7 +46,7 @@ export default function ExercisesView({ subjectId }: { subjectId?: string }) {
             <Link href={routes.subject(subjectId)} className="hover:text-foreground">{subject?.name ?? "…"}</Link>
           </nav>
           <h1 className="typo-h1 mb-5 flex items-center gap-3">
-            {subject && <span className="h-3 w-3 rounded-full" style={{ backgroundColor: subject.color }} aria-hidden />}
+            {subject && <SubjectIcon icon={subject.icon} name={subject.name} color={subject.color} />}
             {subject?.name ?? <Skeleton className="h-8 w-48" />}
           </h1>
           <SubjectTabs subjectId={subjectId} active="exercises" />
@@ -79,7 +80,7 @@ export default function ExercisesView({ subjectId }: { subjectId?: string }) {
             <Link href={`${routes.subject(e.subject.id)}/exercices/${e.id}`} className="block">
               {!subjectId && (
                 <p className="mb-1 flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
-                  <span className="h-2 w-2 rounded-full" style={{ backgroundColor: e.subject.color }} aria-hidden /> {e.subject.name}
+                  <SubjectIcon icon={e.subject.icon} name={e.subject.name} color={e.subject.color} size="xs" /> {e.subject.name}
                 </p>
               )}
               <h2 className="typo-h3">{e.title}</h2>

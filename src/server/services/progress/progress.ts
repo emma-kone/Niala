@@ -4,9 +4,11 @@ import { ApiHttpError } from "@/lib/api-helpers";
 import { assertFound } from "@/lib/ownership";
 import { BAND_LABEL, DIFFICULTY_EVIDENCE_WEIGHT, MIN_CONFIDENCE, answerEvidenceScore, estimateMastery, masteryBand, type Evidence } from "@/server/domain/mastery";
 import { buildRecommendations, type ConceptView, type ErrorTally } from "@/server/domain/recommend";
-import { buildSuggestions, pickHighlight, type CourseToday } from "@/server/domain/dashboard";
+import { buildSuggestions, pickHighlight, type CourseToday, type ScheduleStatus } from "@/server/domain/dashboard";
 import { addDays } from "@/server/domain/schedule";
 import { occurrencesBetween } from "@/server/services/agenda/agenda";
+import { listTasks, taskOverview } from "@/server/services/agenda/tasks";
+import { isOpen } from "@/server/domain/academic";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Progression adaptative. Sources de vérité : les RÉPONSES corrigées et les TESTS de laboratoire.
@@ -173,7 +175,7 @@ export async function refreshProgress(userId: string) {
 }
 
 export async function listRecommendations(userId: string, subjectId?: string) {
-  const rows = await db.learningRecommendation.findMany({ where: { userId, status: "SUGGESTED", ...(subjectId ? { subjectId } : {}) }, include: { subject: { select: { name: true, color: true } }, concept: { select: { name: true } } }, take: 50 });
+  const rows = await db.learningRecommendation.findMany({ where: { userId, status: "SUGGESTED", ...(subjectId ? { subjectId } : {}) }, include: { subject: { select: { name: true, color: true, icon: true } }, concept: { select: { name: true } } }, take: 50 });
   return rows
     .map((r) => {
       const reason = r.reason as { key: string; priority: number; title: string; text: string; evidence: Record<string, unknown>; documentId: string | null };
@@ -206,26 +208,52 @@ async function activityHref(userId: string, a: { type: string; refType: string |
   return null;
 }
 
-/** Agenda indisponible : le tableau de bord reste utilisable, sans cours affichés. */
-async function courseWindow(userId: string, from: string, to: string): Promise<CourseToday[]> {
+/** Horizon de recherche du prochain cours quand la journée présentée n'en a plus (vacances courtes comprises). */
+const NEXT_COURSE_HORIZON_DAYS = 21;
+
+/** Agenda indisponible : le tableau de bord reste utilisable et le signale, au lieu d'annoncer une journée sans cours. */
+async function courseWindow(userId: string, from: string, to: string): Promise<{ courses: CourseToday[]; schedule: ScheduleStatus }> {
   try {
-    const { occurrences } = await occurrencesBetween(userId, from, to);
-    return occurrences.map((o) => ({ key: o.key, date: o.date, title: o.title, startMinutes: o.startMinutes, endMinutes: o.endMinutes, room: o.room, subjectId: o.subjectId, subjectName: o.subject?.name ?? null }));
+    const [{ occurrences }, events] = await Promise.all([occurrencesBetween(userId, from, to), db.scheduleEvent.count({ where: { userId } })]);
+    const courses = occurrences.filter((o) => !o.allDay).map((o) => ({ key: o.key, date: o.date, title: o.title, startMinutes: o.startMinutes, endMinutes: o.endMinutes, room: o.room, subjectId: o.subjectId, subjectName: o.subject?.name ?? null, teacher: o.teacher, subjectColor: o.subject?.color ?? null, subjectIcon: o.subject?.icon ?? null }));
+    return { courses, schedule: events > 0 ? "ok" : "empty" };
   } catch (e) {
     console.warn("[dashboard] agenda indisponible :", e instanceof Error ? e.message : e);
-    return [];
+    return { courses: [], schedule: "error" };
+  }
+}
+
+const EMPTY_AGENDA = { late: [], upcoming: [], priority: [], sessions: [] };
+
+/** Tâches et séances prévues : même source que l'agenda, sans bloquer le tableau de bord en cas d'erreur. */
+async function agendaOverview(userId: string, clock: { date: string; minutes: number }) {
+  try {
+    const tasks = await listTasks(userId, clock);
+    const { late, upcoming } = taskOverview(tasks, clock.date);
+    const brief = (t: (typeof tasks)[number]) => ({ id: t.id, title: t.title, type: t.type, status: t.status, priority: t.priority, dueDate: t.dueDate, dueMinutes: t.dueMinutes, subjectName: t.subject?.name ?? null });
+    return {
+      late: late.map(brief),
+      upcoming: upcoming.map(brief),
+      priority: tasks.filter((t) => isOpen(t.status) && t.priority === "HAUTE").slice(0, 5).map(brief),
+      // Aujourd'hui et demain : le client présente l'une ou l'autre journée selon l'heure.
+      sessions: tasks.flatMap((t) => t.sessions.filter((s) => s.date === clock.date || s.date === addDays(clock.date, 1)).map((s) => ({ id: s.id, date: s.date, title: t.title, startMinutes: s.startMinutes, endMinutes: s.endMinutes, done: s.done }))),
+    };
+  } catch (e) {
+    console.warn("[dashboard] tâches indisponibles :", e instanceof Error ? e.message : e);
+    return EMPTY_AGENDA;
   }
 }
 
 export async function dashboard(userId: string, clock: { date: string; minutes: number }) {
   const tomorrow = addDays(clock.date, 1);
-  const [courses, recentDocs, unopened] = await Promise.all([
-    courseWindow(userId, clock.date, tomorrow),
-    db.document.findMany({ where: { userId, lastOpenedAt: { not: null }, subjectId: { not: null } }, orderBy: { lastOpenedAt: "desc" }, take: 3, select: { id: true, name: true, type: true, subjectId: true, lastOpenedAt: true, lastPage: true, pageCount: true, subject: { select: { name: true, color: true } } } }),
+  const [{ courses, schedule }, recentDocs, unopened] = await Promise.all([
+    courseWindow(userId, clock.date, addDays(clock.date, NEXT_COURSE_HORIZON_DAYS)),
+    // Classement sur la dernière consultation réelle ; un document n'y figure qu'une fois, même ouvert plusieurs fois.
+    db.document.findMany({ where: { userId, lastOpenedAt: { not: null }, subjectId: { not: null } }, orderBy: [{ lastOpenedAt: "desc" }, { id: "asc" }], take: 3, select: { id: true, name: true, type: true, subjectId: true, lastOpenedAt: true, lastPage: true, pageCount: true, currentVersion: { select: { pageCount: true } }, subject: { select: { name: true, color: true, icon: true } } } }),
     db.document.findMany({ where: { userId, lastOpenedAt: null, subjectId: { not: null } }, orderBy: { createdAt: "desc" }, take: 2, select: { id: true, name: true, subjectId: true, subject: { select: { name: true } } } }),
   ]);
   const [subjects, concepts, activities, recs, failedDocs, attempts, labRuns] = await Promise.all([
-    db.subject.findMany({ where: { userId }, orderBy: { createdAt: "asc" }, select: { id: true, name: true, color: true, _count: { select: { documents: true, studyExercises: true, notes: true } } } }),
+    db.subject.findMany({ where: { userId }, orderBy: { createdAt: "asc" }, select: { id: true, name: true, color: true, icon: true, _count: { select: { documents: true, studyExercises: true, notes: true } } } }),
     loadConceptViews(userId),
     db.learningActivity.findMany({ where: { userId, status: "IN_PROGRESS" }, orderBy: { updatedAt: "desc" }, take: 5 }),
     listRecommendations(userId),
@@ -271,23 +299,30 @@ export async function dashboard(userId: string, clock: { date: string; minutes: 
     .slice(0, 6);
 
   const documentHref = (d: { id: string; subjectId: string | null; lastPage?: number | null }) => `/matieres/${d.subjectId}/documents/${d.id}${d.lastPage ? `?page=${d.lastPage}` : ""}`;
-  const recentDocuments = recentDocs.map((d) => ({ id: d.id, name: d.name, type: d.type, lastOpenedAt: d.lastOpenedAt, lastPage: d.lastPage, pageCount: d.pageCount, subjectName: d.subject?.name ?? "", subjectColor: d.subject?.color ?? "#8b5cf6", href: documentHref(d) }));
+  const recentDocuments = recentDocs.map((d) => ({ id: d.id, name: d.name, type: d.type, lastOpenedAt: d.lastOpenedAt, lastPage: d.lastPage, pageCount: d.pageCount ?? d.currentVersion?.pageCount ?? null, subjectId: d.subjectId!, subjectName: d.subject?.name ?? "", subjectColor: d.subject?.color ?? "#8b5cf6", subjectIcon: d.subject?.icon ?? null, href: documentHref(d) }));
   const measuredSubjects = perSubject.filter((s) => s.mastery !== null);
   const overallMastery = measuredSubjects.length ? Math.round((measuredSubjects.reduce((t, s) => t + s.mastery!, 0) / measuredSubjects.length) * 100) / 100 : null;
-  const highlight = pickHighlight({ date: clock.date, nowMinutes: clock.minutes, today: courses, resume, recommendation: recs[0] ?? null, mastery: overallMastery, hasSubjects: subjects.length > 0 });
+  const academic = await agendaOverview(userId, clock);
+  const urgent = academic.late[0] ?? academic.upcoming.find((t) => t.dueDate <= tomorrow) ?? null;
+  const task = urgent ? { title: urgent.title, late: urgent.status === "EN_RETARD", detail: `Date limite : ${new Date(`${urgent.dueDate}T12:00:00`).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" })}${urgent.subjectName ? ` · ${urgent.subjectName}` : ""}` } : null;
+  const highlight = pickHighlight({ date: clock.date, nowMinutes: clock.minutes, today: courses, resume, recommendation: recs[0] ?? null, task, mastery: overallMastery, hasSubjects: subjects.length > 0 });
+  // La grande carte présente le dernier document ouvert : sa reprise n'est pas répétée dans les suggestions.
+  const resumeElsewhere = resumeA && !(resumeA.refType === "document" && resumeA.refId === recentDocs[0]?.id) ? resume : null;
   const suggestions = buildSuggestions({
     date: clock.date,
     nowMinutes: clock.minutes,
-    upcoming: courses,
+    upcoming: courses.filter((c) => c.date <= tomorrow),
     weakConcepts: concepts.filter((c) => c.confidence >= MIN_CONFIDENCE && c.level < 0.5).map((c) => ({ name: c.name, subjectId: c.subjectId, level: c.level })),
     recentDocuments: recentDocuments.flatMap((d, i) => (recentDocs[i].subjectId ? [{ name: d.name, subjectId: recentDocs[i].subjectId, href: d.href }] : [])),
     newDocuments: unopened.map((d) => ({ id: d.id, name: d.name, subjectName: d.subject?.name ?? "", href: documentHref(d) })),
-    resume,
+    resume: resumeElsewhere,
     recommendations: recs,
-    highlight,
+    // Sans document consulté, la grande carte affiche l'information principale : elle n'est alors pas répétée.
+    highlight: recentDocs.length ? undefined : highlight,
   });
 
-  return { resume, next: recs[0] ?? null, recommendations: recs.slice(0, 5), attention, subjects: perSubject, recent, hasData: subjects.length > 0, recentDocuments, today: courses, highlight, suggestions, overallMastery };
+  const breaks = await db.scheduleBreak.findMany({ where: { userId }, select: { label: true, startMinutes: true, endMinutes: true, weekday: true } }).catch(() => []);
+  return { resume, next: recs[0] ?? null, recommendations: recs.slice(0, 5), attention, subjects: perSubject, recent, hasData: subjects.length > 0, recentDocuments, today: courses, schedule, breaks, academic, highlight, suggestions, overallMastery };
 }
 
 // ── Page Progression ─────────────────────────────────────────────────────────
@@ -299,7 +334,7 @@ export async function progress(userId: string, subjectId?: string) {
     where: { userId, status: "GRADED", exerciseId: { not: null }, ...(subjectId ? { exercise: { subjectId } } : {}) },
     orderBy: { finishedAt: "asc" },
     take: 100,
-    select: { id: true, score: true, maxScore: true, finishedAt: true, exercise: { select: { title: true, subject: { select: { id: true, name: true, color: true } } } } },
+    select: { id: true, score: true, maxScore: true, finishedAt: true, exercise: { select: { title: true, subject: { select: { id: true, name: true, color: true, icon: true } } } } },
   });
   const since = new Date(Date.now() - 30 * 24 * 3600 * 1000);
   const diag = await db.errorDiagnosis.findMany({ where: { userId, createdAt: { gte: since } }, select: { category: true, evidence: true, conceptId: true } });

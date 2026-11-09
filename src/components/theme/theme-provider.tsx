@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useSyncExternalStore } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Thème de Niala : CLAIR par défaut, appliqué dès le premier chargement.
@@ -15,7 +15,7 @@ export const DEFAULT_THEME: ThemeChoice = "light";
 const STORAGE_KEY = "niala-theme";
 const EVENT = "niala-theme-change";
 
-export const THEME_INIT_SCRIPT = `try{var t=localStorage.getItem("${STORAGE_KEY}");if(t!=="light"&&t!=="dark"&&t!=="system")t="${DEFAULT_THEME}";var d=t==="dark"||(t==="system"&&window.matchMedia("(prefers-color-scheme: dark)").matches);var e=document.documentElement;e.classList.toggle("dark",d);e.style.colorScheme=d?"dark":"light"}catch(_){document.documentElement.classList.add("dark")}`;
+export const THEME_INIT_SCRIPT = `try{var t=localStorage.getItem("${STORAGE_KEY}");if(t!=="light"&&t!=="dark"&&t!=="system")t="${DEFAULT_THEME}";var d=t==="dark"||(t==="system"&&window.matchMedia("(prefers-color-scheme: dark)").matches);var e=document.documentElement;e.classList.toggle("dark",d);e.style.colorScheme=d?"dark":"light"}catch(_){}`;
 
 export const isThemeChoice = (v: unknown): v is ThemeChoice => v === "light" || v === "dark" || v === "system";
 
@@ -42,6 +42,7 @@ function subscribeSystem(cb: () => void) {
   mq.addEventListener("change", cb);
   return () => mq.removeEventListener("change", cb);
 }
+const subscribeNothing = () => () => undefined;
 const systemPrefersDark = () => window.matchMedia("(prefers-color-scheme: dark)").matches;
 
 interface ThemeContextValue {
@@ -60,7 +61,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const prefersDark = useSyncExternalStore(subscribeSystem, systemPrefersDark, () => true);
   const resolvedTheme = theme === "system" ? (prefersDark ? "dark" : "light") : theme;
 
-  const setTheme = useCallback((value: ThemeChoice) => {
+  const remember = useCallback((value: ThemeChoice) => {
     try {
       localStorage.setItem(STORAGE_KEY, value);
     } catch {
@@ -69,10 +70,32 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     window.dispatchEvent(new Event(EVENT));
   }, []);
 
+  // Seul un changement demandé par l'étudiant est accompagné d'un fondu.
+  const fade = useRef(false);
+  const setTheme = useCallback((value: ThemeChoice) => {
+    fade.current = true;
+    remember(value);
+  }, [remember]);
+
+  // Pendant l'hydratation, le thème vaut encore celui du rendu serveur : le script d'initialisation a déjà posé le bon.
+  const hydrated = useSyncExternalStore(subscribeNothing, () => true, () => false);
+  const latest = useRef(resolvedTheme);
   useEffect(() => {
-    document.documentElement.classList.toggle("dark", resolvedTheme === "dark");
-    document.documentElement.style.colorScheme = resolvedTheme;
-  }, [resolvedTheme]);
+    latest.current = resolvedTheme;
+    if (!hydrated) return;
+    const root = document.documentElement;
+    // Le thème appliqué est relu au moment du changement : deux bascules rapprochées ne peuvent pas s'inverser.
+    const apply = () => {
+      root.classList.toggle("dark", latest.current === "dark");
+      root.style.colorScheme = latest.current;
+    };
+    const changed = root.classList.contains("dark") !== (resolvedTheme === "dark");
+    const calm = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    // Fondu entre les deux thèmes : le navigateur compose l'ancien et le nouvel état, sans image intermédiaire.
+    if (changed && fade.current && !calm && typeof document.startViewTransition === "function") document.startViewTransition(apply);
+    else apply();
+    fade.current = false;
+  }, [resolvedTheme, hydrated]);
 
   // La préférence enregistrée du compte l'emporte sur la valeur locale (autre appareil, navigateur neuf).
   // Sans session (page de connexion), la requête échoue en silence : on garde le thème par défaut.
@@ -82,13 +105,13 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       .then((r) => (r.ok ? r.json() : null))
       .then((body: { settings?: { theme?: unknown } } | null) => {
         const server = body?.settings?.theme;
-        if (!cancelled && isThemeChoice(server) && server !== readTheme()) setTheme(server);
+        if (!cancelled && isThemeChoice(server) && server !== readTheme()) remember(server);
       })
       .catch(() => undefined);
     return () => {
       cancelled = true;
     };
-  }, [setTheme]);
+  }, [remember]);
 
   const value = useMemo(() => ({ theme, resolvedTheme, setTheme }), [theme, resolvedTheme, setTheme]);
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

@@ -25,7 +25,7 @@ async function attempt(answers: boolean[]) {
 
 beforeAll(async () => {
   pg = await PGlite.create();
-  for (const n of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261110000000_niala_agenda"]) {
+  for (const n of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261110000000_niala_agenda", "20261111000000_niala_academic", "20261112000000_niala_subject_icon"]) {
     await pg.exec(readFileSync(path.join(process.cwd(), "prisma", "migrations", n, "migration.sql"), "utf8"));
   }
   const port = 50000 + Math.floor(Math.random() * 4000);
@@ -148,6 +148,66 @@ describe("tableau de bord et progression", () => {
     await prog.refreshRecommendations(A);
     expect((await prog.listRecommendations(A)).some((r) => r.conceptId === first.conceptId && r.type === first.type)).toBe(false);
   }, 60_000);
+});
+
+describe("derniers cours consultés", () => {
+  let first: string, second: string, third: string, fourth: string;
+  const opened = (id: string, at: string) => db.document.update({ where: { id }, data: { lastOpenedAt: new Date(at) } });
+  const ranking = async () => (await prog.dashboard(A, { date: "2026-11-09", minutes: 600 })).recentDocuments.map((d) => d.id);
+
+  beforeAll(async () => {
+    const make = async (name: string) => (await db.document.create({ data: { userId: A, subjectId: subj, name, originalName: name, type: "pdf", size: 1, pageCount: 20 } })).id;
+    [first, second, third, fourth] = await Promise.all(["Premier", "Deuxième", "Troisième", "Quatrième"].map(make));
+  });
+
+  it("n'invente aucun cours quand moins de trois ont été ouverts", async () => {
+    await opened(first, "2026-11-01T08:00:00Z");
+    expect(await ranking()).toEqual([first]);
+  });
+
+  it("classe sur la dernière consultation, jamais sur l'ordre de création", async () => {
+    await opened(third, "2026-11-02T08:00:00Z");
+    await opened(second, "2026-11-03T08:00:00Z");
+    await opened(fourth, "2026-10-01T08:00:00Z");
+    expect(await ranking()).toEqual([second, third, first]);
+  });
+
+  it("une nouvelle ouverture fait remonter le document, sans doublon", async () => {
+    const { recordOpening } = await import("@/server/services/documents");
+    await recordOpening(A, fourth);
+    await recordOpening(A, fourth);
+    expect(await ranking()).toEqual([fourth, second, third]);
+  });
+
+  it("la reprise vise la dernière page enregistrée, et la lecture met à jour le classement", async () => {
+    const { recordReading } = await import("@/server/services/documents");
+    await recordReading(A, first, 7);
+    const d = await prog.dashboard(A, { date: "2026-11-09", minutes: 600 });
+    expect(d.recentDocuments[0]).toMatchObject({ id: first, lastPage: 7, pageCount: 20, href: `/matieres/${subj}/documents/${first}?page=7` });
+  });
+
+  it("le document d'un autre étudiant ne peut pas être marqué comme ouvert", async () => {
+    const { recordOpening } = await import("@/server/services/documents");
+    await expect(recordOpening(B, first)).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+describe("cours présentés par le tableau de bord", () => {
+  it("couvre la bascule du soir et distingue un agenda vide", async () => {
+    expect((await prog.dashboard(B, { date: "2026-11-09", minutes: 600 })).schedule).toBe("empty");
+    const s = await db.subject.create({ data: { userId: B, name: "Réseaux", color: "#112233", icon: "network" } });
+    await db.scheduleEvent.create({ data: { userId: B, subjectId: s.id, title: "Réseaux", date: "2026-11-10", startMinutes: 480, endMinutes: 600, teacher: "M. Test" } });
+    const d = await prog.dashboard(B, { date: "2026-11-09", minutes: 19 * 60 });
+    expect(d.schedule).toBe("ok");
+    const { buildDayView } = await import("@/server/domain/dashboard");
+    const evening = buildDayView({ date: "2026-11-09", nowMinutes: 19 * 60, courses: d.today, schedule: d.schedule });
+    expect(evening.courses[0]).toMatchObject({ title: "Réseaux", teacher: "M. Test", subjectColor: "#112233", subjectIcon: "network", phase: "upcoming" });
+    const afternoon = buildDayView({ date: "2026-11-09", nowMinutes: 18 * 60 + 59, courses: d.today, schedule: d.schedule });
+    expect(afternoon.state).toBe("none");
+    expect(afternoon.next?.date).toBe("2026-11-10");
+    await db.scheduleEvent.deleteMany({ where: { userId: B } });
+    await db.subject.delete({ where: { id: s.id } });
+  });
 });
 
 describe("isolation entre utilisateurs", () => {

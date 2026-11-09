@@ -1,6 +1,6 @@
 // Tableau de bord : choix de l'information principale et des suggestions. Règles pures, à partir de données réelles uniquement.
 
-import { formatMinutes } from "./schedule";
+import { addDays, classifyOccurrence, formatMinutes } from "./schedule";
 
 export interface CourseToday {
   key: string;
@@ -11,10 +11,50 @@ export interface CourseToday {
   room: string | null;
   subjectId: string | null;
   subjectName: string | null;
+  teacher?: string | null;
+  subjectColor?: string | null;
+  subjectIcon?: string | null;
+}
+
+/** À partir de cette heure, le tableau de bord présente la journée du lendemain. */
+export const EVENING_SWITCH_MINUTES = 19 * 60;
+
+/** Journée présentée par le tableau de bord. La date réelle reste inchangée : seule la présentation bascule. */
+export const referenceDate = (date: string, nowMinutes: number) => (nowMinutes >= EVENING_SWITCH_MINUTES ? addDays(date, 1) : date);
+
+/** État de l'agenda : `error` et `empty` ne doivent jamais être confondus avec une journée sans cours. */
+export type ScheduleStatus = "ok" | "empty" | "error";
+export type DayState = "no_schedule" | "unavailable" | "none" | "active" | "finished";
+export type CoursePhase = "done" | "current" | "upcoming";
+
+export interface DayView<C extends CourseToday = CourseToday> {
+  /** Date réelle de l'appareil. */
+  date: string;
+  /** Journée présentée : aujourd'hui, ou demain après 19 h. */
+  reference: string;
+  isTomorrow: boolean;
+  label: "Aujourd'hui" | "Demain";
+  state: DayState;
+  courses: (C & { phase: CoursePhase })[];
+  /** Prochain cours après la journée présentée, quand celle-ci n'a plus rien à proposer. */
+  next: C | null;
+}
+
+/** Source unique de tout ce que le tableau de bord dit de la journée : même règle pour le résumé et le mini-emploi du temps. */
+export function buildDayView<C extends CourseToday>(i: { date: string; nowMinutes: number; courses: C[]; schedule: ScheduleStatus }): DayView<C> {
+  const reference = referenceDate(i.date, i.nowMinutes);
+  const isTomorrow = reference !== i.date;
+  const sorted = [...i.courses].sort((a, b) => a.date.localeCompare(b.date) || a.startMinutes - b.startMinutes);
+  const PHASE = { past: "done", current: "current", upcoming: "upcoming" } as const;
+  const courses = sorted.filter((c) => c.date === reference).map((c) => ({ ...c, phase: PHASE[classifyOccurrence(c, i.date, i.nowMinutes)] }));
+  const finished = courses.length > 0 && courses.every((c) => c.phase === "done");
+  const state: DayState = courses.length === 0 ? (i.schedule === "error" ? "unavailable" : i.schedule === "empty" ? "no_schedule" : "none") : finished ? "finished" : "active";
+  const next = state === "none" || state === "finished" ? (sorted.find((c) => c.date > reference) ?? null) : null;
+  return { date: i.date, reference, isTomorrow, label: isTomorrow ? "Demain" : "Aujourd'hui", state, courses, next };
 }
 
 export interface Highlight {
-  kind: "course_now" | "course_soon" | "resume" | "recommendation" | "course_later" | "progress" | "start";
+  kind: "course_now" | "course_soon" | "task" | "resume" | "recommendation" | "course_later" | "progress" | "start";
   eyebrow: string;
   title: string;
   detail: string;
@@ -28,6 +68,8 @@ export interface HighlightInput {
   today: CourseToday[];
   resume: { title: string; href: string | null } | null;
   recommendation: { id: string; title: string; text: string } | null;
+  /** Tâche en retard ou pour aujourd'hui / demain. */
+  task?: { title: string; detail: string; late: boolean } | null;
   mastery: number | null;
   hasSubjects: boolean;
 }
@@ -44,6 +86,7 @@ export function pickHighlight(i: HighlightInput): Highlight {
   const agenda = "/agenda";
   if (current) return { kind: "course_now", eyebrow: "En ce moment", title: current.title, detail: `${span(current)}${where(current)}`, href: agenda, cta: "Voir l'agenda" };
   if (next && next.startMinutes - i.nowMinutes <= SOON_MINUTES) return { kind: "course_soon", eyebrow: `Dans ${next.startMinutes - i.nowMinutes} minutes`, title: next.title, detail: `${span(next)}${where(next)}`, href: agenda, cta: "Voir l'agenda" };
+  if (i.task) return { kind: "task", eyebrow: i.task.late ? "En retard" : "Tâche proche", title: i.task.title, detail: i.task.detail, href: agenda, cta: "Voir la tâche" };
   if (i.resume) return { kind: "resume", eyebrow: "À reprendre", title: i.resume.title, detail: "Vous vous étiez arrêté ici.", href: i.resume.href, cta: i.resume.href ? "Reprendre" : null };
   if (i.recommendation) return { kind: "recommendation", eyebrow: "Priorité du moment", title: i.recommendation.title, detail: i.recommendation.text, href: null, cta: null };
   if (next) return { kind: "course_later", eyebrow: "Prochain cours", title: next.title, detail: `${span(next)}${where(next)}`, href: agenda, cta: "Voir l'agenda" };
@@ -70,7 +113,8 @@ export interface SuggestionInput {
   newDocuments: { id: string; name: string; subjectName: string; href: string }[];
   resume: { title: string; href: string | null } | null;
   recommendations: { id: string; title: string; text: string }[];
-  highlight: Highlight;
+  /** Information déjà mise en avant ailleurs : elle n'est pas répétée dans les suggestions. */
+  highlight?: Highlight;
   max?: number;
 }
 
@@ -88,9 +132,9 @@ export function buildSuggestions(i: SuggestionInput): Suggestion[] {
     if (weak) out.push({ id: `course-${c.key}`, kind: "before_course", title: `Revoir « ${weak.name} »`, text: `Notion encore fragile, et vous avez ${c.subjectName ?? c.title} ${when}.`, href: `/matieres/${c.subjectId}` });
     else if (doc) out.push({ id: `course-${c.key}`, kind: "before_course", title: `Relire « ${doc.name} »`, text: `Pour préparer ${c.subjectName ?? c.title} ${when}.`, href: doc.href });
   }
-  if (i.resume && i.highlight.kind !== "resume") out.push({ id: "resume", kind: "resume", title: `Reprendre : ${i.resume.title}`, text: "Activité commencée et non terminée.", href: i.resume.href });
+  if (i.resume && i.highlight?.kind !== "resume") out.push({ id: "resume", kind: "resume", title: `Reprendre : ${i.resume.title}`, text: "Activité commencée et non terminée.", href: i.resume.href });
   i.recommendations.forEach((r, n) => {
-    if (n === 0 && i.highlight.kind === "recommendation") return;
+    if (n === 0 && i.highlight?.kind === "recommendation") return;
     out.push({ id: `rec-${r.id}`, kind: "recommendation", title: r.title, text: r.text, href: null, recommendationId: r.id });
   });
   for (const d of i.newDocuments) out.push({ id: `doc-${d.id}`, kind: "new_document", title: `Découvrir « ${d.name} »`, text: `Ajouté dans ${d.subjectName}, pas encore ouvert.`, href: d.href });

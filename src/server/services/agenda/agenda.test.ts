@@ -47,7 +47,7 @@ const patch = (over: Record<string, unknown>) => agenda.patchEventSchema.parse({
 beforeAll(async () => {
   pg = await PGlite.create();
   const dirMig = path.join(process.cwd(), "prisma", "migrations");
-  for (const name of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261109000000_niala_reliability", "20261110000000_niala_agenda"]) await pg.exec(readFileSync(path.join(dirMig, name, "migration.sql"), "utf8"));
+  for (const name of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261109000000_niala_reliability", "20261110000000_niala_agenda", "20261111000000_niala_academic", "20261112000000_niala_subject_icon"]) await pg.exec(readFileSync(path.join(dirMig, name, "migration.sql"), "utf8"));
   const port = 30000 + Math.floor(Math.random() * 10000);
   server = new PGLiteSocketServer({ db: pg, port, host: "127.0.0.1", maxConnections: 4 });
   await server.start();
@@ -79,6 +79,7 @@ afterAll(async () => {
 
 async function clean() {
   await db.scheduleEvent.deleteMany();
+  await db.scheduleBreak.deleteMany();
   await db.scheduleImport.deleteMany();
 }
 
@@ -105,15 +106,18 @@ describe("cours", () => {
     expect(await week(A)).toHaveLength(2);
   });
 
-  it("protège les pauses sauf confirmation", async () => {
+  it("n'impose aucune pause, protège celles de l'étudiant sauf confirmation", async () => {
     await clean();
-    await expect(agenda.createEvent(A, input({ startMinutes: 750, endMinutes: 810 }))).rejects.toMatchObject({ status: 409 });
-    await expect(agenda.createEvent(A, input({ startMinutes: 590, endMinutes: 620 }))).rejects.toMatchObject({ status: 409 });
+    await agenda.createEvent(A, input({ startMinutes: 750, endMinutes: 810 }));
+    await db.scheduleBreak.create({ data: { userId: A, label: "Sieste", startMinutes: 590, endMinutes: 620 } });
+    await expect(agenda.createEvent(A, input({ startMinutes: 600, endMinutes: 650 }))).rejects.toMatchObject({ status: 409 });
+    await agenda.createEvent(A, input({ startMinutes: 600, endMinutes: 650, force: true }));
+    expect(await week(A)).toHaveLength(2);
   });
 
-  it("refuse hors de la journée et une matière d'un autre compte", async () => {
+  it("accepte tout horaire réel, refuse une matière d'un autre compte", async () => {
     await clean();
-    await expect(agenda.createEvent(A, input({ startMinutes: 400, endMinutes: 470 }))).rejects.toMatchObject({ status: 422 });
+    await agenda.createEvent(A, input({ startMinutes: 400, endMinutes: 470 }));
     await expect(agenda.createEvent(A, input({ subjectId: subjectB }))).rejects.toMatchObject({ status: 404 });
   });
 
@@ -243,9 +247,10 @@ describe("contrôle de l'extraction", () => {
     expect(d.confidence).toBe("faible");
     expect(d.issues.join(" ")).toContain("retrouvé");
   });
-  it("signale une pause et un horaire hors grille", () => {
-    expect(normalize(course({ debut: "11:30", fin: "12:30" })).issues).toContain("Empiète sur une pause.");
-    expect(normalize(course({ debut: "06:00", fin: "07:00" })).issues.join(" ")).toContain("07:30");
+  it("ne juge pas un horaire inhabituel, signale une pause du document et un horaire impossible", () => {
+    expect(normalize(course({ debut: "06:00", fin: "07:00" })).issues).toEqual([]);
+    expect(normalizeDraft({ cours: [course({ debut: "11:30", fin: "12:30" })] }, [], null, [{ label: "Pause", startMinutes: 720, endMinutes: 750, weekday: null }])[0].issues).toContain("Empiète sur une pause.");
+    expect(normalize(course({ debut: "10:00", fin: "09:00" })).issues.join(" ")).toContain("après");
   });
   it("signale un chevauchement dans le document, pas entre semaines A et B", () => {
     const pair = (a: "ALL" | "A" | "B", b: "ALL" | "A" | "B") => normalizeDraft({ cours: [course({ semaine: a }), course({ matiere: "Maths", semaine: b })] }, [], null)[0].issues;

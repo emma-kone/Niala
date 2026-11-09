@@ -465,7 +465,7 @@ export default function PdfViewer({ src, downloadUrl, fileName, initialPage = 1,
             </div>
           )}
           {doc && baseSize && (
-            <div className="mx-auto flex w-max min-w-full flex-col items-center gap-3 py-3">
+            <div className="mx-auto flex w-max min-w-full flex-col items-center gap-3 pt-3 pb-[calc(0.75rem+var(--toolbar-clearance,0px))]">
               {Array.from({ length: doc.numPages }, (_, i) => (
                 <PageView
                   key={i}

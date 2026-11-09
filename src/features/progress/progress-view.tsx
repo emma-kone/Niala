@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
 import { api } from "@/lib/client-api";
+import { SubjectIcon } from "@/components/subject-icon";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -153,7 +154,7 @@ export default function ProgressView() {
           <ul className="divide-y rounded-xl border bg-card">
             {[...data.attempts].reverse().slice(0, 12).map((a) => (
               <li key={a.id} className="flex items-center gap-3 px-4 py-2 text-sm">
-                {a.subject && <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: a.subject.color }} aria-hidden />}
+                {a.subject && <SubjectIcon icon={a.subject.icon} name={a.subject.name} color={a.subject.color} size="xs" />}
                 <span className="font-medium">{a.title}</span>
                 <span className="text-xs text-muted-foreground">{fmt(a.at)}</span>
                 <span className="ml-auto font-semibold">{a.percentage != null ? `${a.percentage} %` : "—"}</span>

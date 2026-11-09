@@ -3,7 +3,7 @@ import type { QuestionType } from "@/server/domain/exercise-types";
 export interface ExerciseListItem {
   id: string;
   title: string;
-  subject: { id: string; name: string; color: string };
+  subject: { id: string; name: string; color: string; icon?: string | null };
   document: { id: string; name: string } | null;
   versionNumber: number | null;
   createdAt: string;
@@ -19,7 +19,7 @@ export interface ExerciseListItem {
 export interface ExerciseDetail {
   id: string;
   title: string;
-  subject: { id: string; name: string; color: string };
+  subject: { id: string; name: string; color: string; icon?: string | null };
   document: { id: string; name: string } | null;
   versionNumber: number | null;
   createdAt: string;

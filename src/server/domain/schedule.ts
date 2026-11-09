@@ -3,19 +3,20 @@
 // « AAAA-MM-JJ » : un cours à 8 h 30 reste à 8 h 30 quel que soit le fuseau du serveur ou de l'appareil.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const DAY_START = 7 * 60 + 30;
-export const DAY_END = 18 * 60 + 30;
 export const MIN_DURATION = 15;
+/** Fenêtre affichée quand la période ne contient encore aucun cours. */
+export const EMPTY_GRID = { start: 8 * 60, end: 18 * 60 };
 
-export const BREAKS = [
-  { start: 10 * 60, end: 10 * 60 + 15, label: "Pause" },
-  { start: 12 * 60, end: 14 * 60, label: "Pause déjeuner" },
-] as const;
+export interface BreakRecord {
+  id?: string;
+  label: string;
+  startMinutes: number;
+  endMinutes: number;
+  /** null : tous les jours. */
+  weekday: number | null;
+}
 
-/** Repères horaires de la grille. */
-export const TIME_MARKS = [450, 510, 570, 600, 615, 660, 720, 840, 900, 960, 1020, 1080, 1110];
-
-export type Recurrence = "NONE" | "WEEKLY";
+export type Recurrence = "NONE" | "WEEKLY" | "DATES";
 export type WeekPattern = "ALL" | "A" | "B";
 
 export interface ScheduleEventRecord {
@@ -29,6 +30,12 @@ export interface ScheduleEventRecord {
   recurrence: Recurrence;
   until: string | null;
   weekPattern: WeekPattern;
+  /** Séances précises, pour un cours présent seulement certaines semaines. */
+  dates: string[] | null;
+  endDate: string | null;
+  allDay: boolean;
+  code: string | null;
+  sessionType: string | null;
   room: string | null;
   teacher: string | null;
   groupName: string | null;
@@ -106,16 +113,73 @@ export function parseTime(value: string | null | undefined): number | null {
 }
 
 export function validateTimes(start: number, end: number): string | null {
-  if (!Number.isInteger(start) || !Number.isInteger(end)) return "Horaire invalide.";
+  if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end > 1440) return "Horaire invalide.";
   if (end <= start) return "L'heure de fin doit être après l'heure de début.";
   if (end - start < MIN_DURATION) return `Une séance dure au moins ${MIN_DURATION} minutes.`;
-  if (start < DAY_START || end > DAY_END) return `L'emploi du temps couvre la journée de ${formatMinutes(DAY_START)} à ${formatMinutes(DAY_END)}.`;
   return null;
 }
 
-/** Pause touchée par un créneau, le cas échéant. */
-export function breakOverlap(start: number, end: number) {
-  return BREAKS.find((b) => start < b.end && end > b.start) ?? null;
+/** Pause touchée par un créneau parmi celles de l'étudiant. */
+export function breakOverlap(start: number, end: number, breaks: BreakRecord[], date?: string) {
+  return breaks.find((b) => start < b.endMinutes && end > b.startMinutes && (b.weekday === null || !date || b.weekday === weekday(date))) ?? null;
+}
+
+export interface GridGeometry {
+  start: number;
+  end: number;
+  /** Heures à inscrire sur l'axe : les vraies bornes des cours et des pauses. */
+  marks: number[];
+}
+
+/**
+ * Grille calculée à partir des horaires réels de la période : début, fin et repères ne sont jamais prédéfinis.
+ * Les repères trop proches pour rester lisibles (minGap, en minutes) sont regroupés.
+ */
+export function computeGrid(slots: { startMinutes: number; endMinutes: number }[], breaks: { startMinutes: number; endMinutes: number }[] = [], minGap = 15): GridGeometry {
+  if (!slots.length) return { start: EMPTY_GRID.start, end: EMPTY_GRID.end, marks: [EMPTY_GRID.start, EMPTY_GRID.end] };
+  const start = Math.min(...slots.map((s) => s.startMinutes));
+  const end = Math.max(...slots.map((s) => s.endMinutes));
+  const inside = breaks.filter((b) => b.startMinutes >= start && b.endMinutes <= end);
+  const all = [...new Set([...slots, ...inside].flatMap((s) => [s.startMinutes, s.endMinutes]))].sort((a, b) => a - b);
+  const marks: number[] = [];
+  for (const m of all) if (!marks.length || m - marks[marks.length - 1] >= minGap || m === end) marks.push(m);
+  return { start, end, marks };
+}
+
+/** Position et hauteur d'un créneau, proportionnelles aux minutes réelles. */
+export function slotBox(slot: { startMinutes: number; endMinutes: number }, gridStart: number, pixelsPerHour: number) {
+  const perMinute = pixelsPerHour / 60;
+  return { top: (slot.startMinutes - gridStart) * perMinute, height: (slot.endMinutes - slot.startMinutes) * perMinute };
+}
+
+/**
+ * Pauses implicites d'un document : intervalles réguliers entre deux créneaux, présents au moins deux jours.
+ * Une longue absence de cours n'est pas une pause. Une pause absente de certains jours de cours n'y est pas appliquée.
+ */
+export function deriveBreaks(slots: { day: number | null; startMinutes: number | null; endMinutes: number | null }[], maxGap = 150): BreakRecord[] {
+  const byDay = new Map<number, [number, number][]>();
+  for (const s of slots) {
+    if (s.day === null || s.startMinutes === null || s.endMinutes === null) continue;
+    byDay.set(s.day, [...(byDay.get(s.day) ?? []), [s.startMinutes, s.endMinutes]]);
+  }
+  const daysOf = new Map<string, number[]>();
+  for (const [weekdayNumber, day] of byDay) {
+    const unique = [...new Map(day.map((x) => [x.join("-"), x])).values()].sort((a, b) => a[0] - b[0]);
+    const seen = new Set<string>();
+    for (let i = 0; i + 1 < unique.length; i++) {
+      const [from, to] = [unique[i][1], unique[i + 1][0]];
+      if (to > from && to - from <= maxGap) seen.add(`${from}-${to}`);
+    }
+    seen.forEach((k) => daysOf.set(k, [...(daysOf.get(k) ?? []), weekdayNumber]));
+  }
+  return [...daysOf]
+    .filter(([, days]) => days.length >= 2)
+    .flatMap(([k, days]) => {
+      const [startMinutes, endMinutes] = k.split("-").map(Number);
+      const label = endMinutes - startMinutes >= 60 ? "Pause déjeuner" : "Pause";
+      return (days.length === byDay.size ? [null] : days).map((weekday): BreakRecord => ({ label, startMinutes, endMinutes, weekday }));
+    })
+    .sort((a, b) => a.startMinutes - b.startMinutes || (a.weekday ?? 0) - (b.weekday ?? 0));
 }
 
 function appliesOn(event: Pick<ScheduleEventRecord, "weekPattern">, date: string, swap: boolean) {
@@ -123,8 +187,13 @@ function appliesOn(event: Pick<ScheduleEventRecord, "weekPattern">, date: string
 }
 
 /** Dates d'origine d'un événement sur une période (bornes incluses). */
-export function occurrenceDates(event: Pick<ScheduleEventRecord, "date" | "recurrence" | "until" | "weekPattern">, from: string, to: string, swap = false): string[] {
-  if (event.recurrence === "NONE") return event.date >= from && event.date <= to ? [event.date] : [];
+export function occurrenceDates(event: Pick<ScheduleEventRecord, "date" | "recurrence" | "until" | "weekPattern"> & { dates?: string[] | null; endDate?: string | null }, from: string, to: string, swap = false): string[] {
+  if (event.recurrence === "NONE") {
+    const out: string[] = [];
+    for (let d = event.date; d <= (event.endDate ?? event.date); d = addDays(d, 1)) if (d >= from && d <= to) out.push(d);
+    return out;
+  }
+  if (event.recurrence === "DATES") return (event.dates ?? []).filter((d) => d >= from && d <= to).sort();
   const out: string[] = [];
   const gap = daysBetween(event.date, from);
   let cursor = gap > 0 ? addDays(event.date, Math.ceil(gap / 7) * 7) : event.date;
@@ -189,6 +258,8 @@ export function classifyOccurrence(o: { date: string; startMinutes: number; endM
 // ── Imports successifs ───────────────────────────────────────────────────────
 
 export interface DraftCourse {
+  code?: string | null;
+  dates?: string[] | null;
   title: string;
   day: number | null;
   startMinutes: number | null;
@@ -208,6 +279,8 @@ export interface ExistingCourse {
   teacher: string | null;
   weekPattern: WeekPattern;
   importId: string | null;
+  code?: string | null;
+  dates?: string[] | null;
 }
 
 export type DraftStatus = "nouveau" | "identique" | "modifie";
@@ -226,7 +299,8 @@ export function diffImport<T extends DraftCourse>(drafts: T[], existing: Existin
     if (found) unused.delete(found.id);
     return found ?? null;
   };
-  const sameSlot = (d: T, e: ExistingCourse) => fold(e.title) === fold(d.title) && weekday(e.date) === d.day && e.weekPattern === d.weekPattern;
+  const sameCourse = (d: T, e: ExistingCourse) => (d.code && e.code ? d.code === e.code : fold(e.title) === fold(d.title));
+  const sameSlot = (d: T, e: ExistingCourse) => sameCourse(d, e) && weekday(e.date) === d.day && e.weekPattern === d.weekPattern;
   // Deux passes : les correspondances exactes d'abord, pour qu'un cours identique ne soit jamais pris pour une modification.
   const exact = new Map<T, ExistingCourse>();
   for (const d of drafts) {
@@ -236,7 +310,8 @@ export function diffImport<T extends DraftCourse>(drafts: T[], existing: Existin
   const items = drafts.map((draft) => {
     const same = exact.get(draft);
     if (same) {
-      const changes = [same.room !== draft.room && draft.room ? "salle" : null, same.teacher !== draft.teacher && draft.teacher ? "enseignant" : null].filter((x): x is string => !!x);
+      const sameDates = JSON.stringify([...(same.dates ?? [])].sort()) === JSON.stringify([...(draft.dates ?? [])].sort());
+      const changes = [same.room !== draft.room && draft.room ? "salle" : null, same.teacher !== draft.teacher && draft.teacher ? "enseignant" : null, draft.dates && !sameDates ? "semaines" : null].filter((x): x is string => !!x);
       return { draft, status: (changes.length ? "modifie" : "identique") as DraftStatus, existingId: same.id, changes };
     }
     const moved = take((x) => sameSlot(draft, x));

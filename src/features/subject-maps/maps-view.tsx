@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { ChevronRight, GitFork, Network, Pencil, Plus, Trash2 } from "lucide-react";
 import { api } from "@/lib/client-api";
+import { SubjectIcon } from "@/components/subject-icon";
 import { routes } from "@/config/routes";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -20,7 +21,7 @@ const errText = (e: unknown, fb: string) => (e instanceof Error ? e.message : fb
 export default function SubjectMapsView({ subjectId }: { subjectId: string }) {
   const router = useRouter();
   const { toast } = useToast();
-  const [subject, setSubject] = useState<{ name: string; color: string } | null>(null);
+  const [subject, setSubject] = useState<{ name: string; color: string; icon?: string | null } | null>(null);
   const [maps, setMaps] = useState<MapListItem[] | null>(null);
   const [error, setError] = useState<{ message: string; status?: number } | null>(null);
   const [creating, setCreating] = useState<"STRUCTURE" | "CONCEPT" | null>(null);
@@ -37,7 +38,7 @@ export default function SubjectMapsView({ subjectId }: { subjectId: string }) {
   }, [subjectId]);
 
   useEffect(() => {
-    api.get<{ subject: { name: string; color: string } }>(`/api/subjects/${subjectId}`).then((r) => setSubject(r.subject)).catch(() => undefined);
+    api.get<{ subject: { name: string; color: string; icon?: string | null } }>(`/api/subjects/${subjectId}`).then((r) => setSubject(r.subject)).catch(() => undefined);
     void load();
   }, [subjectId, load]);
 
@@ -68,7 +69,7 @@ export default function SubjectMapsView({ subjectId }: { subjectId: string }) {
         <Link href={routes.subject(subjectId)} className="hover:text-foreground">{subject?.name ?? "…"}</Link>
       </nav>
       <h1 className="typo-h1 mb-5 flex items-center gap-3">
-        {subject && <span className="h-3 w-3 rounded-full" style={{ backgroundColor: subject.color }} aria-hidden />}
+        {subject && <SubjectIcon icon={subject.icon} name={subject.name} color={subject.color} />}
         {subject?.name ?? <Skeleton className="h-8 w-48" />}
       </h1>
       <SubjectTabs subjectId={subjectId} active="maps" />

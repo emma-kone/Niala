@@ -277,7 +277,7 @@ export async function listExercises(userId: string, filter: { subjectId?: string
     orderBy: { createdAt: "desc" },
     take: 200,
     include: {
-      subject: { select: { id: true, name: true, color: true } },
+      subject: { select: { id: true, name: true, color: true, icon: true } },
       document: { select: { id: true, name: true } },
       version: { select: { number: true } },
       _count: { select: { questions: true } },
@@ -309,7 +309,7 @@ export async function getExercise(userId: string, id: string) {
     where: { id, userId },
     include: {
       questions: { orderBy: { position: "asc" }, select: { position: true, type: true, points: true, difficulty: true } },
-      subject: { select: { id: true, name: true, color: true } },
+      subject: { select: { id: true, name: true, color: true, icon: true } },
       document: { select: { id: true, name: true } },
       version: { select: { number: true } },
     },

@@ -1,53 +1,69 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { BookOpen, CalendarDays, CalendarPlus, FileUp, MessageSquare, NotebookPen, Plus, TrendingUp, type LucideIcon } from "lucide-react";
-import { routes } from "@/config/routes";
+import { useEffect } from "react";
+import { create } from "zustand";
+import type { LucideIcon } from "lucide-react";
+import { cn } from "@/lib/utils";
 
-// Barre d'actions flottante : uniquement des actions réelles, adaptées à la page. Absente des écrans plein cadre
-// (assistant, lecteur, éditeurs), où elle masquerait la zone de travail ou le champ de saisie.
+// Barre d'outils du bas : elle n'existe que lorsqu'un écran de travail déclare ses actions avec useModuleToolbar
+// (cours ouvert, espace de code, espace SQL). Partout ailleurs, le panneau principal garde sa forme simple.
 
-interface ToolAction {
+export interface ToolAction {
   label: string;
-  href: string;
   icon: LucideIcon;
   color: string;
+  href?: string;
+  onClick?: () => void;
+  active?: boolean;
+  disabled?: boolean;
 }
 
-const addCourse: ToolAction = { label: "Ajouter un cours", href: `${routes.agenda}?action=add`, icon: CalendarPlus, color: "var(--accent-sky)" };
-const importSchedule: ToolAction = { label: "Importer mon emploi du temps", href: `${routes.agenda}?action=import`, icon: FileUp, color: "var(--accent-sun)" };
-const agenda: ToolAction = { label: "Ouvrir l'agenda", href: routes.agenda, icon: CalendarDays, color: "var(--accent-sky)" };
-const notes: ToolAction = { label: "Mes notes", href: routes.notes, icon: NotebookPen, color: "var(--accent-rose)" };
-const assistant: ToolAction = { label: "Assistant IA", href: routes.assistant, icon: MessageSquare, color: "var(--accent-lilac)" };
-const subjects: ToolAction = { label: "Mes matières", href: routes.subjects, icon: BookOpen, color: "var(--accent-mint)" };
-const progress: ToolAction = { label: "Progression", href: routes.progress, icon: TrendingUp, color: "var(--accent-mint)" };
-const exercises: ToolAction = { label: "Exercices", href: routes.exercises, icon: Plus, color: "var(--accent-sun)" };
+const useToolbarStore = create<{ actions: ToolAction[] | null }>(() => ({ actions: null }));
 
-const ACTIONS: Record<string, ToolAction[]> = {
-  [routes.home]: [addCourse, importSchedule, notes, assistant, subjects],
-  [routes.agenda]: [addCourse, importSchedule, assistant, notes],
-  [routes.subjects]: [agenda, notes, assistant, progress],
-  [routes.exercises]: [subjects, assistant, progress],
-  [routes.progress]: [exercises, subjects, assistant],
-  [routes.notes]: [subjects, assistant, agenda],
-};
+export const useToolbarVisible = () => useToolbarStore((s) => s.actions !== null);
 
-export const toolbarVisibleOn = (pathname: string) => pathname in ACTIONS;
+/** Déclare les actions de l'écran courant ; null tant qu'elles ne sont pas disponibles. La barre disparaît avec l'écran. */
+export function useModuleToolbar(actions: ToolAction[] | null) {
+  useEffect(() => {
+    useToolbarStore.setState({ actions });
+  });
+  useEffect(() => () => useToolbarStore.setState({ actions: null }), []);
+}
+
+/** Onglet de la maquette Figma (760 × 88), ancré au bas du panneau principal. */
+const TAB_PATH = "M0 87.91C0 87.87.023 87.84.054 87.83 17.523 83.82 32.858 71.713 43.709 54.576 60.095 28.699 80.305 0 106.002 0L667.32 0C694.26 0 715.09 31.481 731.76 59.146 739.16 71.43 748.82 81.29 759.91 87.64 759.97 87.67 760 87.74 760 87.81 760 87.92 759.94 88 759.86 88L.065 88C.029 88 0 87.96 0 87.91Z";
+
+const BUTTON = "group flex h-10 min-w-10 items-center justify-center rounded-full px-3 text-sm font-medium text-on-pastel ring-1 ring-black/10 transition-transform hover:-translate-y-0.5 focus-visible:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:translate-y-0";
+/** Le libellé reste dans le DOM : il est lu par les lecteurs d'écran même replié. */
+const LABEL = "max-w-0 overflow-hidden whitespace-nowrap transition-[max-width,margin] duration-200 group-hover:ml-1.5 group-hover:max-w-28 group-focus-visible:ml-1.5 group-focus-visible:max-w-28";
 
 export function FloatingToolbar() {
-  const actions = ACTIONS[usePathname()];
+  const actions = useToolbarStore((s) => s.actions);
   if (!actions) return null;
   return (
-    <nav aria-label="Actions rapides" className="pointer-events-none sticky bottom-4 z-20 flex justify-center pb-1">
-      <ul className="niala-toolbar pointer-events-auto flex items-center gap-1.5 rounded-full bg-[#101012] p-1.5 shadow-lg">
+    <nav aria-label="Actions de l'espace de travail" className="absolute bottom-0 left-1/2 z-40 h-[65px] w-[min(560px,calc(100%-16px))] -translate-x-1/2">
+      <svg aria-hidden viewBox="0 0 760 88" preserveAspectRatio="none" className="absolute inset-0 h-full w-full">
+        <path d={TAB_PATH} fill="var(--niala-accent)" />
+      </svg>
+      <ul className="relative flex h-full items-center justify-center gap-1.5 pt-1 sm:gap-2.5">
         {actions.map((a) => {
           const Icon = a.icon;
+          const style = { background: a.color };
+          const cls = cn(BUTTON, a.active && "ring-2 ring-[var(--on-pastel)]");
+          const body = (
+            <>
+              <Icon className="h-4 w-4 shrink-0" aria-hidden />
+              <span className={cn(LABEL, a.active && "ml-1.5 max-w-28")}>{a.label}</span>
+            </>
+          );
           return (
             <li key={a.label}>
-              <Link href={a.href} aria-label={a.label} title={a.label} className="flex h-9 w-9 items-center justify-center rounded-full text-black transition-transform hover:-translate-y-0.5" style={{ background: a.color }}>
-                <Icon className="h-4 w-4" aria-hidden />
-              </Link>
+              {a.href ? (
+                <Link href={a.href} className={cls} style={style}>{body}</Link>
+              ) : (
+                <button type="button" onClick={a.onClick} disabled={a.disabled} aria-pressed={a.active} className={cls} style={style}>{body}</button>
+              )}
             </li>
           );
         })}

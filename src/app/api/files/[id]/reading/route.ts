@@ -1,9 +1,18 @@
 import { z } from "zod";
 import { requireUser } from "@/lib/auth";
 import { handle, limit, readJson } from "@/lib/api-helpers";
-import { recordReading } from "@/server/services/documents";
+import { recordOpening, recordReading } from "@/server/services/documents";
 
 const schema = z.object({ page: z.number().int().min(1).max(100_000) });
+
+/** Ouverture du document dans le lecteur : met à jour sa date de dernière consultation. */
+export async function POST(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+  return handle(async () => {
+    const user = await requireUser();
+    limit(`reading:${user.id}`, 120, 60_000);
+    return recordOpening(user.id, (await ctx.params).id);
+  });
+}
 
 /** Mémorise la dernière page lue (reprise de lecture). */
 export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }) {

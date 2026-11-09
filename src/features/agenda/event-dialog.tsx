@@ -20,7 +20,7 @@ export interface EventValues {
   date: string;
   startMinutes: number;
   endMinutes: number;
-  recurrence: "NONE" | "WEEKLY";
+  recurrence: "NONE" | "WEEKLY" | "DATES";
   until: string | null;
   weekPattern: "ALL" | "A" | "B";
   room: string | null;
@@ -43,7 +43,9 @@ const NEW_SUBJECT = "__new__";
 
 export function EventDialog({ state, subjects, onClose, onSubmit, onDelete, onDuplicate, onSubjectCreated }: Props) {
   const o = state.mode === "edit" ? state.occurrence : null;
-  const recurringEvent = o?.recurrence === "WEEKLY";
+  const recurringEvent = !!o && o.recurrence !== "NONE";
+  /** Congé ou période sur des journées entières : ni heures, ni répétition. */
+  const wholeDay = !!o?.allDay && o.startMinutes === 0 && o.endMinutes === 1440;
   const [title, setTitle] = useState(o?.title ?? "");
   const [subjectId, setSubjectId] = useState(o?.subjectId ?? "");
   const [newSubject, setNewSubject] = useState("");
@@ -74,8 +76,8 @@ export function EventDialog({ state, subjects, onClose, onSubmit, onDelete, onDu
   };
 
   async function save() {
-    const startMinutes = fromTimeInput(start);
-    const endMinutes = fromTimeInput(end);
+    const startMinutes = wholeDay ? o.startMinutes : fromTimeInput(start);
+    const endMinutes = wholeDay ? o.endMinutes : fromTimeInput(end);
     if (startMinutes === null || endMinutes === null) return setError("Indiquez une heure de début et de fin.");
     if (!date) return setError("Indiquez une date.");
     await run(async () => {
@@ -91,7 +93,7 @@ export function EventDialog({ state, subjects, onClose, onSubmit, onDelete, onDu
         }
       }
       await onSubmit(
-        { title: title.trim(), subjectId: sid, kind, date, startMinutes, endMinutes, recurrence: weekly ? "WEEKLY" : "NONE", until: weekly && until ? until : null, weekPattern: weekly ? weekPattern : "ALL", room: room.trim() || null, teacher: teacher.trim() || null, description: description.trim() || null },
+        { title: title.trim(), subjectId: sid, kind, date, startMinutes, endMinutes, recurrence: o?.recurrence === "DATES" ? "DATES" : weekly ? "WEEKLY" : "NONE", until: weekly && until ? until : null, weekPattern: weekly ? weekPattern : "ALL", room: room.trim() || null, teacher: teacher.trim() || null, description: description.trim() || null },
         recurringEvent ? scope : "all"
       );
     });
@@ -102,7 +104,7 @@ export function EventDialog({ state, subjects, onClose, onSubmit, onDelete, onDu
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{o ? "Modifier le cours" : "Ajouter un cours"}</DialogTitle>
-          <DialogDescription>Horaires libres entre 07:30 et 18:30.</DialogDescription>
+          <DialogDescription>{o?.code ? `Code ${o.code}${o.sessionType ? ` · ${o.sessionType}` : ""}${o.dates?.length ? ` · ${o.dates.length} séances datées` : ""}` : "Les horaires sont libres."}</DialogDescription>
         </DialogHeader>
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1 sm:col-span-2">
@@ -130,14 +132,14 @@ export function EventDialog({ state, subjects, onClose, onSubmit, onDelete, onDu
             <Label htmlFor="ev-date">Date</Label>
             <Input id="ev-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
           </div>
-          <div className="space-y-1">
+          {!wholeDay && <div className="space-y-1">
             <Label htmlFor="ev-start">Début</Label>
-            <Input id="ev-start" type="time" min="07:30" max="18:30" step={300} value={start} onChange={(e) => setStart(e.target.value)} />
-          </div>
-          <div className="space-y-1">
+            <Input id="ev-start" type="time" step={300} value={start} onChange={(e) => setStart(e.target.value)} />
+          </div>}
+          {!wholeDay && <div className="space-y-1">
             <Label htmlFor="ev-end">Fin</Label>
-            <Input id="ev-end" type="time" min="07:30" max="18:30" step={300} value={end} onChange={(e) => setEnd(e.target.value)} />
-          </div>
+            <Input id="ev-end" type="time" step={300} value={end} onChange={(e) => setEnd(e.target.value)} />
+          </div>}
           <div className="space-y-1">
             <Label htmlFor="ev-room">Salle</Label>
             <Input id="ev-room" value={room} maxLength={120} onChange={(e) => setRoom(e.target.value)} />
@@ -150,11 +152,13 @@ export function EventDialog({ state, subjects, onClose, onSubmit, onDelete, onDu
             <Label htmlFor="ev-desc">Description</Label>
             <Textarea id="ev-desc" rows={2} maxLength={2000} value={description} onChange={(e) => setDescription(e.target.value)} />
           </div>
-          <label className="flex items-center justify-between gap-3 rounded-lg border p-3 text-sm sm:col-span-2">
-            Répéter chaque semaine
-            <Switch checked={weekly} onCheckedChange={setWeekly} aria-label="Répéter chaque semaine" />
-          </label>
-          {weekly && (
+          {!o?.allDay && o?.recurrence !== "DATES" && (
+            <label className="flex items-center justify-between gap-3 rounded-lg border p-3 text-sm sm:col-span-2">
+              Répéter chaque semaine
+              <Switch checked={weekly} onCheckedChange={setWeekly} aria-label="Répéter chaque semaine" />
+            </label>
+          )}
+          {weekly && o?.recurrence !== "DATES" && (
             <>
               <div className="space-y-1">
                 <Label htmlFor="ev-week">Semaines</Label>

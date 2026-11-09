@@ -3,9 +3,10 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { ChevronRight, FileText, Loader2, Play, RotateCcw, Trash2 } from "lucide-react";
+import { CalendarPlus, ChevronRight, FileText, Loader2, Play, RotateCcw, Trash2 } from "lucide-react";
 import { api } from "@/lib/client-api";
 import { routes } from "@/config/routes";
+import { planHref } from "@/features/agenda/types";
 import { DIFFICULTY_LABEL, TYPE_LABEL, type QuestionType } from "@/server/domain/exercise-types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -82,7 +83,12 @@ export default function ExerciseView({ subjectId, exerciseId }: { subjectId: str
         <ChevronRight className="h-3.5 w-3.5" aria-hidden />
         <Link href={`${routes.subject(subjectId)}/exercices`} className="hover:text-foreground">Exercices</Link>
       </nav>
-      <h1 className="typo-h1">{ex.title}</h1>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <h1 className="typo-h1">{ex.title}</h1>
+        <Button asChild variant="outline" size="sm" className="gap-1.5">
+          <Link href={planHref({ title: ex.title, type: "EXERCICE", subjectId, exerciseId })}><CalendarPlus className="h-4 w-4" aria-hidden /> Planifier</Link>
+        </Button>
+      </div>
       <p className="typo-subtitle mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
         {ex.document ? (
           <Link href={`${routes.subject(subjectId)}/documents/${ex.document.id}`} className="inline-flex items-center gap-1 text-primary hover:underline"><FileText className="h-3.5 w-3.5" aria-hidden /> {ex.document.name}{ex.versionNumber ? ` (version ${ex.versionNumber})` : ""}</Link>

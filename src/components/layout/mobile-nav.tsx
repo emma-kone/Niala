@@ -2,43 +2,68 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { GraduationCap, LogOut } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { APP_NAV, isNavActive } from "@/config/navigation";
+import { useState } from "react";
+import { GraduationCap, LogOut, Menu } from "lucide-react";
+import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { NAV_GROUPS, isNavActive } from "@/config/navigation";
 import { cn } from "@/lib/utils";
+import { useAppStore } from "@/store/app-store";
 
+/** En dessous de 1024 px : une barre compacte et un menu burger qui reprend la navigation complète. */
 export function MobileNav({ onLogout }: { onLogout: () => void }) {
   const pathname = usePathname();
+  const user = useAppStore((s) => s.user);
+  const [open, setOpen] = useState(false);
 
   return (
-    <header className="sticky top-0 z-20 bg-sidebar text-sidebar-foreground md:hidden">
-      <div className="flex items-center justify-between px-4 py-2.5">
-        <div className="flex items-center gap-2">
-          <GraduationCap className="h-5 w-5" aria-hidden />
-          <span className="font-semibold">Niala</span>
-        </div>
-        <Button variant="ghost" size="sm" onClick={onLogout}>
-          <LogOut className="h-4 w-4" aria-hidden />
-        </Button>
-      </div>
-      <nav className="flex gap-1 overflow-x-auto px-2 pb-2" aria-label="Navigation mobile">
-        {APP_NAV.map((item) => {
-          const Icon = item.icon;
-          const active = isNavActive(pathname, item);
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={cn(
-                "flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium",
-                active ? "bg-white font-medium text-black" : "bg-sidebar-accent text-sidebar-foreground/80",
-              )}
-            >
-              <Icon className="h-3.5 w-3.5" aria-hidden /> {item.label}
-            </Link>
-          );
-        })}
-      </nav>
+    <header className="sticky top-0 z-20 flex items-center gap-3 bg-sidebar px-3 py-2 text-sidebar-foreground lg:hidden">
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetTrigger asChild>
+          <button type="button" aria-label="Ouvrir le menu" className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--niala-accent)] text-[var(--niala-accent-foreground)]">
+            <Menu className="h-5 w-5" aria-hidden />
+          </button>
+        </SheetTrigger>
+        <SheetContent side="left" className="flex w-[280px] flex-col gap-0 border-0 bg-sidebar p-0 text-sidebar-foreground">
+          <SheetTitle className="flex items-center gap-2.5 px-6 py-5 text-xl font-bold tracking-tight text-sidebar-foreground">
+            <GraduationCap className="h-6 w-6" aria-hidden /> Niala
+          </SheetTitle>
+          <nav aria-label="Navigation principale" className="flex-1 space-y-4 overflow-y-auto px-3 pb-3">
+            {NAV_GROUPS.map((group, n) => (
+              <div key={group.label}>
+                {n > 0 && <div className="mx-2 mb-3 border-t border-sidebar-border" aria-hidden />}
+                <p className="mb-1.5 px-3 text-[11px] text-sidebar-foreground/70">{group.label}</p>
+                <ul className="space-y-0.5">
+                  {group.items.map((item) => {
+                    const Icon = item.icon;
+                    const active = isNavActive(pathname, item);
+                    return (
+                      <li key={item.href}>
+                        <Link
+                          href={item.href}
+                          aria-current={active ? "page" : undefined}
+                          onClick={() => setOpen(false)}
+                          className={cn("flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm", active ? "bg-[var(--nav-active)] font-medium text-[var(--nav-active-foreground)]" : "text-sidebar-foreground/85 hover:bg-sidebar-accent")}
+                        >
+                          <Icon className="h-4 w-4 shrink-0" aria-hidden /> {item.label}
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ))}
+          </nav>
+          <div className="m-3 flex items-center gap-2 rounded-2xl bg-sidebar-accent p-2">
+            <p className="min-w-0 flex-1 truncate pl-2 text-xs">{user?.email}</p>
+            <button type="button" onClick={onLogout} aria-label="Se déconnecter" className="rounded-lg p-1.5 hover:bg-sidebar-border">
+              <LogOut className="h-4 w-4" aria-hidden />
+            </button>
+          </div>
+        </SheetContent>
+      </Sheet>
+      <span className="flex items-center gap-2 font-semibold">
+        <GraduationCap className="h-5 w-5" aria-hidden /> Niala
+      </span>
     </header>
   );
 }

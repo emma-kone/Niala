@@ -2,9 +2,12 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { FileText, FolderOpen, MoreVertical, Pencil, Plus, Trash2 } from "lucide-react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { FileText, FolderOpen, MoreVertical, Pencil, Plus, Sparkles, Trash2 } from "lucide-react";
 import { api } from "@/lib/client-api";
 import { routes } from "@/config/routes";
+import { SUBJECT_ICON_CHOICES, SubjectGlyph, SubjectIcon, subjectIconLabel } from "@/components/subject-icon";
+import { isSubjectIconId, suggestSubjectIcon, type SubjectIconId } from "@/server/domain/subject-icon";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,6 +30,8 @@ interface SubjectDto {
   id: string;
   name: string;
   color: string;
+  icon: string | null;
+  iconAuto: boolean;
   updatedAt: string;
   _count: { documents: number };
 }
@@ -42,6 +47,15 @@ export default function SubjectsView() {
   const [subjects, setSubjects] = useState<SubjectDto[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ subject: SubjectDto | null } | null>(null);
+  // Action demandée depuis la barre d'outils du module.
+  const router = useRouter();
+  const pathname = usePathname();
+  const action = useSearchParams().get("action");
+  useEffect(() => {
+    if (action !== "new") return;
+    setEditing({ subject: null });
+    router.replace(pathname);
+  }, [action, pathname, router]);
   const [deleting, setDeleting] = useState<{ subject: SubjectDto; documents: number } | null>(null);
 
   const load = useCallback(async () => {
@@ -126,7 +140,10 @@ export default function SubjectsView() {
           {subjects.map((s) => (
             <li key={s.id} className="group relative rounded-xl border bg-card transition-shadow hover:shadow-md">
               <Link href={routes.subject(s.id)} className="block rounded-xl p-5 focus-visible:outline-2 focus-visible:outline-ring">
-                <span className="mb-4 block h-1.5 w-12 rounded-full" style={{ backgroundColor: s.color }} aria-hidden />
+                <span className="mb-4 flex items-center gap-3">
+                  <SubjectIcon icon={s.icon} name={s.name} color={s.color} size="md" />
+                  <span className="block h-1.5 w-12 rounded-full" style={{ backgroundColor: s.color }} aria-hidden />
+                </span>
                 <h2 className="typo-h3 pr-8">{s.name}</h2>
                 <p className="typo-meta mt-2 flex items-center gap-1.5">
                   <FileText className="h-3.5 w-3.5" aria-hidden />
@@ -141,7 +158,7 @@ export default function SubjectsView() {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem onSelect={() => setEditing({ subject: s })}>
-                    <Pencil className="mr-2 h-4 w-4" aria-hidden /> Renommer / couleur
+                    <Pencil className="mr-2 h-4 w-4" aria-hidden /> Nom, couleur et icône
                   </DropdownMenuItem>
                   <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => void askDelete(s)}>
                     <Trash2 className="mr-2 h-4 w-4" aria-hidden /> Supprimer
@@ -196,6 +213,8 @@ function SubjectDialog({
 }) {
   const [name, setName] = useState("");
   const [color, setColor] = useState(PALETTE[0]);
+  /** null : icône déduite automatiquement de l'intitulé. */
+  const [icon, setIcon] = useState<SubjectIconId | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -203,9 +222,12 @@ function SubjectDialog({
     if (state) {
       setName(state.subject?.name ?? "");
       setColor(state.subject?.color ?? PALETTE[Math.floor(Math.random() * PALETTE.length)]);
+      setIcon(state.subject && !state.subject.iconAuto && isSubjectIconId(state.subject.icon) ? state.subject.icon : null);
       setError(null);
     }
   }, [state]);
+
+  const automatic = suggestSubjectIcon(name);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -213,8 +235,8 @@ function SubjectDialog({
     setBusy(true);
     setError(null);
     try {
-      if (state?.subject) await api.patch(`/api/subjects/${state.subject.id}`, { name, color });
-      else await api.post("/api/subjects", { name, color });
+      if (state?.subject) await api.patch(`/api/subjects/${state.subject.id}`, { name, color, icon });
+      else await api.post("/api/subjects", { name, color, icon });
       await onSaved();
     } catch (err) {
       setError(errorText(err, "Enregistrement impossible."));
@@ -250,6 +272,21 @@ function SubjectDialog({
                 />
               ))}
             </div>
+          </fieldset>
+          <fieldset className="space-y-2">
+            <legend className="text-sm font-medium">Icône</legend>
+            <div className="grid max-h-40 grid-cols-8 gap-1.5 overflow-y-auto pr-1 sm:grid-cols-10">
+              <button type="button" onClick={() => setIcon(null)} aria-pressed={icon === null} aria-label={`Automatique : ${subjectIconLabel(automatic)}`} title={`Automatique : ${subjectIconLabel(automatic)}`} className="relative flex h-9 w-9 items-center justify-center rounded-xl border border-dashed aria-pressed:border-solid aria-pressed:border-foreground">
+                <SubjectGlyph id={automatic} className="h-4 w-4" color="var(--foreground)" />
+                <Sparkles className="absolute -right-1 -top-1 h-3 w-3 text-[var(--niala-accent)]" aria-hidden />
+              </button>
+              {SUBJECT_ICON_CHOICES.map((id) => (
+                <button key={id} type="button" onClick={() => setIcon(id)} aria-pressed={icon === id} aria-label={subjectIconLabel(id)} title={subjectIconLabel(id)} className="flex h-9 w-9 items-center justify-center rounded-xl border border-transparent bg-muted/50 hover:bg-muted aria-pressed:border-foreground">
+                  <SubjectGlyph id={id} className="h-4 w-4" color="var(--foreground)" />
+                </button>
+              ))}
+            </div>
+            <p className="typo-meta">{icon === null ? `Choisie d'après l'intitulé : ${subjectIconLabel(automatic)}.` : `Choisie par vous : ${subjectIconLabel(icon)}.`}</p>
           </fieldset>
           {error && (
             <p role="alert" className="text-sm font-medium text-destructive">

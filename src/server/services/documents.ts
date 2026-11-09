@@ -357,7 +357,7 @@ export async function explorer(userId: string, query: ExplorerQuery) {
     .sort((a, b) => a.name.localeCompare(b.name, "fr", { sensitivity: "base", numeric: true }));
 
   return {
-    subject: { id: subject.id, name: subject.name, color: subject.color },
+    subject: { id: subject.id, name: subject.name, color: subject.color, icon: subject.icon },
     folderId: query.folderId,
     path: pathTo(nodes, query.folderId).map((f) => ({ id: f.id, name: f.name })),
     folders: visibleFolders,
@@ -431,7 +431,6 @@ export async function openOriginal(userId: string, id: string, versionNumber?: n
   if (!version.storageKey || version.originalMissing) {
     throw new ApiHttpError("Le fichier original de ce document n'a pas été conservé. Réimportez-le pour l'ouvrir.", 410);
   }
-  db.document.update({ where: { id }, data: { lastOpenedAt: new Date() } }).catch(() => undefined);
   return { doc, version, key: version.storageKey };
 }
 
@@ -448,6 +447,19 @@ export async function readingText(userId: string, id: string) {
     select: { idx: true, page: true, charStart: true, charEnd: true, content: true },
   });
   return { pages: stitchChunks(chunks) };
+}
+
+/** Derniers documents ouverts : base des suggestions et du choix de contexte de la discussion. */
+export async function listRecentDocuments(userId: string, take = 6) {
+  const docs = await db.document.findMany({ where: { userId, lastOpenedAt: { not: null }, subjectId: { not: null } }, orderBy: [{ lastOpenedAt: "desc" }, { id: "asc" }], take, select: { id: true, name: true, subjectId: true, subject: { select: { name: true, color: true, icon: true } } } });
+  return docs.map((d) => ({ id: d.id, name: d.name, subjectId: d.subjectId!, subjectName: d.subject?.name ?? "", subjectColor: d.subject?.color ?? "#8b5cf6", subjectIcon: d.subject?.icon ?? null }));
+}
+
+/** Une ouverture réelle du document dans le lecteur : il remonte en tête des derniers cours consultés. */
+export async function recordOpening(userId: string, id: string) {
+  const res = await db.document.updateMany({ where: { id, userId }, data: { lastOpenedAt: new Date() } });
+  if (res.count === 0) throw new ApiHttpError("Document introuvable.", 404);
+  return { ok: true };
 }
 
 /** Mémorise la page lue et crée/met à jour l'activité « lecture » (reprise depuis le tableau de bord). */

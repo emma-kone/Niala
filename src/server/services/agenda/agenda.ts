@@ -1,7 +1,8 @@
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { ApiHttpError } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
-import { addDays, breakOverlap, daysBetween, expandEvents, findConflicts, formatMinutes, isDate, occurrenceDates, validateTimes, type Occurrence, type Recurrence, type ScheduleEventRecord, type ScheduleOverrideRecord, type WeekPattern } from "@/server/domain/schedule";
+import { addDays, breakOverlap, type BreakRecord, daysBetween, expandEvents, findConflicts, formatMinutes, isDate, occurrenceDates, validateTimes, type Occurrence, type Recurrence, type ScheduleEventRecord, type ScheduleOverrideRecord, type WeekPattern } from "@/server/domain/schedule";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Agenda : source unique des cours, utilisée par le calendrier, le mini-emploi du temps et les suggestions.
@@ -15,7 +16,7 @@ const dateField = z.string().refine(isDate, "Date invalide.");
 const minutes = z.number().int().min(0).max(1440);
 const optionalText = (max: number) => z.string().trim().max(max).nullable().optional().transform((v) => v || null);
 const pattern = z.enum(["ALL", "A", "B"]);
-const kind = z.enum(["COURSE", "REVISION", "EVENT"]);
+const kind = z.enum(["COURSE", "REVISION", "EVENT", "EXAM", "SPECIAL", "HOLIDAY"]);
 
 export const createEventSchema = z.object({
   title: z.string().trim().max(160).optional(),
@@ -27,6 +28,8 @@ export const createEventSchema = z.object({
   recurrence: z.enum(["NONE", "WEEKLY"]).default("NONE"),
   until: dateField.nullable().optional(),
   weekPattern: pattern.default("ALL"),
+  sessionType: optionalText(20),
+  code: optionalText(40),
   room: optionalText(120),
   teacher: optionalText(120),
   groupName: optionalText(120),
@@ -42,9 +45,10 @@ export const patchEventSchema = z.object({
   date: dateField.optional(),
   startMinutes: minutes.optional(),
   endMinutes: minutes.optional(),
-  recurrence: z.enum(["NONE", "WEEKLY"]).optional(),
+  recurrence: z.enum(["NONE", "WEEKLY", "DATES"]).optional(),
   until: dateField.nullable().optional(),
   weekPattern: pattern.optional(),
+  sessionType: z.string().trim().max(20).nullable().optional(),
   room: z.string().trim().max(120).nullable().optional(),
   teacher: z.string().trim().max(120).nullable().optional(),
   description: z.string().trim().max(2000).nullable().optional(),
@@ -54,7 +58,8 @@ export const patchEventSchema = z.object({
 type EventRow = Awaited<ReturnType<typeof loadEvents>>[number];
 
 const loadEvents = (userId: string) => db.scheduleEvent.findMany({ where: { userId }, include: { overrides: true } });
-const toRecord = (e: EventRow): ScheduleEventRecord => ({ ...e, recurrence: e.recurrence as Recurrence, weekPattern: e.weekPattern as WeekPattern });
+const toRecord = (e: EventRow): ScheduleEventRecord => ({ ...e, recurrence: e.recurrence as Recurrence, weekPattern: e.weekPattern as WeekPattern, dates: e.dates as string[] | null });
+const loadBreaks = (userId: string): Promise<BreakRecord[]> => db.scheduleBreak.findMany({ where: { userId } });
 
 export async function weekSwapOf(userId: string): Promise<boolean> {
   const s = await db.userSettings.findUnique({ where: { userId }, select: { scheduleWeekSwap: true } });
@@ -67,10 +72,10 @@ function expand(rows: EventRow[], from: string, to: string, swap: boolean): Occu
 
 /** Séances d'une période avec leur matière. */
 export async function occurrencesBetween(userId: string, from: string, to: string) {
-  const [rows, swap, subjects] = await Promise.all([loadEvents(userId), weekSwapOf(userId), db.subject.findMany({ where: { userId }, select: { id: true, name: true, color: true }, orderBy: { name: "asc" } })]);
+  const [rows, swap, subjects, breaks] = await Promise.all([loadEvents(userId), weekSwapOf(userId), db.subject.findMany({ where: { userId }, select: { id: true, name: true, color: true, icon: true }, orderBy: { name: "asc" } }), loadBreaks(userId)]);
   const byId = new Map(subjects.map((s) => [s.id, s]));
   const occurrences = expand(rows, from, to, swap).map((o) => ({ ...o, subject: o.subjectId ? (byId.get(o.subjectId) ?? null) : null }));
-  return { occurrences, subjects, weekSwap: swap };
+  return { occurrences, subjects, weekSwap: swap, breaks };
 }
 
 export async function listRange(userId: string, from: string, to: string) {
@@ -94,20 +99,20 @@ interface Slot {
 const describe = (o: Pick<Occurrence, "title" | "startMinutes" | "endMinutes" | "date">) => `« ${o.title} » (${o.date}, ${formatMinutes(o.startMinutes)}–${formatMinutes(o.endMinutes)})`;
 
 /** Refuse un créneau sur une pause ou sur un autre cours, sauf confirmation explicite de l'étudiant (`force`). */
-function assertFree(slots: Slot[], rows: EventRow[], swap: boolean, ignore: (o: Occurrence) => boolean, force: boolean | undefined) {
+function assertFree(slots: Slot[], rows: EventRow[], breaks: BreakRecord[], swap: boolean, ignore: (o: Occurrence) => boolean, force: boolean | undefined) {
   if (force || !slots.length) return;
   const problems: string[] = [];
-  const pause = slots.map((s) => breakOverlap(s.startMinutes, s.endMinutes)).find(Boolean);
-  if (pause) problems.push(`Ce créneau empiète sur la période « ${pause.label} » (${formatMinutes(pause.start)}–${formatMinutes(pause.end)}).`);
+  const pause = slots.map((s) => breakOverlap(s.startMinutes, s.endMinutes, breaks, s.date)).find(Boolean);
+  if (pause) problems.push(`Ce créneau empiète sur la période « ${pause.label} » (${formatMinutes(pause.startMinutes)}–${formatMinutes(pause.endMinutes)}).`);
   const dates = slots.map((s) => s.date).sort();
-  const others = expand(rows, dates[0], dates[dates.length - 1], swap).filter((o) => !ignore(o));
+  const others = expand(rows, dates[0], dates[dates.length - 1], swap).filter((o) => !o.allDay && !ignore(o));
   const conflict = slots.flatMap((s) => findConflicts(s, others))[0];
   if (conflict) problems.push(`Ce créneau chevauche ${describe(conflict)}.`);
   if (problems.length) throw new ApiHttpError(problems.join(" "), 409, { confirmable: true });
 }
 
-function seriesSlots(e: Pick<ScheduleEventRecord, "date" | "recurrence" | "until" | "weekPattern" | "startMinutes" | "endMinutes">, swap: boolean): Slot[] {
-  return occurrenceDates(e, e.date, addDays(e.date, SERIES_HORIZON_DAYS), swap).map((date) => ({ date, startMinutes: e.startMinutes, endMinutes: e.endMinutes }));
+function seriesSlots(e: Pick<ScheduleEventRecord, "date" | "recurrence" | "until" | "weekPattern" | "startMinutes" | "endMinutes"> & { dates?: string[] | null }, swap: boolean): Slot[] {
+  return occurrenceDates(e, e.date, e.dates?.length ? e.dates[e.dates.length - 1] : addDays(e.date, SERIES_HORIZON_DAYS), swap).map((date) => ({ date, startMinutes: e.startMinutes, endMinutes: e.endMinutes }));
 }
 
 function assertTimes(start: number, end: number) {
@@ -121,10 +126,10 @@ export async function createEvent(userId: string, input: z.infer<typeof createEv
   const subject = input.subjectId ? await requireOwnedSubject(userId, input.subjectId) : null;
   const title = input.title?.trim() || subject?.name;
   if (!title) throw new ApiHttpError("Indiquez un titre ou choisissez une matière.", 422);
-  const [rows, swap] = await Promise.all([loadEvents(userId), weekSwapOf(userId)]);
+  const [rows, swap, breaks] = await Promise.all([loadEvents(userId), weekSwapOf(userId), loadBreaks(userId)]);
   const { force, ...data } = input;
   const recurrence = data.recurrence;
-  assertFree(seriesSlots({ ...data, recurrence, until: data.until ?? null }, swap), rows, swap, () => false, force);
+  assertFree(seriesSlots({ ...data, recurrence, until: data.until ?? null }, swap), rows, breaks, swap, () => false, force);
   return db.scheduleEvent.create({ data: { ...data, title, userId, subjectId: subject?.id ?? null, until: recurrence === "WEEKLY" ? (data.until ?? null) : null, weekPattern: recurrence === "WEEKLY" ? data.weekPattern : "ALL" } });
 }
 
@@ -137,7 +142,7 @@ async function ownedEvent(userId: string, id: string) {
 export async function updateEvent(userId: string, id: string, patch: z.infer<typeof patchEventSchema>) {
   const event = await ownedEvent(userId, id);
   if (patch.subjectId) await requireOwnedSubject(userId, patch.subjectId);
-  const [rows, swap] = await Promise.all([loadEvents(userId), weekSwapOf(userId)]);
+  const [rows, swap, breaks] = await Promise.all([loadEvents(userId), weekSwapOf(userId), loadBreaks(userId)]);
   const override = event.overrides.find((o) => o.date === patch.occurrenceDate);
   const current = {
     date: override?.newDate ?? patch.occurrenceDate,
@@ -149,9 +154,9 @@ export async function updateEvent(userId: string, id: string, patch: z.infer<typ
   const date = patch.date ?? current.date;
   assertTimes(startMinutes, endMinutes);
 
-  const editOne = patch.scope === "occurrence" && event.recurrence === "WEEKLY";
+  const editOne = patch.scope === "occurrence" && event.recurrence !== "NONE";
   if (editOne) {
-    assertFree([{ date, startMinutes, endMinutes }], rows, swap, (o) => o.key === `${event.id}:${patch.occurrenceDate}`, patch.force);
+    assertFree([{ date, startMinutes, endMinutes }], rows, breaks, swap, (o) => o.key === `${event.id}:${patch.occurrenceDate}`, patch.force);
     const data = {
       cancelled: false,
       newDate: date === patch.occurrenceDate ? null : date,
@@ -177,10 +182,13 @@ export async function updateEvent(userId: string, id: string, patch: z.infer<typ
     recurrence,
     until: patch.until === undefined ? event.until : patch.until,
     weekPattern: (patch.weekPattern ?? event.weekPattern) as WeekPattern,
+    dates: ((event.dates as string[] | null) ?? null)?.map((d) => addDays(d, shift)) ?? null,
   };
-  assertFree(seriesSlots(updated, swap), rows, swap, (o) => o.eventId === event.id, patch.force);
+  assertFree(seriesSlots(updated, swap), rows, breaks, swap, (o) => o.eventId === event.id, patch.force || event.allDay);
   const fields = {
     ...updated,
+    dates: updated.dates ?? Prisma.DbNull,
+    ...(patch.sessionType !== undefined ? { sessionType: patch.sessionType || null } : {}),
     ...(patch.title ? { title: patch.title } : {}),
     ...(patch.subjectId !== undefined ? { subjectId: patch.subjectId } : {}),
     ...(patch.room !== undefined ? { room: patch.room || null } : {}),
@@ -201,7 +209,7 @@ export async function updateEvent(userId: string, id: string, patch: z.infer<typ
 
 export async function deleteEvent(userId: string, id: string, scope: "all" | "occurrence", occurrenceDate: string | null) {
   const event = await ownedEvent(userId, id);
-  if (scope === "occurrence" && event.recurrence === "WEEKLY") {
+  if (scope === "occurrence" && event.recurrence !== "NONE") {
     if (!occurrenceDate || !isDate(occurrenceDate)) throw new ApiHttpError("Date de la séance manquante.", 422);
     await db.scheduleOverride.upsert({ where: { eventId_date: { eventId: event.id, date: occurrenceDate } }, create: { eventId: event.id, date: occurrenceDate, cancelled: true }, update: { cancelled: true } });
     return { ok: true };

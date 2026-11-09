@@ -108,7 +108,7 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
   async function go(position: number) {
     await flushAll();
     setCurrent(position);
-    window.scrollTo({ top: 0 });
+    document.querySelector("main")?.scrollTo({ top: 0 });
   }
 
   async function submit() {

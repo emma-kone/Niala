@@ -10,6 +10,7 @@ import {
   ClipboardList,
   Download,
   ExternalLink,
+  CalendarPlus,
   FileText,
   Folder,
   FolderInput,
@@ -24,6 +25,8 @@ import {
   X,
 } from "lucide-react";
 import { api } from "@/lib/client-api";
+import { SubjectIcon } from "@/components/subject-icon";
+import { planHref } from "@/features/agenda/types";
 import { routes } from "@/config/routes";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -269,10 +272,13 @@ export default function SubjectFilesView({ subjectId }: { subjectId: string }) {
 
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <h1 className="typo-h1 flex items-center gap-3">
-          {data && <span className="h-3 w-3 rounded-full" style={{ backgroundColor: data.subject.color }} aria-hidden />}
+          {data && <SubjectIcon icon={data.subject.icon} name={data.subject.name} color={data.subject.color} />}
           {data?.path.length ? data.path[data.path.length - 1].name : (data?.subject.name ?? <Skeleton className="h-8 w-48" />)}
         </h1>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <Button asChild variant="outline" className="gap-2" disabled={!data}>
+            <a href={planHref({ subjectId: data?.subject.id })}><CalendarPlus className="h-4 w-4" aria-hidden /> Tâche</a>
+          </Button>
           <Button variant="outline" className="gap-2" onClick={() => setNewFolder(true)} disabled={!data}>
             <FolderPlus className="h-4 w-4" aria-hidden /> Nouveau dossier
           </Button>

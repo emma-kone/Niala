@@ -4,9 +4,11 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, ClipboardList, Info, ListTree, Loader2, MessageSquare, PanelRightClose, PanelRightOpen, StickyNote } from "lucide-react";
+import { ArrowLeft, CalendarPlus, ClipboardList, Info, ListTree, Loader2, MessageSquare, StickyNote, type LucideIcon } from "lucide-react";
 import { api } from "@/lib/client-api";
 import { routes } from "@/config/routes";
+import { planHref } from "@/features/agenda/types";
+import { useModuleToolbar } from "@/components/layout/floating-toolbar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -82,6 +84,15 @@ function useReadingSaver(docId: string) {
   );
 }
 
+type PanelTab = "notes" | "chat" | "analysis" | "doc";
+
+const PANELS: { id: PanelTab; title: string; icon: LucideIcon; color: string }[] = [
+  { id: "notes", title: "Notes", icon: StickyNote, color: "var(--accent-sun)" },
+  { id: "chat", title: "Chat", icon: MessageSquare, color: "var(--accent-sky)" },
+  { id: "analysis", title: "Analyse", icon: ListTree, color: "var(--accent-mint)" },
+  { id: "doc", title: "Document", icon: Info, color: "var(--accent-rose)" },
+];
+
 export default function ReaderView({ subjectId, docId }: { subjectId: string; docId: string }) {
   const params = useSearchParams();
   const [doc, setDoc] = useState<DocumentDetails | null>(null);
@@ -94,7 +105,7 @@ export default function ReaderView({ subjectId, docId }: { subjectId: string; do
   const preview = previewResult?.id === docId ? (previewResult.ok ? "ok" : "failed") : "loading";
 
   // Notes du document + annotations affichées dans le PDF
-  const [tab, setTab] = useState<"doc" | "notes" | "analysis" | "chat">("notes");
+  const [tab, setTab] = useState<PanelTab>("notes");
   const [sheet, setSheet] = useState(false);
   const desktop = useDesktop();
   const [notes, setNotes] = useState<NoteListItem[] | null>(null);
@@ -175,6 +186,11 @@ export default function ReaderView({ subjectId, docId }: { subjectId: string; do
     void load();
   }, [load]);
 
+  // Chaque ouverture compte comme une consultation, même sans changement de page.
+  useEffect(() => {
+    api.post(`/api/files/${docId}/reading`).catch(() => undefined);
+  }, [docId]);
+
   const docKind = doc?.kind;
   const docMissing = doc?.originalMissing;
   useEffect(() => {
@@ -190,6 +206,16 @@ export default function ReaderView({ subjectId, docId }: { subjectId: string; do
   }, [docId, docKind, docMissing]);
 
   const back = doc?.folderId ? `${routes.subject(subjectId)}?dossier=${doc.folderId}` : routes.subject(subjectId);
+
+  /** Ouvre un volet du cours ; un second clic sur le volet affiché le referme (grand écran). */
+  const openPanel = (id: PanelTab) => {
+    if (desktop && panel && tab === id) return setPanel(false);
+    setTab(id);
+    setPanel(true);
+    setSheet(true);
+  };
+  const shown = desktop ? panel : sheet;
+  useModuleToolbar(error ? null : PANELS.map((p) => ({ label: p.title, icon: p.icon, color: p.color, active: shown && tab === p.id, onClick: () => openPanel(p.id) })));
 
   if (error) {
     return (
@@ -261,22 +287,12 @@ export default function ReaderView({ subjectId, docId }: { subjectId: string; do
   }
 
   const panelBody = (
-    <div className="flex h-full min-h-0 flex-col">
-      <div role="tablist" aria-label="Panneau du document" className="flex border-b">
-        {([["notes", "Notes", StickyNote], ["chat", "Chat", MessageSquare], ["analysis", "Analyse", ListTree], ["doc", "Document", Info]] as const).map(([id, label, Icon]) => (
-          <button
-            key={id}
-            role="tab"
-            aria-selected={tab === id}
-            onClick={() => setTab(id)}
-            className={cn("-mb-px flex flex-1 items-center justify-center gap-1.5 border-b-2 px-2 py-2.5 text-sm font-semibold", tab === id ? "border-primary" : "border-transparent text-muted-foreground hover:text-foreground")}
-          >
-            <Icon className="h-4 w-4" aria-hidden /> {label}
-            {id === "notes" && notes && notes.length > 0 && <span className="rounded-full bg-muted px-1.5 text-[11px]">{notes.length}</span>}
-          </button>
-        ))}
-      </div>
-      <div role="tabpanel" className={cn("min-h-0 flex-1", tab === "chat" ? "overflow-hidden" : "overflow-y-auto")}>
+    <div className="flex h-full min-h-0 flex-col pb-[var(--toolbar-clearance,0px)]">
+      <h2 className="flex items-center gap-2 border-b px-4 py-2.5 text-sm font-semibold">
+        {PANELS.find((p) => p.id === tab)?.title}
+        {tab === "notes" && notes && notes.length > 0 && <span className="rounded-full bg-muted px-1.5 text-[11px]">{notes.length}</span>}
+      </h2>
+      <div className={cn("min-h-0 flex-1", tab === "chat" ? "overflow-hidden" : "overflow-y-auto")}>
         {tab === "notes" ? (
           <NotesPanel
             subjectId={subjectId}
@@ -301,7 +317,7 @@ export default function ReaderView({ subjectId, docId }: { subjectId: string; do
   );
 
   return (
-    <div className="flex h-[calc(100dvh-4rem)] min-h-[28rem] flex-col md:h-[calc(100dvh-4.75rem)]">
+    <div className="flex h-full min-h-[28rem] flex-col overflow-hidden lg:mx-6 lg:rounded-3xl lg:border">
       <header className="flex items-center gap-3 border-b bg-background px-3 py-2">
         <Button asChild variant="ghost" size="icon" className="h-8 w-8 shrink-0">
           <Link href={back} aria-label="Retour aux fichiers">
@@ -324,16 +340,15 @@ export default function ReaderView({ subjectId, docId }: { subjectId: string; do
             {status.label}
           </Badge>
         )}
+        <Button asChild variant="outline" size="sm" className="shrink-0 gap-1.5" data-hint="Planifier la révision de ce document" data-hint-action="Ajouter à l'agenda">
+          <Link href={planHref({ title: `Réviser ${doc?.name ?? "ce document"}`, type: "REVISION", subjectId, documentId: docId })} aria-label="Planifier une révision">
+            <CalendarPlus className="h-4 w-4" aria-hidden /> <span className="hidden sm:inline">Planifier</span>
+          </Link>
+        </Button>
         <Button asChild variant="outline" size="sm" className="shrink-0 gap-1.5">
           <Link href={`${routes.subject(subjectId)}/exercices/nouveau?document=${docId}`}>
             <ClipboardList className="h-4 w-4" aria-hidden /> <span className="hidden sm:inline">Créer un exercice</span>
           </Link>
-        </Button>
-        <Button variant={panel ? "secondary" : "ghost"} size="icon" className="hidden h-8 w-8 shrink-0 lg:inline-flex" onClick={() => setPanel((v) => !v)} aria-pressed={panel} aria-label={panel ? "Masquer le panneau" : "Afficher le panneau"}>
-          {panel ? <PanelRightClose className="h-4 w-4" aria-hidden /> : <PanelRightOpen className="h-4 w-4" aria-hidden />}
-        </Button>
-        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 lg:hidden" onClick={() => setSheet(true)} aria-label="Ouvrir les notes et propriétés">
-          <StickyNote className="h-4 w-4" aria-hidden />
         </Button>
       </header>
 

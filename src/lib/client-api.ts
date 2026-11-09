@@ -33,8 +33,8 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 /** Envoi avec réponse en flux de lignes JSON : `status` et `delta` pendant la rédaction, puis le résultat final. */
-export async function postStream<T>(url: string, body: unknown, on: { status: (text: string) => void; delta: (text: string) => void }): Promise<T> {
-  const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" }, body: JSON.stringify(body), credentials: "same-origin" });
+export async function postStream<T>(url: string, body: unknown, on: { status: (text: string) => void; delta: (text: string) => void }, signal?: AbortSignal): Promise<T> {
+  const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" }, body: JSON.stringify(body), credentials: "same-origin", signal });
   if (!res.ok || !res.body) {
     const data = (await res.json().catch(() => null)) as { error?: string } | null;
     throw new ApiError(data?.error ?? `Erreur ${res.status}`, res.status);

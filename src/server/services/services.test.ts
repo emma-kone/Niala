@@ -26,7 +26,7 @@ const migrations = path.join(process.cwd(), "prisma", "migrations");
 
 beforeAll(async () => {
   pg = await PGlite.create();
-  for (const name of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261110000000_niala_agenda"]) {
+  for (const name of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261110000000_niala_agenda", "20261111000000_niala_academic", "20261112000000_niala_subject_icon"]) {
     await pg.exec(readFileSync(path.join(migrations, name, "migration.sql"), "utf8"));
   }
   const port = 20000 + Math.floor(Math.random() * 10000);

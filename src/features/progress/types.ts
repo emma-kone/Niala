@@ -1,10 +1,11 @@
 import { routes } from "@/config/routes";
+import type { CourseToday, ScheduleStatus } from "@/server/domain/dashboard";
 
 export interface Recommendation {
   id: string;
   type: "EXERCISE" | "REVIEW" | "LAB";
   subjectId: string | null;
-  subject: { name: string; color: string } | null;
+  subject: { name: string; color: string; icon?: string | null } | null;
   conceptId: string | null;
   concept: string | null;
   title: string;
@@ -12,6 +13,17 @@ export interface Recommendation {
   evidence: Record<string, unknown>;
   documentId: string | null;
   priority: number;
+}
+
+export interface DashboardTask {
+  id: string;
+  title: string;
+  type: string;
+  status: string;
+  priority: string;
+  dueDate: string;
+  dueMinutes: number | null;
+  subjectName: string | null;
 }
 
 export interface DashboardData {
@@ -32,8 +44,12 @@ export interface DashboardData {
   }[];
   recent: { kind: string; title: string; at: string | null; detail: string | null; href: string | null }[];
   hasData: boolean;
-  recentDocuments: { id: string; name: string; type: string; lastOpenedAt: string; lastPage: number | null; pageCount: number | null; subjectName: string; subjectColor: string; href: string }[];
-  today: { key: string; date: string; title: string; startMinutes: number; endMinutes: number; room: string | null; subjectId: string | null; subjectName: string | null }[];
+  recentDocuments: { id: string; name: string; type: string; lastOpenedAt: string; lastPage: number | null; pageCount: number | null; subjectId: string; subjectName: string; subjectColor: string; subjectIcon: string | null; href: string }[];
+  /** Séances de la date réelle jusqu'à l'horizon de recherche du prochain cours. */
+  today: CourseToday[];
+  schedule: ScheduleStatus;
+  breaks: { label: string; startMinutes: number; endMinutes: number; weekday: number | null }[];
+  academic: { late: DashboardTask[]; upcoming: DashboardTask[]; priority: DashboardTask[]; sessions: { id: string; date: string; title: string; startMinutes: number; endMinutes: number; done: boolean }[] };
   highlight: { kind: string; eyebrow: string; title: string; detail: string; href: string | null; cta: string | null };
   suggestions: { id: string; kind: string; title: string; text: string; href: string | null; recommendationId?: string }[];
   overallMastery: number | null;
@@ -56,7 +72,7 @@ export interface ProgressConcept {
 
 export interface ProgressData {
   concepts: ProgressConcept[];
-  attempts: { id: string; title: string; subject: { id: string; name: string; color: string } | null; at: string | null; percentage: number | null }[];
+  attempts: { id: string; title: string; subject: { id: string; name: string; color: string; icon?: string | null } | null; at: string | null; percentage: number | null }[];
   errors: { category: string; count: number }[];
   hypotheses: number;
 }

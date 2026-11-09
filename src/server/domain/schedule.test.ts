@@ -1,30 +1,43 @@
 import { describe, expect, it } from "vitest";
 import { buildSuggestions, pickHighlight, type CourseToday } from "./dashboard";
-import { BREAKS, DAY_END, DAY_START, addDays, breakOverlap, classifyOccurrence, diffImport, expandEvents, findConflicts, isoWeek, mondayOf, occurrenceDates, parseTime, validateTimes, weekLetter, weekday, type ExistingCourse, type ScheduleEventRecord, type ScheduleOverrideRecord } from "./schedule";
+import { addDays, breakOverlap, classifyOccurrence, computeGrid, deriveBreaks, diffImport, expandEvents, findConflicts, isoWeek, mondayOf, occurrenceDates, parseTime, slotBox, validateTimes, weekLetter, weekday, type ExistingCourse, type ScheduleEventRecord, type ScheduleOverrideRecord } from "./schedule";
 
-const event = (over: Partial<ScheduleEventRecord> = {}): ScheduleEventRecord => ({ id: "e1", subjectId: null, title: "Algo", kind: "COURSE", date: "2026-11-02", startMinutes: 480, endMinutes: 570, recurrence: "WEEKLY", until: null, weekPattern: "ALL", room: null, teacher: null, groupName: null, description: null, importId: null, confidence: null, ...over });
+const event = (over: Partial<ScheduleEventRecord> = {}): ScheduleEventRecord => ({ id: "e1", subjectId: null, title: "Algo", kind: "COURSE", date: "2026-11-02", startMinutes: 480, endMinutes: 570, recurrence: "WEEKLY", until: null, weekPattern: "ALL", dates: null, endDate: null, allDay: false, code: null, sessionType: null, room: null, teacher: null, groupName: null, description: null, importId: null, confidence: null, ...over });
 const override = (over: Partial<ScheduleOverrideRecord>): ScheduleOverrideRecord => ({ eventId: "e1", date: "2026-11-09", cancelled: false, newDate: null, startMinutes: null, endMinutes: null, subjectId: null, title: null, room: null, teacher: null, description: null, ...over });
 
 describe("structure de la journée", () => {
-  it("couvre 7 h 30 à 18 h 30, pauses de 10 h et de midi", () => {
-    expect([DAY_START, DAY_END]).toEqual([450, 1110]);
-    expect(BREAKS.map((b) => [b.start, b.end])).toEqual([[600, 615], [720, 840]]);
+  it("calcule début, fin et repères à partir des horaires réels", () => {
+    const grid = computeGrid([{ startMinutes: 450, endMinutes: 600 }, { startMinutes: 615, endMinutes: 765 }, { startMinutes: 870, endMinutes: 1020 }], [{ startMinutes: 600, endMinutes: 615 }, { startMinutes: 765, endMinutes: 870 }]);
+    expect([grid.start, grid.end]).toEqual([450, 1020]);
+    expect(grid.marks).toEqual([450, 600, 615, 765, 870, 1020]);
+    expect(computeGrid([{ startMinutes: 1200, endMinutes: 1320 }])).toMatchObject({ start: 1200, end: 1320 });
+  });
+  it("donne une hauteur proportionnelle aux minutes", () => {
+    expect(slotBox({ startMinutes: 450, endMinutes: 600 }, 450, 48)).toEqual({ top: 0, height: 120 });
+    expect(slotBox({ startMinutes: 615, endMinutes: 705 }, 450, 48)).toEqual({ top: 132, height: 72 });
+  });
+  it("déduit les pauses répétées d'un document, sans en imposer", () => {
+    const slots = [1, 2].flatMap((day) => [{ day, startMinutes: 450, endMinutes: 600 }, { day, startMinutes: 615, endMinutes: 765 }]);
+    expect(deriveBreaks(slots)).toEqual([{ label: "Pause", startMinutes: 600, endMinutes: 615, weekday: null }]);
+    expect(deriveBreaks([{ day: 1, startMinutes: 450, endMinutes: 600 }, { day: 1, startMinutes: 615, endMinutes: 765 }])).toEqual([]);
   });
   it("accepte 30 min, 45 min, 1 h 30 et 2 h, en minutes précises", () => {
     for (const [s, e] of [[450, 480], [615, 660], [480, 570], [840, 960]]) expect(validateTimes(s, e)).toBeNull();
   });
-  it("refuse hors de la grille, à l'envers ou trop court", () => {
-    expect(validateTimes(420, 480)).toContain("07:30");
-    expect(validateTimes(1080, 1140)).toContain("18:30");
+  it("accepte tôt ou tard, refuse à l'envers ou trop court", () => {
+    expect(validateTimes(420, 480)).toBeNull();
+    expect(validateTimes(1080, 1140)).toBeNull();
     expect(validateTimes(600, 540)).toContain("fin");
     expect(validateTimes(480, 490)).toContain("15");
   });
   it("détecte une pause touchée, pas un cours qui s'arrête juste avant", () => {
-    expect(breakOverlap(570, 600)).toBeNull();
-    expect(breakOverlap(615, 660)).toBeNull();
-    expect(breakOverlap(590, 610)?.label).toBe("Pause");
-    expect(breakOverlap(700, 730)?.label).toBe("Pause déjeuner");
-    expect(breakOverlap(840, 900)).toBeNull();
+    const breaks = [{ label: "Pause", startMinutes: 600, endMinutes: 615, weekday: null }, { label: "Pause déjeuner", startMinutes: 720, endMinutes: 840, weekday: 1 }];
+    expect(breakOverlap(570, 600, breaks)).toBeNull();
+    expect(breakOverlap(615, 660, breaks)).toBeNull();
+    expect(breakOverlap(590, 610, breaks)?.label).toBe("Pause");
+    expect(breakOverlap(700, 730, breaks, "2026-11-09")?.label).toBe("Pause déjeuner");
+    expect(breakOverlap(700, 730, breaks, "2026-11-10")).toBeNull();
+    expect(breakOverlap(840, 900, breaks)).toBeNull();
   });
   it("lit les heures écrites de plusieurs façons", () => {
     expect(["8:30", "08h30", "8h", "14 h 15", "9"].map(parseTime)).toEqual([510, 510, 480, 855, 540]);

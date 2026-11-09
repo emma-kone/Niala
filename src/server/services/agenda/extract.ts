@@ -1,6 +1,7 @@
 import JSZip from "jszip";
 import mammoth from "mammoth";
 import { ApiHttpError } from "@/lib/api-helpers";
+import { pdfLayout, type PdfLayout } from "./pdf-layout";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Import d'un emploi du temps, étape 1 : extraction du contenu, sans aucune interprétation.
@@ -14,7 +15,7 @@ const MAX_TEXT_CHARS = 60_000;
 const MAX_ROWS = 400;
 const MAX_COLUMNS = 40;
 
-export type Extracted = { kind: "text"; text: string; warnings: string[] } | { kind: "file"; mime: string; data: Buffer; warnings: string[] };
+export type Extracted = { kind: "text"; text: string; warnings: string[] } | { kind: "file"; mime: string; data: Buffer; warnings: string[]; layout?: PdfLayout | null };
 
 interface Format {
   mime: string;
@@ -117,8 +118,17 @@ export function extractCsv(bytes: Buffer): Extracted {
 
 const asFile = (mime: string) => async (data: Buffer): Promise<Extracted> => ({ kind: "file", mime, data, warnings: [] });
 
+/** Le PDF part au modèle tel quel ; s'il a une couche de texte en grille, la position des cellules l'accompagne. */
+async function extractPdf(data: Buffer): Promise<Extracted> {
+  const layout = await pdfLayout(data).catch((e) => {
+    console.warn("[agenda] relevé des colonnes impossible :", e instanceof Error ? e.message : e);
+    return null;
+  });
+  return { kind: "file", mime: "application/pdf", data, warnings: [], layout };
+}
+
 const FORMATS: Record<string, Format> = {
-  pdf: { mime: "application/pdf", signature: (b) => starts(b, 0x25, 0x50, 0x44, 0x46), extract: asFile("application/pdf") },
+  pdf: { mime: "application/pdf", signature: (b) => starts(b, 0x25, 0x50, 0x44, 0x46), extract: extractPdf },
   png: { mime: "image/png", signature: (b) => starts(b, 0x89, 0x50, 0x4e, 0x47), extract: asFile("image/png") },
   jpg: { mime: "image/jpeg", signature: (b) => starts(b, 0xff, 0xd8, 0xff), extract: asFile("image/jpeg") },
   jpeg: { mime: "image/jpeg", signature: (b) => starts(b, 0xff, 0xd8, 0xff), extract: asFile("image/jpeg") },

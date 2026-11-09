@@ -3,11 +3,13 @@ import { db } from "@/lib/db";
 import { requireUser } from "@/lib/auth";
 import { handle, readJson, ApiHttpError } from "@/lib/api-helpers";
 import { normalizeSubjectName } from "@/lib/subjects";
+import { SUBJECT_ICON_IDS, suggestSubjectIcon } from "@/server/domain/subject-icon";
 import { getStorage, withPreviewKeys } from "@/server/storage";
 
 const patchSchema = z.object({
   name: z.string().min(1).max(120).optional(),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  icon: z.enum(SUBJECT_ICON_IDS).nullable().optional(),
 });
 
 async function findOwnedSubject(id: string, userId: string) {
@@ -41,15 +43,17 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     const { id } = await ctx.params;
     const data = patchSchema.parse(await readJson<unknown>(req));
     const subject = await findOwnedSubject(id, user.id);
+    const name = data.name?.trim().replace(/\s+/g, " ") ?? subject.name;
 
     if (data.name !== undefined) {
-      const cleanName = data.name.trim().replace(/\s+/g, " ");
       const siblings = await db.subject.findMany({ where: { userId: user.id }, select: { id: true, name: true } });
-      const dup = siblings.find((s) => s.id !== id && normalizeSubjectName(s.name) === normalizeSubjectName(cleanName));
+      const dup = siblings.find((s) => s.id !== id && normalizeSubjectName(s.name) === normalizeSubjectName(name));
       if (dup) throw new ApiHttpError(`Une matière nommée « ${dup.name} » existe déjà.`, 409);
-      return { subject: await db.subject.update({ where: { id }, data: { ...data, name: cleanName } }) };
     }
-    return { subject: await db.subject.update({ where: { id }, data }) };
+    // Une icône choisie par l'étudiant ne change plus d'elle-même ; null redonne la main à la déduction automatique.
+    const auto = data.icon === undefined ? subject.iconAuto : data.icon === null;
+    const icon = auto ? suggestSubjectIcon(name) : (data.icon ?? subject.icon);
+    return { subject: await db.subject.update({ where: { id }, data: { ...data, name, icon, iconAuto: auto } }) };
   });
 }
 

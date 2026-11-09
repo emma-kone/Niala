@@ -9,18 +9,20 @@ import { oneDark } from "@codemirror/theme-one-dark";
 import { javascript } from "@codemirror/lang-javascript";
 import { python } from "@codemirror/lang-python";
 import { sql as sqlLang } from "@codemirror/lang-sql";
-import { ChevronRight, FileText, FlaskConical, Lightbulb, Loader2, Play, Eye, Trash2 } from "lucide-react";
+import { ChevronRight, FileText, FlaskConical, History, Lightbulb, Loader2, Play, Eye, Sparkles, TerminalSquare, Trash2 } from "lucide-react";
 import { api } from "@/lib/client-api";
 import { routes } from "@/config/routes";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { LabAssistantPanel } from "@/features/lab-assistant/lab-assistant-panel";
 import { TestOutcomes } from "./test-outcomes";
 import { CATEGORY_LABEL, type Diagnosis, type RunDto, type RunHistoryItem, type RunOutput, type LabWorkspaceDto } from "./types";
 import { confirmAction } from "@/components/notifications";
+import { useModuleToolbar } from "@/components/layout/floating-toolbar";
 
 const errText = (e: unknown, fb: string) => (e instanceof Error ? e.message : fb);
 const fmtDate = (d: string) => new Date(d).toLocaleString("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
@@ -165,6 +167,23 @@ export default function LabWorkspace({ id }: { id: string }) {
     }
   }
 
+  const showTab = (value: string) => {
+    setTab(value);
+    document.getElementById("lab-panels")?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  };
+  useModuleToolbar(
+    !ws || error
+      ? null
+      : [
+          { id: "result", label: "Résultat", icon: TerminalSquare, color: "var(--accent-mint)" },
+          { id: "assistant", label: "Assistant", icon: Sparkles, color: "var(--accent-lilac)" },
+          ...(ws.brief?.verified ? [{ id: "tests", label: "Tests", icon: FlaskConical, color: "var(--accent-rose)" }] : []),
+          { id: "hints", label: hints.length ? `Indices (${hints.length})` : "Indices", icon: Lightbulb, color: "var(--accent-sun)" },
+          { id: "history", label: "Historique", icon: History, color: "var(--accent-sky)" },
+          ...(reference ? [{ id: "solution", label: "Solution", icon: Eye, color: "var(--stack-base)" }] : []),
+        ].map(({ id: value, ...action }) => ({ ...action, active: tab === value, onClick: () => showTab(value) }))
+  );
+
   const home = kind === "SQL" ? routes.sql : routes.code;
   if (error) {
     return (
@@ -183,7 +202,7 @@ export default function LabWorkspace({ id }: { id: string }) {
   const diagnoses: Diagnosis[] = run?.diagnoses ?? [];
 
   return (
-    <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6">
+    <div className="mx-auto w-full max-w-7xl px-4 pt-6 pb-[calc(1.5rem+var(--toolbar-clearance,0px))] sm:px-6">
       <nav aria-label="Fil d'Ariane" className="mb-1 flex flex-wrap items-center gap-1 text-sm text-muted-foreground">
         <Link href={home} className="hover:text-foreground">{kind === "SQL" ? "Laboratoire SQL" : "Éditeur de code"}</Link>
         <ChevronRight className="h-3.5 w-3.5" aria-hidden />
@@ -267,21 +286,19 @@ export default function LabWorkspace({ id }: { id: string }) {
           {runError && <Alert variant="destructive"><AlertTitle>Exécution impossible</AlertTitle><AlertDescription>{runError}</AlertDescription></Alert>}
         </div>
 
-        <Tabs value={tab} onValueChange={setTab} className="min-w-0">
-          <TabsList className="flex-wrap">
-            <TabsTrigger value="result">Résultat</TabsTrigger>
-            {hasTests && <TabsTrigger value="tests">Tests</TabsTrigger>}
-            <TabsTrigger value="hints">Indices{hints.length ? ` (${hints.length})` : ""}</TabsTrigger>
-            <TabsTrigger value="history">Historique ({history.length})</TabsTrigger>
-            {reference && <TabsTrigger value="solution">Solution</TabsTrigger>}
-          </TabsList>
+        <Tabs id="lab-panels" value={tab} onValueChange={setTab} className="min-w-0">
 
-          <TabsContent value="result" className="mt-3 rounded-xl border bg-card p-4">
+          {/* Toujours monté : la discussion survit au changement d'onglet. */}
+          <TabsContent value="assistant" forceMount className="rounded-xl border bg-card p-4 data-[state=inactive]:hidden">
+            <LabAssistantPanel endpoint={`/api/labs/${id}/assistant`} kind={ws.kind} guided={!!brief && !brief.revealedAt && ws.mode === "EXERCISE"} getCode={() => codeRef.current} onInsert={(c) => { dirty.current = true; setSaved("idle"); setCode(c); }} />
+          </TabsContent>
+
+          <TabsContent value="result" className="rounded-xl border bg-card p-4">
             {running === "run" ? <p className="flex items-center gap-2 text-sm text-muted-foreground" aria-busy><Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Exécution isolée en cours (le premier lancement Python peut prendre quelques secondes)…</p> : !out ? <p className="text-sm text-muted-foreground">Aucune exécution pour l&apos;instant. Lancez votre code pour voir son résultat ici.</p> : <OutputView out={out} diagnoses={run?.tests ? [] : diagnoses} />}
           </TabsContent>
 
           {hasTests && (
-            <TabsContent value="tests" className="mt-3 rounded-xl border bg-card p-4">
+            <TabsContent value="tests" className="rounded-xl border bg-card p-4">
               {running === "tests" ? <p className="flex items-center gap-2 text-sm text-muted-foreground" aria-busy><Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Tests en cours…</p> : run?.tests ? <TestOutcomes outcomes={run.tests.outcomes} summary={run.tests.summary} diagnoses={run.tests.diagnoses} /> : (
                 <div className="space-y-2 text-sm">
                   <p className="text-muted-foreground">Les tests s&apos;exécutent dans un environnement isolé et comparent votre résultat à celui d&apos;une solution de référence.</p>
@@ -295,7 +312,7 @@ export default function LabWorkspace({ id }: { id: string }) {
             </TabsContent>
           )}
 
-          <TabsContent value="hints" className="mt-3 space-y-3 rounded-xl border bg-card p-4">
+          <TabsContent value="hints" className="space-y-3 rounded-xl border bg-card p-4">
             <p className="text-xs text-muted-foreground">Les indices guident sans donner la solution : niveau 1 (où regarder), 2 (la notion), 3 (la démarche).</p>
             {hints.length === 0 && !hintError && <p className="text-sm text-muted-foreground">Aucun indice demandé.</p>}
             {hints.map((h, i) => (
@@ -307,7 +324,7 @@ export default function LabWorkspace({ id }: { id: string }) {
             {hintError && <p role="alert" className="text-sm text-destructive">{hintError}</p>}
           </TabsContent>
 
-          <TabsContent value="history" className="mt-3 rounded-xl border bg-card p-2">
+          <TabsContent value="history" className="rounded-xl border bg-card p-2">
             {history.length === 0 ? <p className="p-2 text-sm text-muted-foreground">Aucune exécution enregistrée.</p> : (
               <ul className="divide-y">
                 {history.map((h) => (
@@ -323,7 +340,7 @@ export default function LabWorkspace({ id }: { id: string }) {
           </TabsContent>
 
           {reference && (
-            <TabsContent value="solution" className="mt-3 rounded-xl border bg-card p-4">
+            <TabsContent value="solution" className="rounded-xl border bg-card p-4">
               <p className="mb-2 text-xs text-muted-foreground">Solution de référence : une façon de résoudre l&apos;exercice parmi d&apos;autres possibles.</p>
               <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 font-mono text-xs">{reference.reference}</pre>
             </TabsContent>

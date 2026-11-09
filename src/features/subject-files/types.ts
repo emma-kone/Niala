@@ -28,7 +28,7 @@ export interface DocumentDto {
 }
 
 export interface ExplorerResponse {
-  subject: { id: string; name: string; color: string };
+  subject: { id: string; name: string; color: string; icon?: string | null };
   folderId: string | null;
   path: { id: string; name: string }[];
   folders: FolderDto[];

@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, ChevronRight, FileText, FilePlus2, NotebookPen, Plus, Search, Sparkles } from "lucide-react";
 import { api } from "@/lib/client-api";
+import { SubjectIcon } from "@/components/subject-icon";
 import { routes } from "@/config/routes";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -23,7 +24,7 @@ export default function SubjectNotesView({ subjectId }: { subjectId: string }) {
   const params = useSearchParams();
   const selected = params.get("note");
 
-  const [subject, setSubject] = useState<{ name: string; color: string } | null>(null);
+  const [subject, setSubject] = useState<{ name: string; color: string; icon?: string | null } | null>(null);
   const [notes, setNotes] = useState<NoteListItem[] | null>(null);
   const [error, setError] = useState<{ message: string; status?: number } | null>(null);
   const [search, setSearch] = useState("");
@@ -40,7 +41,7 @@ export default function SubjectNotesView({ subjectId }: { subjectId: string }) {
   }, [search]);
 
   useEffect(() => {
-    api.get<{ subject: { name: string; color: string } }>(`/api/subjects/${subjectId}`).then((r) => setSubject(r.subject)).catch((e) => setError({ message: errText(e, "Matière introuvable."), status: (e as { status?: number }).status }));
+    api.get<{ subject: { name: string; color: string; icon?: string | null } }>(`/api/subjects/${subjectId}`).then((r) => setSubject(r.subject)).catch((e) => setError({ message: errText(e, "Matière introuvable."), status: (e as { status?: number }).status }));
     api.get<{ documents: { id: string; name: string }[] }>(`/api/subjects/${subjectId}/documents`).then((r) => setDocs(r.documents)).catch(() => undefined);
   }, [subjectId]);
 
@@ -101,7 +102,7 @@ export default function SubjectNotesView({ subjectId }: { subjectId: string }) {
         <Link href={routes.subject(subjectId)} className="hover:text-foreground">{subject?.name ?? "…"}</Link>
       </nav>
       <h1 className="typo-h1 mb-5 flex items-center gap-3">
-        {subject && <span className="h-3 w-3 rounded-full" style={{ backgroundColor: subject.color }} aria-hidden />}
+        {subject && <SubjectIcon icon={subject.icon} name={subject.name} color={subject.color} />}
         {subject?.name ?? <Skeleton className="h-8 w-48" />}
       </h1>
       <SubjectTabs subjectId={subjectId} active="notes" />
