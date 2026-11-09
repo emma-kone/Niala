@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { GraduationCap } from "lucide-react";
+import { NialaLogo } from "@/components/brand/niala-logo";
 import { LEGAL } from "@/config/legal";
 import { routes } from "@/config/routes";
 
@@ -8,8 +8,8 @@ export function LegalShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col bg-background">
       <header className="mx-auto flex w-full max-w-3xl items-center justify-between px-5 py-5">
-        <Link href={routes.login} className="inline-flex items-center gap-2 font-bold tracking-tight">
-          <GraduationCap className="h-5 w-5" aria-hidden /> {LEGAL.appName}
+        <Link href={routes.login} aria-label={LEGAL.appName} className="inline-flex items-center">
+          <NialaLogo size="sm" className="gap-2" />
         </Link>
         <nav aria-label="Textes légaux" className="flex gap-4 text-sm text-muted-foreground">
           <Link href={routes.privacy} className="hover:text-foreground">Confidentialité</Link>

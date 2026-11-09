@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useSyncExternalStore } from "react";
-import { ChevronLeft, ChevronRight, GraduationCap, LogOut } from "lucide-react";
+import { ChevronLeft, ChevronRight, LogOut } from "lucide-react";
+import { NialaLogo, NialaMark } from "@/components/brand/niala-logo";
 import { AccountMenu } from "@/components/layout/account-menu";
 import { NAV_GROUPS, isNavActive } from "@/config/navigation";
 import { cn } from "@/lib/utils";
@@ -59,8 +60,7 @@ export function SidebarNav({ user, onLogout }: SidebarNavProps) {
       </button>
 
       <div className={cn("flex h-[108px] shrink-0 items-start gap-2 pt-7", collapsed ? "justify-center px-2" : "px-5")}>
-        <GraduationCap className="h-6 w-6 shrink-0" aria-hidden />
-        {!collapsed && <span className="text-xl font-bold tracking-tight">Niala</span>}
+        {collapsed ? <NialaMark size="md" tone="accent" /> : <NialaLogo size="md" tone="accent" className="gap-2" />}
       </div>
 
       <nav className="flex-1 space-y-4 overflow-y-auto overflow-x-hidden px-2.5 pb-3">

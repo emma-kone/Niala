@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { GraduationCap, Loader2, ShieldCheck, Sparkles, UserPlus } from "lucide-react";
+import { Loader2, ShieldCheck, UserPlus } from "lucide-react";
+import { NialaLogo } from "@/components/brand/niala-logo";
 import { api } from "@/lib/client-api";
 import { createClient } from "@/lib/supabase/client";
 import { routes } from "@/config/routes";
@@ -23,14 +24,6 @@ const GOOGLE_ERRORS: Record<string, string> = {
   google_unverified: "Votre adresse Google n'est pas vérifiée : validez-la chez Google, puis réessayez.",
   google_account_exists: "Un compte existe déjà avec cette adresse : connectez-vous avec votre mot de passe.",
 };
-
-function LegalFooter() {
-  return (
-    <footer className="border-t px-6 py-3 text-center text-xs text-muted-foreground">
-      <Link href={routes.privacy} className="hover:text-foreground">Confidentialité</Link> · <Link href={routes.terms} className="hover:text-foreground">Conditions d&apos;utilisation</Link>
-    </footer>
-  );
-}
 
 function GoogleMark() {
   return (
@@ -65,14 +58,12 @@ export default function LoginView() {
   }, []);
 
   if (authenticated === null) {
-    // Les liens légaux sont dans le HTML initial : visibles des moteurs et des vérificateurs qui n'exécutent pas JavaScript.
     return (
       <div className="min-h-screen flex flex-col bg-background">
         <main className="flex flex-1 flex-col items-center justify-center gap-3">
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" aria-hidden />
           <p className="typo-subtitle">Chargement de Niala…</p>
         </main>
-        <LegalFooter />
       </div>
     );
   }
@@ -120,12 +111,8 @@ export default function LoginView() {
     <div className="min-h-screen flex flex-col bg-background">
       <main className="flex flex-1 items-center justify-center px-4 py-10">
         <div className="w-full max-w-md">
-          <div className="mb-8 flex flex-col items-center gap-3 text-center">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-lg">
-              <GraduationCap className="h-7 w-7" aria-hidden />
-            </div>
-            <h1 className="typo-display">Niala</h1>
-            <p className="typo-subtitle max-w-sm">Importez vos cours, générez des exercices personnalisés, codez, pratiquez le SQL et suivez votre progression.</p>
+          <div className="mb-8 flex justify-center">
+            <NialaLogo size="lg" wordmarkAs="h1" />
           </div>
 
           <form onSubmit={submit} className="space-y-4 rounded-3xl border bg-card p-6 shadow-sm" aria-labelledby="auth-title">
@@ -175,14 +162,8 @@ export default function LoginView() {
             <Link href={routes.terms} className="underline underline-offset-2 hover:text-foreground">conditions d&apos;utilisation</Link> et la{" "}
             <Link href={routes.privacy} className="underline underline-offset-2 hover:text-foreground">politique de confidentialité</Link>.
           </p>
-
-          <div className="mt-6 flex items-center justify-center gap-2 text-muted-foreground">
-            <Sparkles className="h-3.5 w-3.5" aria-hidden />
-            <p className="typo-meta">Analyse IA · Génération d&apos;exercices · Correction hybride · SQL · Éditeur de code</p>
-          </div>
         </div>
       </main>
-      <LegalFooter />
     </div>
   );
 }

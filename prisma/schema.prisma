@@ -66,7 +66,7 @@ model User {
 model UserSettings {
   id            String  @id @default(cuid())
   userId        String  @unique
-  theme         String  @default("light") // light | dark | system
+  theme         String  @default("system") // light | dark | system
   scheduleWeekSwap Boolean @default(false) // inverse la convention semaine A / semaine B
   agendaPrefs   Json? // préférences de travail, rappels et heures de tranquillité
   defaultMode   String  @default("apprentissage")

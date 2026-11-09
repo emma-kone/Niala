@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { GraduationCap, LogOut, Menu } from "lucide-react";
+import { LogOut, Menu } from "lucide-react";
+import { NialaLogo, NialaMark, NialaWordmark } from "@/components/brand/niala-logo";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { AccountMenu } from "@/components/layout/account-menu";
 import { NAV_GROUPS, isNavActive } from "@/config/navigation";
@@ -25,8 +26,9 @@ export function MobileNav({ onLogout }: { onLogout: () => void }) {
           </button>
         </SheetTrigger>
         <SheetContent side="left" className="flex w-[280px] flex-col gap-0 border-0 bg-sidebar p-0 text-sidebar-foreground">
-          <SheetTitle className="flex items-center gap-2.5 px-6 py-5 text-xl font-bold tracking-tight text-sidebar-foreground">
-            <GraduationCap className="h-6 w-6" aria-hidden /> Niala
+          <SheetTitle className="flex items-center gap-2.5 px-6 py-5 text-sidebar-foreground">
+            <NialaMark size="md" tone="accent" />
+            <NialaWordmark size="md" />
           </SheetTitle>
           <nav aria-label="Navigation principale" className="flex-1 space-y-4 overflow-y-auto px-3 pb-3">
             {NAV_GROUPS.map((group, n) => (
@@ -62,9 +64,7 @@ export function MobileNav({ onLogout }: { onLogout: () => void }) {
           </div>
         </SheetContent>
       </Sheet>
-      <span className="flex items-center gap-2 font-semibold">
-        <GraduationCap className="h-5 w-5" aria-hidden /> Niala
-      </span>
+      <NialaLogo size="sm" tone="accent" className="gap-2" />
     </header>
   );
 }

@@ -1,9 +1,9 @@
 "use client";
 
-import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { GraduationCap, Link2, Loader2 } from "lucide-react";
+import { Link2, Loader2 } from "lucide-react";
+import { NialaLogo } from "@/components/brand/niala-logo";
 import { api } from "@/lib/client-api";
 import { routes } from "@/config/routes";
 import { Button } from "@/components/ui/button";
@@ -40,11 +40,8 @@ export default function LinkGoogleView({ email }: { email: string }) {
     <div className="min-h-screen flex flex-col bg-background">
       <main className="flex flex-1 items-center justify-center px-4 py-10">
         <div className="w-full max-w-md">
-          <div className="mb-8 flex flex-col items-center gap-3 text-center">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-lg">
-              <GraduationCap className="h-7 w-7" aria-hidden />
-            </div>
-            <h1 className="typo-display">Niala</h1>
+          <div className="mb-8 flex justify-center">
+            <NialaLogo size="lg" wordmarkAs="h1" />
           </div>
 
           <form onSubmit={submit} className="space-y-4 rounded-3xl border bg-card p-6 shadow-sm" aria-labelledby="link-title">
@@ -66,9 +63,6 @@ export default function LinkGoogleView({ email }: { email: string }) {
           </form>
         </div>
       </main>
-      <footer className="border-t px-6 py-3 text-center text-xs text-muted-foreground">
-        <Link href={routes.privacy} className="hover:text-foreground">Confidentialité</Link> · <Link href={routes.terms} className="hover:text-foreground">Conditions d&apos;utilisation</Link>
-      </footer>
     </div>
   );
 }
