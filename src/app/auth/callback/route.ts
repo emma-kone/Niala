@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { setSessionCookie } from "@/lib/auth";
+import { setLinkCookie, setSessionCookie } from "@/lib/auth";
 import { limit } from "@/lib/api-helpers";
 import { createClient } from "@/lib/supabase/server";
-import { GoogleSignInError, googleProfileOf, signInWithGoogle } from "@/server/services/accounts";
+import { GoogleSignInError, type GoogleProfile, googleProfileOf, signInWithGoogle } from "@/server/services/accounts";
 
 // Retour de Supabase Auth après Google. Supabase authentifie ; Niala garde sa propre session (cookie signé et table User),
 // sur laquelle reposent toutes les routes protégées. La session Supabase temporaire est fermée une fois le compte identifié.
@@ -27,14 +27,20 @@ export async function GET(req: Request) {
     return fail("failed");
   }
 
+  let profile: GoogleProfile | null = null;
   try {
-    const profile = googleProfileOf(data.user);
+    profile = googleProfileOf(data.user);
     if (!profile) return fail("failed");
     const user = await signInWithGoogle(profile);
     await setSessionCookie(user.id);
     return NextResponse.redirect(`${origin}/`);
   } catch (e) {
-    if (e instanceof GoogleSignInError) return fail(e.reason);
+    if (e instanceof GoogleSignInError && e.reason === "account_exists" && profile) {
+      // Compte à mot de passe : l'étudiant confirme son mot de passe Niala pour lier Google à ce compte.
+      await setLinkCookie({ sub: profile.sub, email: profile.email, name: profile.name });
+      return NextResponse.redirect(`${origin}/auth/link`);
+    }
+    if (e instanceof GoogleSignInError) return fail(e.reason === "account_conflict" ? "failed" : e.reason);
     console.error("[auth] connexion Google impossible :", e instanceof Error ? e.message : e);
     return fail("failed");
   } finally {
