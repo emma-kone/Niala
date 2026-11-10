@@ -11,18 +11,17 @@ const CATEGORIES = { ESATIC: "Étudiants ESATIC", OTHER_SCHOOL: "Étudiants d'au
 interface Preview { recipients: number; kindLabel: string; remainingToday: number; dailyLimit: number }
 
 /** Rédaction → aperçu (destinataires réels, plafond restant) → confirmation → diffusion. */
-export function AnnouncementForm({ levels, institutions }: { levels: string[]; institutions: string[] }) {
+export function AnnouncementForm({ institutions }: { institutions: string[] }) {
   const router = useRouter();
   const [kind, setKind] = useState<keyof typeof KINDS>("INFO");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [cats, setCats] = useState<string[]>([]);
-  const [lvls, setLvls] = useState<string[]>([]);
   const [inst, setInst] = useState<string[]>([]);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const payload = () => ({ kind, title, body, audience: { ...(cats.length ? { categories: cats } : {}), ...(lvls.length ? { levels: lvls } : {}), ...(inst.length ? { institutions: inst } : {}) } });
+  const payload = () => ({ kind, title, body, audience: { ...(cats.length ? { categories: cats } : {}), ...(inst.length ? { institutions: inst } : {}) } });
   const toggle = (list: string[], set: (v: string[]) => void, v: string) => { set(list.includes(v) ? list.filter((x) => x !== v) : [...list, v]); setPreview(null); };
   const input = "h-9 w-full rounded-lg border bg-background px-2.5 text-sm";
 
@@ -45,7 +44,7 @@ export function AnnouncementForm({ levels, institutions }: { levels: string[]; i
     try {
       const r = await api.post<{ recipients: number }>("/api/admin/communications", { ...payload(), confirm: true });
       notify({ title: "Annonce diffusée", description: `${r.recipients} destinataire(s) notifié(s).`, variant: "success" });
-      setTitle(""); setBody(""); setCats([]); setLvls([]); setInst([]); setPreview(null);
+      setTitle(""); setBody(""); setCats([]); setInst([]); setPreview(null);
       router.refresh();
     } catch (err) {
       notify({ title: "Diffusion impossible", description: err instanceof Error ? err.message : undefined, variant: "error" });
@@ -67,7 +66,6 @@ export function AnnouncementForm({ levels, institutions }: { levels: string[]; i
       <fieldset><legend className="mb-1.5 text-xs font-semibold text-muted-foreground">Destinataires — vide = tous les comptes actifs</legend>
         <div className="space-y-2">
           <div className="flex flex-wrap gap-1.5" role="group" aria-label="Catégories">{Object.entries(CATEGORIES).map(([k, v]) => <button type="button" key={k} aria-pressed={cats.includes(k)} onClick={() => toggle(cats, setCats, k)} className={chip(cats.includes(k))}>{v}</button>)}</div>
-          {levels.length > 0 && <div className="flex flex-wrap gap-1.5" role="group" aria-label="Niveaux">{levels.map((l) => <button type="button" key={l} aria-pressed={lvls.includes(l)} onClick={() => toggle(lvls, setLvls, l)} className={chip(lvls.includes(l))}>Niveau {l}</button>)}</div>}
           {institutions.length > 0 && <div className="flex flex-wrap gap-1.5" role="group" aria-label="Établissements">{institutions.map((l) => <button type="button" key={l} aria-pressed={inst.includes(l)} onClick={() => toggle(inst, setInst, l)} className={chip(inst.includes(l))}>{l}</button>)}</div>}
         </div>
       </fieldset>

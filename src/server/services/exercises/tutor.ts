@@ -126,10 +126,10 @@ export async function askTutor(userId: string, attemptId: string, input: z.infer
 
   const [history, profile] = await Promise.all([
     db.attemptTutorMessage.findMany({ where: { userId, attemptId, position: input.position }, orderBy: { createdAt: "desc" }, take: HISTORY_LIMIT }),
-    db.studentProfile.findUnique({ where: { userId }, select: { level: true, levelOther: true } }),
+    db.studentProfile.findUnique({ where: { userId }, select: { field: true } }),
   ]);
   const previousHints = history.filter((m) => m.role === "USER" && m.kind === "hint").length;
-  const level = (snap.exercise.level ? (levelText(snap.exercise.level) ?? snap.exercise.level) : null) ?? levelText(profile?.level, profile?.levelOther);
+  const level = (snap.exercise.level ? (levelText(snap.exercise.level) ?? snap.exercise.level) : null) ?? profile?.field ?? null;
   const currentAnswer = input.answer !== undefined ? input.answer : (answer?.value ?? null);
   const earlier = snap.questions
     .filter((x) => x.position < input.position)

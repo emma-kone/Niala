@@ -211,7 +211,7 @@ export async function listRequests(raw: unknown) {
 export async function getRequestAdmin(admin: AdminUser, id: string) {
   const r = await db.supportRequest.findUnique({
     where: { id },
-    include: { user: { select: { id: true, name: true, email: true, accountStatus: true, profile: { select: { category: true, institution: true, level: true, field: true } } } }, messages: { orderBy: { createdAt: "asc" } }, roadmapItem: { select: { id: true, title: true, status: true } } },
+    include: { user: { select: { id: true, name: true, email: true, accountStatus: true, profile: { select: { category: true, institution: true, field: true } } } }, messages: { orderBy: { createdAt: "asc" } }, roadmapItem: { select: { id: true, title: true, status: true } } },
   });
   if (!r) throw new ApiHttpError("Demande introuvable.", 404);
   const assignee = r.assigneeId ? await db.user.findUnique({ where: { id: r.assigneeId }, select: { id: true, name: true, email: true } }) : null;

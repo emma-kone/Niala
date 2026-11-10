@@ -1,5 +1,5 @@
 // Données de référence académiques de Niala : importables côté client comme côté serveur.
-// Pour proposer une nouvelle filière ESATIC à l'inscription, il suffit de l'ajouter à ESATIC_FIELDS.
+// Le profil ne porte qu'un champ libre « classe / filière » (ex. « DASI 3 ») ; les niveaux ci-dessous servent à la création d'exercices.
 
 export const PROFILE_CATEGORIES = ["ESATIC", "OTHER_SCHOOL", "TESTER"] as const;
 export type ProfileCategory = (typeof PROFILE_CATEGORIES)[number];
@@ -19,10 +19,6 @@ export const CATEGORY_LABEL: Record<ProfileCategory, string> = {
 
 export const ESATIC_NAME = "ESATIC";
 
-/** Filières ESATIC connues de l'application. « Autre filière » reste possible pour ne bloquer aucune inscription. */
-export const ESATIC_FIELDS = [{ code: "DASI", label: "Développement d'Applications et Systèmes d'Information (DASI)" }] as const;
-export const OTHER_FIELD_CODE = "AUTRE";
-
 export const LEVELS = ["BTS1", "BTS2", "L1", "L2", "L3", "M1", "M2"] as const;
 export type Level = (typeof LEVELS)[number];
 
@@ -36,15 +32,11 @@ export const LEVEL_LABEL: Record<Level, string> = {
   M2: "Master 2 (M2)",
 };
 
-export const ESATIC_LEVELS: readonly Level[] = ["L1", "L2", "L3", "M1", "M2"];
-export const OTHER_SCHOOL_LEVELS: readonly Level[] = LEVELS;
 
 /** « Autre » : le niveau n'est pas dans la liste, l'étudiant le précise librement. */
 export const OTHER_LEVEL = "AUTRE";
 export const LEVEL_CHOICES = [...LEVELS, OTHER_LEVEL] as const;
 export type LevelChoice = (typeof LEVEL_CHOICES)[number];
-export const ESATIC_LEVEL_CHOICES: readonly LevelChoice[] = [...ESATIC_LEVELS, OTHER_LEVEL];
-export const OTHER_SCHOOL_LEVEL_CHOICES: readonly LevelChoice[] = LEVEL_CHOICES;
 
 export const isLevel = (v: unknown): v is Level => typeof v === "string" && (LEVELS as readonly string[]).includes(v);
 export const isLevelChoice = (v: unknown): v is LevelChoice => typeof v === "string" && (LEVEL_CHOICES as readonly string[]).includes(v);

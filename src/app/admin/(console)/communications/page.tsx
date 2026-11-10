@@ -12,8 +12,8 @@ export default async function CommunicationsPage() {
   const admin = await requireAdminPage("comms.view");
   const [history, options] = await Promise.all([listAnnouncements(), audienceOptions()]);
   const audienceText = (a: unknown) => {
-    const x = a as { categories?: string[]; levels?: string[]; institutions?: string[] };
-    const parts = [x.categories?.map((c) => CATEGORIES[c as keyof typeof CATEGORIES] ?? c).join(", "), x.levels?.length ? `niveaux ${x.levels.join(", ")}` : "", x.institutions?.join(", ")].filter(Boolean);
+    const x = a as { categories?: string[]; institutions?: string[] };
+    const parts = [x.categories?.map((c) => CATEGORIES[c as keyof typeof CATEGORIES] ?? c).join(", "), x.institutions?.join(", ")].filter(Boolean);
     return parts.length ? parts.join(" · ") : "Tous les comptes actifs";
   };
 
@@ -22,7 +22,7 @@ export default async function CommunicationsPage() {
       <PageHeader title="Notifications et communications" description="Annonces, informations de maintenance et alertes importantes envoyées aux étudiants. Elles apparaissent dans Niala (cloche de notifications)." />
       {can(admin.role, "comms.send") ? (
         <Panel title="Nouvelle annonce" description="Rédaction, aperçu avec le nombre réel de destinataires, puis confirmation avant diffusion." className="mb-4">
-          <AnnouncementForm levels={options.levels} institutions={options.institutions} />
+          <AnnouncementForm institutions={options.institutions} />
         </Panel>
       ) : <Notice className="mb-4"><p>Votre rôle permet de consulter les communications mais pas d'en diffuser.</p></Notice>}
       <Panel title="Historique des communications">

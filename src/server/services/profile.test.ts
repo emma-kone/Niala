@@ -53,15 +53,23 @@ describe("validation par catégorie", () => {
   it("exige une catégorie", () => {
     expect(profileInputSchema.safeParse({}).success).toBe(false);
   });
-  it("ESATIC : filière et niveau obligatoires, pas de BTS", () => {
-    expect(profileInputSchema.safeParse({ category: "ESATIC", level: "L3" }).success).toBe(false);
-    expect(profileInputSchema.safeParse({ category: "ESATIC", fieldCode: "DASI", level: "BTS1" }).success).toBe(false);
-    expect(profileInputSchema.safeParse({ category: "ESATIC", fieldCode: "AUTRE", level: "L3" }).success).toBe(false);
-    expect(profileInputSchema.safeParse({ category: "ESATIC", fieldCode: "DASI", level: "L3" }).success).toBe(true);
+  it("ESATIC : un seul champ libre « classe / filière » (ex. DASI 3), obligatoire", () => {
+    expect(profileInputSchema.safeParse({ category: "ESATIC" }).success).toBe(false);
+    expect(profileInputSchema.safeParse({ category: "ESATIC", field: "" }).success).toBe(false);
+    expect(profileInputSchema.safeParse({ category: "ESATIC", field: "x" }).success).toBe(false);
+    expect(profileInputSchema.safeParse({ category: "ESATIC", field: "x".repeat(61) }).success).toBe(false);
+    expect(profileInputSchema.parse({ category: "ESATIC", field: "  DASI 3  " })).toEqual({ category: "ESATIC", field: "DASI 3" });
+    for (const f of ["SIGL 1", "RTEL 2", "TWIN 3", "SRIT 1", "CSIA 2", "Intelligence artificielle 3"]) expect(profileInputSchema.safeParse({ category: "ESATIC", field: f }).success).toBe(true);
   });
-  it("autre établissement : établissement libre, BTS accepté", () => {
-    expect(profileInputSchema.safeParse({ category: "OTHER_SCHOOL", field: "Réseaux", level: "BTS2" }).success).toBe(false);
-    expect(profileInputSchema.safeParse({ category: "OTHER_SCHOOL", institution: "Lycée X", field: "Réseaux", level: "BTS2" }).success).toBe(true);
+  it("ne demande plus ni niveau, ni classe, ni code de filière, et les ignore s'ils sont envoyés", () => {
+    const parsed = profileInputSchema.parse({ category: "ESATIC", field: "DASI 3", level: "L3", className: "DASI 3 B", fieldCode: "DASI", levelOther: "x" });
+    expect(parsed).toEqual({ category: "ESATIC", field: "DASI 3" });
+    expect(profileColumns(parsed)).toMatchObject({ field: "DASI 3", institution: "ESATIC", level: null, levelOther: null, className: null, fieldCode: null });
+  });
+  it("autre établissement : établissement et classe / filière libres", () => {
+    expect(profileInputSchema.safeParse({ category: "OTHER_SCHOOL", field: "Réseaux 2" }).success).toBe(false);
+    expect(profileInputSchema.safeParse({ category: "OTHER_SCHOOL", institution: "Lycée X" }).success).toBe(false);
+    expect(profileInputSchema.safeParse({ category: "OTHER_SCHOOL", institution: "Lycée X", field: "Terminale D" }).success).toBe(true);
   });
   it("testeur : aucun champ académique imposé", () => {
     expect(profileInputSchema.safeParse({ category: "TESTER" }).success).toBe(true);
@@ -72,35 +80,18 @@ describe("validation par catégorie", () => {
   });
 });
 
-describe("classe et niveau « Autre »", () => {
-  it("accepte « Autre » avec un niveau précisé, et le refuse sans précision", () => {
-    expect(profileInputSchema.safeParse({ category: "ESATIC", fieldCode: "DASI", level: "AUTRE" }).success).toBe(false);
-    expect(profileInputSchema.safeParse({ category: "OTHER_SCHOOL", institution: "Lycée X", field: "Gestion", level: "AUTRE", levelOther: "x" }).success).toBe(false);
-    expect(profileInputSchema.safeParse({ category: "OTHER_SCHOOL", institution: "Lycée X", field: "Gestion", level: "AUTRE", levelOther: "Terminale" }).success).toBe(true);
-  });
-  it("enregistre la classe et le niveau précisé, et oublie le précisé si un niveau de la liste est choisi", async () => {
-    const u = await signup("classe@x.fr", { category: "ESATIC", fieldCode: "DASI", level: "AUTRE", levelOther: "Doctorat", className: "DASI 3 groupe B" });
-    expect(await profile.getProfile(u.id)).toMatchObject({ className: "DASI 3 groupe B", level: "AUTRE", levelOther: "Doctorat" });
-    await profile.updateProfile(u.id, { academic: profileInputSchema.parse({ category: "ESATIC", fieldCode: "DASI", level: "L3", levelOther: "ignoré" }) });
-    expect(await profile.getProfile(u.id)).toMatchObject({ level: "L3", levelOther: null, className: null });
-  });
-  it("garde la classe facultative", () => {
-    expect(profileInputSchema.safeParse({ category: "ESATIC", fieldCode: "DASI", level: "L1" }).success).toBe(true);
-  });
-});
-
 describe("inscription", () => {
   it("enregistre un étudiant ESATIC et rattache l'établissement", async () => {
-    const u = await signup("esatic@x.fr", { category: "ESATIC", fieldCode: "DASI", level: "L3" });
-    expect(await profile.getProfile(u.id)).toMatchObject({ category: "ESATIC", institution: "ESATIC", fieldCode: "DASI", level: "L3" });
+    const u = await signup("esatic@x.fr", { category: "ESATIC", field: "DASI 3" });
+    expect(await profile.getProfile(u.id)).toMatchObject({ category: "ESATIC", institution: "ESATIC", field: "DASI 3" });
   });
   it("enregistre un étudiant d'une autre école", async () => {
-    const u = await signup("autre@x.fr", { category: "OTHER_SCHOOL", institution: "INP-HB", field: "Génie logiciel", level: "BTS1" });
-    expect(await profile.getProfile(u.id)).toMatchObject({ category: "OTHER_SCHOOL", institution: "INP-HB", field: "Génie logiciel", level: "BTS1", fieldCode: null });
+    const u = await signup("autre@x.fr", { category: "OTHER_SCHOOL", institution: "INP-HB", field: "Génie logiciel BTS1" });
+    expect(await profile.getProfile(u.id)).toMatchObject({ category: "OTHER_SCHOOL", institution: "INP-HB", field: "Génie logiciel BTS1" });
   });
   it("enregistre un testeur sans parcours", async () => {
     const u = await signup("test@x.fr", { category: "TESTER", usageReason: "Découvrir" });
-    expect(await profile.getProfile(u.id)).toMatchObject({ category: "TESTER", institution: null, level: null, usageReason: "Découvrir" });
+    expect(await profile.getProfile(u.id)).toMatchObject({ category: "TESTER", institution: null, field: null, usageReason: "Découvrir" });
   });
   it("refuse une inscription sans réponse à la question ESATIC", () => {
     expect(accounts.signupSchema.safeParse({ name: "A", email: "a@b.fr", password: PASSWORD }).success).toBe(false);
@@ -109,14 +100,14 @@ describe("inscription", () => {
 
 describe("modification du profil", () => {
   it("passe d'une catégorie à l'autre sans garder d'anciennes valeurs", async () => {
-    const u = await signup("switch@x.fr", { category: "ESATIC", fieldCode: "DASI", level: "M1" });
+    const u = await signup("switch@x.fr", { category: "ESATIC", field: "DASI 4" });
     await profile.updateProfile(u.id, { name: "Nouveau Nom", academic: profileInputSchema.parse({ category: "TESTER" }) });
-    expect(await profile.getProfile(u.id)).toMatchObject({ name: "Nouveau Nom", category: "TESTER", institution: null, fieldCode: null, field: null, level: null });
+    expect(await profile.getProfile(u.id)).toMatchObject({ name: "Nouveau Nom", category: "TESTER", institution: null, field: null });
   });
   it("ajoute puis retire une photo, sans toucher au parcours", async () => {
-    const u = await signup("photo@x.fr", { category: "ESATIC", fieldCode: "DASI", level: "L1" });
+    const u = await signup("photo@x.fr", { category: "ESATIC", field: "DASI 1" });
     await profile.updateProfile(u.id, { avatar: "data:image/jpeg;base64,AAAA" });
-    expect(await profile.getProfile(u.id)).toMatchObject({ avatar: "data:image/jpeg;base64,AAAA", level: "L1" });
+    expect(await profile.getProfile(u.id)).toMatchObject({ avatar: "data:image/jpeg;base64,AAAA", field: "DASI 1" });
     await profile.updateProfile(u.id, { avatar: null });
     expect((await profile.getProfile(u.id)).avatar).toBeNull();
   });

@@ -6,7 +6,7 @@ import { Loader2 } from "lucide-react";
 import { confirmAction, notify } from "@/components/notifications";
 import { api } from "@/lib/client-api";
 
-interface Props { id: string; email: string; name: string | null; status: string; category: string | null; institution: string | null; field: string | null; className: string | null; canManage: boolean; canDelete: boolean }
+interface Props { id: string; email: string; name: string | null; status: string; category: string | null; institution: string | null; field: string | null; canManage: boolean; canDelete: boolean }
 
 /** Actions sensibles sur un compte : chacune exige une confirmation, un motif (suspension, désactivation) et est journalisée côté serveur. */
 export function UserActions(p: Props) {
@@ -15,7 +15,7 @@ export function UserActions(p: Props) {
   const [reason, setReason] = useState("");
   const [mode, setMode] = useState<null | "edit" | "delete">(null);
   const [typed, setTyped] = useState("");
-  const [form, setForm] = useState({ name: p.name ?? "", category: p.category ?? "", institution: p.institution ?? "", field: p.field ?? "", className: p.className ?? "" });
+  const [form, setForm] = useState({ name: p.name ?? "", category: p.category ?? "", institution: p.institution ?? "", field: p.field ?? "" });
 
   async function run(task: () => Promise<unknown>, ok: string) {
     setBusy(true);
@@ -42,7 +42,7 @@ export function UserActions(p: Props) {
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
-    const body = { name: form.name.trim() || undefined, category: (form.category || undefined) as string | undefined, institution: form.institution.trim() || null, field: form.field.trim() || null, className: form.className.trim() || null };
+    const body = { name: form.name.trim() || undefined, category: (form.category || undefined) as string | undefined, institution: form.institution.trim() || null, field: form.field.trim() || null };
     if (!(await confirmAction("Enregistrer ces renseignements administratifs ?", { title: "Modifier le compte", confirmLabel: "Enregistrer" }))) return;
     await run(() => api.patch(`/api/admin/users/${p.id}`, body), "Renseignements mis à jour");
   }
@@ -88,8 +88,7 @@ export function UserActions(p: Props) {
               <label className="block text-xs text-muted-foreground">Catégorie
                 <select className={`${input} mt-1`} value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}><option value="">Inchangée</option><option value="ESATIC">Étudiant ESATIC</option><option value="OTHER_SCHOOL">Autre établissement</option><option value="TESTER">Autre / testeur</option></select></label>
               <label className="block text-xs text-muted-foreground">Établissement<input className={`${input} mt-1`} value={form.institution} onChange={(e) => setForm({ ...form, institution: e.target.value })} maxLength={120} /></label>
-              <label className="block text-xs text-muted-foreground">Filière<input className={`${input} mt-1`} value={form.field} onChange={(e) => setForm({ ...form, field: e.target.value })} maxLength={120} /></label>
-              <label className="block text-xs text-muted-foreground">Classe<input className={`${input} mt-1`} value={form.className} onChange={(e) => setForm({ ...form, className: e.target.value })} maxLength={60} /></label>
+              <label className="block text-xs text-muted-foreground">Classe / filière<input className={`${input} mt-1`} value={form.field} onChange={(e) => setForm({ ...form, field: e.target.value })} maxLength={120} /></label>
               <button disabled={busy} className="rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-50">{busy ? <Loader2 className="h-4 w-4 animate-spin" aria-label="Enregistrement" /> : "Enregistrer"}</button>
             </form>
           )}

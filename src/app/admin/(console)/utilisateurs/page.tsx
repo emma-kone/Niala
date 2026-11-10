@@ -31,10 +31,8 @@ export default async function UsersPage({ searchParams }: { searchParams: SP }) 
             <select name="status" defaultValue={q.status ?? ""} className={`${sel} mt-1`}><option value="">Tous</option>{Object.entries(ACCOUNT_STATUSES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></label>
           <label className="text-xs text-muted-foreground">Établissement
             <select name="institution" defaultValue={q.institution ?? ""} className={`${sel} mt-1`}><option value="">Tous</option>{options.institutions.map((i) => <option key={i}>{i}</option>)}</select></label>
-          <label className="text-xs text-muted-foreground">Filière
+          <label className="text-xs text-muted-foreground">Classe / filière
             <select name="field" defaultValue={q.field ?? ""} className={`${sel} mt-1`}><option value="">Toutes</option>{options.fields.map((i) => <option key={i}>{i}</option>)}</select></label>
-          <label className="text-xs text-muted-foreground">Niveau
-            <select name="level" defaultValue={q.level ?? ""} className={`${sel} mt-1`}><option value="">Tous</option>{options.levels.map((i) => <option key={i}>{i}</option>)}</select></label>
           {res.full && (
             <label className="text-xs text-muted-foreground">Activité
               <select name="activity" defaultValue={q.activity ?? ""} className={`${sel} mt-1`}><option value="">Toutes</option>{Object.entries(ACTIVITY).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></label>
@@ -53,7 +51,7 @@ export default async function UsersPage({ searchParams }: { searchParams: SP }) 
       <Table>
         <thead>
           <tr>
-            {sh("Nom", "name")}{sh("E-mail", "email")}{sh("Profil", "category")}{sh("Établissement", "institution")}{sh("Filière", "field")}{sh("Niveau", "level")}{sh("Inscription", "createdAt")}
+            {sh("Nom", "name")}{sh("E-mail", "email")}{sh("Profil", "category")}{sh("Établissement", "institution")}{sh("Classe / filière", "field")}{sh("Inscription", "createdAt")}
             {res.full && <>{sh("Dernière activité", "lastActivity")}{sh("Sessions", "sessions")}{sh("Exercices", "exercises")}</>}
             {sh("Statut", "status")}<Th />
           </tr>
@@ -66,7 +64,6 @@ export default async function UsersPage({ searchParams }: { searchParams: SP }) 
               <Td>{u.categoryLabel}</Td>
               <Td>{u.institution ?? "—"}</Td>
               <Td>{u.field ?? "—"}</Td>
-              <Td>{u.level ?? "—"}</Td>
               <Td className="whitespace-nowrap">{fmtDate(u.createdAt)}</Td>
               {res.full && <><Td className="whitespace-nowrap">{u.lastActivity ? fmtDateTime(u.lastActivity) : "—"}</Td><Td align="right">{fmtNumber(u.sessions)}</Td><Td align="right">{fmtNumber(u.exercises)}</Td></>}
               <Td><Pill tone={statusTone(u.status)}>{ACCOUNT_STATUSES[u.status as keyof typeof ACCOUNT_STATUSES] ?? u.status}</Pill></Td>
