@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { useBackgroundRefresh } from "@/hooks/use-background-refresh";
 
 interface SubjectDto {
   id: string;
@@ -70,6 +71,7 @@ export default function SubjectsView() {
       setError(errorText(e, "Impossible de charger vos matières."));
     }
   }, [qc]);
+  useBackgroundRefresh(load, { topics: ["subjects"] });
 
   useEffect(() => {
     void load();

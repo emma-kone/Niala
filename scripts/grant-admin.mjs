@@ -7,6 +7,7 @@
 // Le mot de passe n'est jamais passé en argument ni enregistré en clair. Seul un compte déjà inscrit peut être promu sans --create.
 import { PrismaClient } from "@prisma/client";
 import { randomBytes, scryptSync } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 const ROLES = ["SUPER_ADMIN", "ADMIN", "SUPPORT", "ANALYST", "NONE"];
 const args = process.argv.slice(2);
@@ -22,7 +23,17 @@ if (!email) {
   process.exit(1);
 }
 
-const prisma = new PrismaClient();
+// Connexion DIRECTE (DIRECT_URL, port 5432) : le pooleur (DATABASE_URL, port 6543) est parfois injoignable depuis un poste local.
+function directUrl() {
+  if (process.env.DIRECT_URL) return process.env.DIRECT_URL;
+  try {
+    const line = readFileSync(".env", "utf8").split(String.fromCharCode(10)).find((l) => l.startsWith("DIRECT_URL="));
+    return line?.slice("DIRECT_URL=".length).trim().replace(/^"|"$/g, "");
+  } catch {
+    return undefined;
+  }
+}
+const prisma = new PrismaClient({ datasourceUrl: directUrl() });
 try {
   let user = await prisma.user.findUnique({ where: { email } });
   if (!user) {

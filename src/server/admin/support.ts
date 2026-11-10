@@ -106,6 +106,27 @@ export async function submitRequest(userId: string, raw: unknown, files: Uploade
   return { id: created.id, reference: created.reference };
 }
 
+/**
+ * Demande créée par Niala pour le compte d'un étudiant (ex. « mot de passe oublié » sans envoi d'e-mail configuré) :
+ * elle apparaît dans la file de l'équipe et dans « Suggestions » de l'étudiant. Une seule demande ouverte du même objet à la fois.
+ */
+export async function fileSystemRequest(userId: string, subject: string, description: string) {
+  const open = await db.supportRequest.findFirst({ where: { userId, subject, status: { notIn: [...CLOSED_STATUSES] } }, select: { id: true, reference: true } });
+  if (open) return open;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      const reference = await nextReference();
+      return await db.supportRequest.create({
+        data: { reference: attempt ? `${reference}-${randomBytes(2).toString("hex")}` : reference, userId, type: "ASSISTANCE", subject, description, module: null, status: "RECEIVED", priority: "HIGH" },
+        select: { id: true, reference: true },
+      });
+    } catch (e) {
+      if (!(e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002")) throw e;
+    }
+  }
+  return null;
+}
+
 // ── Côté étudiant ────────────────────────────────────────────────────────────
 
 const messageForUser = { where: { internal: false }, orderBy: { createdAt: "asc" as const }, select: { id: true, authorRole: true, authorName: true, body: true, createdAt: true } };
@@ -113,6 +134,17 @@ const messageForUser = { where: { internal: false }, orderBy: { createdAt: "asc"
 export async function listMyRequests(userId: string) {
   const rows = await db.supportRequest.findMany({ where: { userId }, orderBy: { createdAt: "desc" }, take: 100, select: { id: true, reference: true, type: true, subject: true, status: true, createdAt: true, updatedAt: true, _count: { select: { messages: { where: { internal: false, authorRole: "ADMIN" } } } } } });
   return rows.map((r) => ({ id: r.id, reference: r.reference, type: r.type, subject: r.subject, status: r.status, createdAt: r.createdAt, updatedAt: r.updatedAt, replies: r._count.messages }));
+}
+
+/** Réponses reçues de l'équipe, toutes demandes confondues (jamais les notes internes), de la plus récente à la plus ancienne. */
+export async function listMyReplies(userId: string) {
+  const rows = await db.supportMessage.findMany({
+    where: { internal: false, authorRole: "ADMIN", request: { userId } },
+    orderBy: { createdAt: "desc" },
+    take: 100,
+    select: { id: true, body: true, createdAt: true, request: { select: { id: true, reference: true, subject: true, status: true } } },
+  });
+  return rows.map((m) => ({ id: m.id, body: m.body, createdAt: m.createdAt, requestId: m.request.id, reference: m.request.reference, subject: m.request.subject, status: m.request.status }));
 }
 
 export async function getMyRequest(userId: string, id: string) {

@@ -27,7 +27,8 @@ import { loadVersionPages, pagesBetween } from "@/server/services/analysis/analy
 import { verifyCodeReference, verifySqlSpec } from "@/server/services/labs/execute";
 import { levelText } from "@/config/academic";
 import { runPool } from "@/lib/concurrency";
-import { languageName, purgeOccasionalExercises } from "./attempts";
+import { purgeOccasionalExercises } from "./attempts";
+import { detectLanguage, languageLabel, type ContentLang } from "@/server/domain/language";
 import { track } from "@/server/analytics/track";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -161,7 +162,6 @@ export async function generateExercise(userId: string, rawConfig: unknown) {
     throw new ApiHttpError("La génération d'exercices nécessite le service d'IA, qui n'est pas configuré (GEMINI_API_KEY).", 503);
   }
   await purgeOccasionalExercises(userId);
-  const language = languageName((await db.userSettings.findUnique({ where: { userId }, select: { exerciseLang: true } }))?.exerciseLang);
   const documentIds = [...new Set([config.documentId, ...(config.documentIds ?? [])])];
   const found = await db.document.findMany({ where: { id: { in: documentIds }, userId }, include: { currentVersion: true } });
   if (found.length !== documentIds.length) throw new ApiHttpError("Document introuvable.", 404);
@@ -177,6 +177,9 @@ export async function generateExercise(userId: string, rawConfig: unknown) {
       return { document, version: current, pages: documentPages };
     })
   );
+  // L'exercice est rédigé dans la langue du cours : un document en anglais donne un exercice en anglais.
+  const contentLang: ContentLang = detectLanguage(sources.flatMap((s) => s.pages.map((p) => p.text)).join("\n").slice(0, 60_000));
+  const language = languageLabel(contentLang);
   const { document: doc, version, pages } = sources[0];
   const subjectId = doc.subjectId;
   const analysis = await db.documentAnalysis.findFirst({ where: { userId, versionId: version.id, status: "READY" }, orderBy: { createdAt: "desc" } });
@@ -323,6 +326,7 @@ export async function generateExercise(userId: string, rawConfig: unknown) {
     documentId: doc.id,
     versionId: version.id,
     origin: "DOCUMENT",
+    language: contentLang,
     saved: config.saved,
     title: config.title?.trim() || `Exercice — ${doc.name}${severalSources ? ` et ${documentIds.length - 1} autre${documentIds.length > 2 ? "s" : ""}` : ""}`.slice(0, 160),
     totalPoints: config.totalPoints,
@@ -360,13 +364,16 @@ export async function generateFreeExercise(userId: string, rawConfig: unknown) {
   if (!isAiConfigured()) throw new ApiHttpError("La génération d'exercices nécessite le service d'IA, qui n'est pas configuré (GEMINI_API_KEY).", 503);
   await purgeOccasionalExercises(userId);
 
-  const [settings, subjects] = await Promise.all([
-    db.userSettings.findUnique({ where: { userId }, select: { exerciseLang: true } }),
+  const [subjects, settings] = await Promise.all([
     db.subject.findMany({ where: { userId }, select: { id: true, name: true } }),
+    db.userSettings.findUnique({ where: { userId }, select: { chatLang: true } }),
   ]);
   // Une matière déjà enregistrée sous ce nom reçoit l'exercice (progression comprise) ; sinon rien n'est créé dans la bibliothèque.
   const subjectId = subjects.find((s) => foldText(s.name) === foldText(config.subject))?.id ?? null;
-  const language = languageName(settings?.exerciseLang);
+  // Sans document, la langue suit celle dans laquelle l'étudiant a décrit la matière et le thème ; si ce texte est trop
+  // court pour trancher, celle qu'il a choisie pour discuter avec l'IA.
+  const contentLang: ContentLang = detectLanguage([config.subject, config.chapter, config.title ?? ""].join(" "), settings?.chatLang === "en" ? "en" : "fr");
+  const language = languageLabel(contentLang);
   const slots = buildSlots(config.questionCount, config.types, config.difficulty, config.practicePercent);
   const groups = Array.from({ length: Math.ceil(slots.length / MAX_SLOTS_PER_CALL) }, (_, n) => slots.slice(n * MAX_SLOTS_PER_CALL, (n + 1) * MAX_SLOTS_PER_CALL));
 
@@ -436,6 +443,7 @@ export async function generateFreeExercise(userId: string, rawConfig: unknown) {
     documentId: null,
     versionId: null,
     origin: "FREE",
+    language: contentLang,
     saved: config.saved,
     title: config.title?.trim() || (config.subject === config.chapter ? config.subject : `${config.subject} — ${config.chapter}`).slice(0, 160),
     totalPoints: config.totalPoints,
@@ -492,6 +500,8 @@ export interface ExerciseToSave {
   config: unknown;
   accepted: { slot: { difficulty: string }; built: BuiltQuestion; explanation: string | null; refs: unknown[]; concepts: string[] }[];
   points: number[];
+  /** Langue de l'énoncé (fr | en). */
+  language?: ContentLang;
 }
 
 /** Enregistrement : exercice indépendant, avec référence éventuelle au document et à sa version. */
@@ -506,7 +516,7 @@ export async function saveExercise(userId: string, e: ExerciseToSave): Promise<s
       return (await tx.concept.create({ data: { userId, subjectId, name: name.slice(0, 120), normalizedName, kind: "NOTION" } })).id;
     };
     const ex = await tx.exercise.create({
-      data: { userId, subjectId, documentId: e.documentId, versionId: e.versionId, origin: e.origin, saved: e.saved, title: e.title, totalPoints: e.totalPoints, config: e.config as Prisma.InputJsonValue },
+      data: { userId, subjectId, documentId: e.documentId, versionId: e.versionId, origin: e.origin, saved: e.saved, title: e.title, totalPoints: e.totalPoints, config: e.config as Prisma.InputJsonValue, language: e.language ?? null },
     });
     for (let i = 0; i < e.accepted.length; i++) {
       const a = e.accepted[i];

@@ -136,12 +136,12 @@ describe("génération libre", () => {
     expect(list.find((e) => e.id === r.id)).toMatchObject({ origin: "FREE", subject: null, freeSubject: "Bases de données" });
     expect(await db.subject.count({ where: { userId: A } })).toBe(0);
   });
-  it("transmet le niveau et la langue choisie", async () => {
-    await db.userSettings.update({ where: { userId: A }, data: { exerciseLang: "en" } });
+  it("transmet le niveau ; sans document, la langue suit celle choisie pour discuter avec l'IA", async () => {
+    await db.userSettings.update({ where: { userId: A }, data: { chatLang: "en" } });
     await gen.generateFreeExercise(A, FREE);
     expect(calls[0].user).toContain("Licence 3");
-    expect(calls[0].user).toContain("anglais");
-    await db.userSettings.update({ where: { userId: A }, data: { exerciseLang: "fr" } });
+    expect(calls[0].user).toContain("Langue des exercices : anglais");
+    await db.userSettings.update({ where: { userId: A }, data: { chatLang: "fr" } });
   });
   it("rattache l'exercice à une matière déjà enregistrée sous ce nom", async () => {
     const s = await db.subject.create({ data: { userId: B, name: "Bases de donnees" } });

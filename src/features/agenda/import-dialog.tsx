@@ -87,7 +87,8 @@ function clash(a: DraftRow, b: DraftRow) {
   return !da || !db || da.some((d) => db.includes(d));
 }
 
-export function ImportDialog({ weekStart, onClose, onDone }: { weekStart: string; onClose: () => void; onDone: () => void }) {
+/** `target` : emploi du temps affiché, que l'import peut compléter ou mettre à jour ; sinon un nouvel emploi du temps est créé. */
+export function ImportDialog({ weekStart, target, onClose, onDone }: { weekStart: string; target?: { id: string; label: string } | null; onClose: () => void; onDone: () => void }) {
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -96,7 +97,9 @@ export function ImportDialog({ weekStart, onClose, onDone }: { weekStart: string
   const [breaks, setBreaks] = useState<BreakRow[]>([]);
   const [specials, setSpecials] = useState<SpecialRow[]>([]);
   const [startDate, setStartDate] = useState(weekStart);
-  const [mode, setMode] = useState<"add" | "replace">("add");
+  const [mode, setMode] = useState<"add" | "replace" | "new">("add");
+  const [label, setLabel] = useState("");
+  const [activate, setActivate] = useState(true);
   const input = useRef<HTMLInputElement>(null);
 
   async function upload(file: File) {
@@ -105,6 +108,7 @@ export function ImportDialog({ weekStart, onClose, onDone }: { weekStart: string
     try {
       const form = new FormData();
       form.append("file", file);
+      if (target) form.append("scheduleId", target.id);
       const r = await api.post<ImportResult>("/api/agenda/imports", form);
       setResult(r);
       setRows(r.events.map((e) => ({ ...e, subjectChoice: initialChoice(e, r.events.some((x) => x.code)) })));
@@ -176,7 +180,9 @@ export function ImportDialog({ weekStart, onClose, onDone }: { weekStart: string
         createSubject: r.subjectChoice === CREATE,
       }));
       const payload = {
-        mode,
+        mode: hasHistory ? mode : "new",
+        ...(hasHistory && mode !== "new" && target ? { scheduleId: target.id } : {}),
+        ...((hasHistory ? mode : "new") === "new" ? { label: label.trim() || result.fileName.replace(/\.[^.]+$/, ""), activate } : {}),
         startDate,
         events,
         force,
@@ -244,10 +250,20 @@ export function ImportDialog({ weekStart, onClose, onDone }: { weekStart: string
               )}
               {hasHistory && (
                 <fieldset className="text-sm">
-                  <legend className="mb-1 text-xs text-muted-foreground">Cours déjà présents</legend>
-                  <label className="mr-4 inline-flex items-center gap-1.5"><input type="radio" name="mode" checked={mode === "add"} onChange={() => setMode("add")} /> Compléter sans rien changer</label>
-                  <label className="inline-flex items-center gap-1.5"><input type="radio" name="mode" checked={mode === "replace"} onChange={() => setMode("replace")} /> Appliquer les changements</label>
+                  <legend className="mb-1 text-xs text-muted-foreground">Enregistrer ce document</legend>
+                  <label className="mr-4 inline-flex items-center gap-1.5"><input type="radio" name="mode" checked={mode === "add"} onChange={() => setMode("add")} /> Compléter « {target?.label ?? "l'emploi du temps suivi"} »</label>
+                  <label className="mr-4 inline-flex items-center gap-1.5"><input type="radio" name="mode" checked={mode === "replace"} onChange={() => setMode("replace")} /> Le mettre à jour (appliquer les changements)</label>
+                  <label className="inline-flex items-center gap-1.5"><input type="radio" name="mode" checked={mode === "new"} onChange={() => setMode("new")} /> Nouvel emploi du temps séparé</label>
                 </fieldset>
+              )}
+              {(!hasHistory || mode === "new") && (
+                <div className="flex flex-wrap items-end gap-3">
+                  <div className="space-y-1">
+                    <Label htmlFor="imp-label">Nom de l&apos;emploi du temps</Label>
+                    <Input id="imp-label" className="h-9 w-56" maxLength={80} value={label} onChange={(e) => setLabel(e.target.value)} placeholder={result.fileName.replace(/\.[^.]+$/, "")} />
+                  </div>
+                  <label className="inline-flex h-9 items-center gap-1.5 text-sm"><input type="checkbox" checked={activate} onChange={(e) => setActivate(e.target.checked)} /> Suivre cet emploi du temps</label>
+                </div>
               )}
             </div>
 
@@ -365,7 +381,8 @@ export function ImportDialog({ weekStart, onClose, onDone }: { weekStart: string
               </section>
             </div>
 
-            {mode === "replace" && result.removed.length > 0 && (
+            {hasHistory && mode === "new" && <p className="text-xs text-muted-foreground">Emploi du temps séparé : tous les cours ci-dessus y sont enregistrés, sans modifier vos autres emplois du temps. Vous choisissez dans l&apos;agenda celui à suivre.</p>}
+            {hasHistory && mode === "replace" && result.removed.length > 0 && (
               <p className="rounded-xl border border-destructive/40 p-3 text-xs">
                 <span className="font-semibold">Seront retirés, car absents du nouveau document :</span> {result.removed.map((r) => `${r.title} (${DAY_NAMES[r.day - 1]} ${toTimeInput(r.startMinutes)})`).join(", ")}.
               </p>

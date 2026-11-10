@@ -24,20 +24,20 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
     return handle(async () => {
       const user = await requireUser();
       limit(`chat:${user.id}`, 20, 60_000);
-      const { content, web, documentIds, regenerate } = messageSchema.parse(await readJson<unknown>(req));
+      const { content, web, documentIds, regenerate, lang } = messageSchema.parse(await readJson<unknown>(req));
       const id = (await ctx.params).id;
-      return sendMessage(user.id, id, regenerate ? await takeLastTurn(user.id, id) : content, { web, documentIds, defer: after });
+      return sendMessage(user.id, id, regenerate ? await takeLastTurn(user.id, id) : content, { web, documentIds, lang, defer: after });
     });
   }
 
   // Authentification, limite et validation répondent AVANT d'ouvrir le flux, avec leur vrai code HTTP.
-  let prepared: { userId: string; id: string; content: string; web?: boolean; documentIds?: string[] };
+  let prepared: { userId: string; id: string; content: string; web?: boolean; documentIds?: string[]; lang?: "fr" | "en" };
   try {
     const user = await requireUser();
     limit(`chat:${user.id}`, 20, 60_000);
-    const { content, web, documentIds, regenerate } = messageSchema.parse(await readJson<unknown>(req));
+    const { content, web, documentIds, regenerate, lang } = messageSchema.parse(await readJson<unknown>(req));
     const id = (await ctx.params).id;
-    prepared = { userId: user.id, id, content: regenerate ? await takeLastTurn(user.id, id) : content, web, documentIds };
+    prepared = { userId: user.id, id, content: regenerate ? await takeLastTurn(user.id, id) : content, web, documentIds, lang };
   } catch (err) {
     return handle(async () => {
       throw err;
@@ -68,7 +68,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       const turn = beginTurn(prepared.id, prepared.userId);
       try {
         // Si l'étudiant quitte la page, la réponse se termine quand même et reste dans la conversation ; seul « Arrêter » l'interrompt.
-        const reply = await sendMessage(prepared.userId, prepared.id, prepared.content, { web: prepared.web, documentIds: prepared.documentIds, signal: turn.signal, emit: (e: ChatEvent) => send(e), defer: (t) => void tasks.push(t) });
+        const reply = await sendMessage(prepared.userId, prepared.id, prepared.content, { web: prepared.web, documentIds: prepared.documentIds, lang: prepared.lang, signal: turn.signal, emit: (e: ChatEvent) => send(e), defer: (t) => void tasks.push(t) });
         send({ type: "done", ...reply });
       } catch (err) {
         const status = err instanceof ApiHttpError ? err.status : 500;

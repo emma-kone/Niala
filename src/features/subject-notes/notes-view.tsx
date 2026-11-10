@@ -16,6 +16,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { SubjectTabs } from "@/features/subject-files/tabs";
 import { NOTE_KIND_LABEL, type NoteKind, type NoteListItem } from "@/features/notes/types";
+import { useCachedState } from "@/hooks/use-cached-state";
+import { useBackgroundRefresh } from "@/hooks/use-background-refresh";
 
 // L'éditeur riche est volumineux : la liste des notes s'affiche sans l'attendre.
 const NoteEditor = dynamic(() => import("@/features/notes/note-editor").then((m) => m.NoteEditor), { ssr: false, loading: () => <Skeleton className="h-96 rounded-2xl" /> });
@@ -27,14 +29,14 @@ export default function SubjectNotesView({ subjectId }: { subjectId: string }) {
   const params = useSearchParams();
   const selected = params.get("note");
 
-  const [subject, setSubject] = useState<{ name: string; color: string; icon?: string | null } | null>(null);
-  const [notes, setNotes] = useState<NoteListItem[] | null>(null);
+  const [subject, setSubject] = useCachedState<{ name: string; color: string; icon?: string | null } | null>(["subject", subjectId], null);
+  const [notes, setNotes] = useCachedState<NoteListItem[] | null>(["notes", subjectId], null);
   const [error, setError] = useState<{ message: string; status?: number } | null>(null);
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<"all" | NoteKind>("all");
   const [doc, setDoc] = useState("all");
-  const [docs, setDocs] = useState<{ id: string; name: string }[]>([]);
+  const [docs, setDocs] = useCachedState<{ id: string; name: string }[]>(["subject-docs", subjectId], []);
   const [creating, setCreating] = useState(false);
   const seq = useRef(0);
 
@@ -63,6 +65,7 @@ export default function SubjectNotesView({ subjectId }: { subjectId: string }) {
       if (n === seq.current) setError({ message: errText(e, "Chargement impossible."), status: (e as { status?: number }).status });
     }
   }, [subjectId, kind, doc, query]);
+  useBackgroundRefresh(load, { topics: ["notes"] });
 
   useEffect(() => {
     void load();

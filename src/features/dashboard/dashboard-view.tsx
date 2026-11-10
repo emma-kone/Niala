@@ -335,7 +335,7 @@ function Deadlines({ late, upcoming }: { late: DashboardTask[]; upcoming: Dashbo
           const Icon = meta.icon;
           return (
             <li key={t.id}>
-              <Link href={routes.agenda} data-hint={`${meta.label} · ${t.title} · ${dueLabel(t)}`} data-hint-action="Consulter la tâche" className="flex items-center gap-2 rounded-xl bg-muted/50 px-3 py-1.5 text-sm hover:bg-muted">
+              <Link href={`${routes.agenda}?section=taches`} data-hint={`${meta.label} · ${t.title} · ${dueLabel(t)}`} data-hint-action="Consulter la tâche" className="flex items-center gap-2 rounded-xl bg-muted/50 px-3 py-1.5 text-sm hover:bg-muted">
                 <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
                 <span className="min-w-0 flex-1 truncate font-medium">{t.title}{t.priority === "HAUTE" ? " · prioritaire" : ""}</span>
                 <span className={cn("shrink-0 text-xs", t.status === "EN_RETARD" ? "font-medium text-destructive" : "text-muted-foreground")}>{new Date(`${t.dueDate}T12:00:00`).toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}</span>

@@ -13,6 +13,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { CATEGORY_LABEL } from "@/features/labs/types";
 import { cn } from "@/lib/utils";
 import { evidenceLabel, pct, type ConceptDetail, type ProgressConcept, type ProgressData } from "./types";
+import { useCachedState } from "@/hooks/use-cached-state";
+import { useBackgroundRefresh } from "@/hooks/use-background-refresh";
 
 const errText = (e: unknown, fb: string) => (e instanceof Error ? e.message : fb);
 const BAND_CLASS: Record<ProgressConcept["band"], string> = {
@@ -25,7 +27,7 @@ const BAND_CLASS: Record<ProgressConcept["band"], string> = {
 const fmt = (d: string | null) => (d ? new Date(d).toLocaleDateString("fr-FR", { day: "2-digit", month: "short" }) : "");
 
 export default function ProgressView() {
-  const [data, setData] = useState<ProgressData | null>(null);
+  const [data, setData] = useCachedState<ProgressData | null>(["progress"], null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
@@ -40,6 +42,7 @@ export default function ProgressView() {
       setError(errText(e, "Chargement impossible."));
     }
   }, []);
+  useBackgroundRefresh(load, { topics: ["progress", "tasks"] });
   useEffect(() => {
     void load();
   }, [load]);

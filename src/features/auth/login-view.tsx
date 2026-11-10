@@ -148,7 +148,7 @@ export default function LoginView() {
             <div className="space-y-2">
               <Label htmlFor="password">Mot de passe{registering && <Required />}</Label>
               <Input id="password" type="password" autoComplete={registering ? "new-password" : "current-password"} required minLength={registering ? MIN_PASSWORD_LENGTH : undefined} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••••" />
-              {registering && <p className="typo-meta">{MIN_PASSWORD_LENGTH} caractères minimum.</p>}
+              {registering ? <p className="typo-meta">{MIN_PASSWORD_LENGTH} caractères minimum.</p> : <p className="text-right text-sm"><Link href={routes.forgotPassword} className="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">Mot de passe oublié ?</Link></p>}
             </div>
             {registering && <AcademicFields draft={academic} onChange={setAcademic} idPrefix="signup" />}
             {registering && <p className="typo-meta"><span className="text-destructive">*</span> Champ obligatoire</p>}

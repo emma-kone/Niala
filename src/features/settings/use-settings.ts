@@ -8,6 +8,7 @@ export interface UserSettings {
   theme: string;
   textSize: "normal" | "large";
   exerciseLang: "fr" | "en";
+  chatLang: "fr" | "en";
   defaultMode: "apprentissage" | "entrainement" | "examen" | "revision" | "personnalise";
   hintsEnabled: boolean;
   correctionPref: "immediate" | "final";

@@ -5,6 +5,7 @@ export const USER_SETTINGS_SELECT = {
   theme: true,
   textSize: true,
   exerciseLang: true,
+  chatLang: true,
   defaultMode: true,
   hintsEnabled: true,
   correctionPref: true,

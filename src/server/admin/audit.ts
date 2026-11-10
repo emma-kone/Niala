@@ -19,6 +19,7 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   "user.reactivate": "Réactivation d'un utilisateur",
   "user.disable": "Désactivation d'un utilisateur",
   "user.delete": "Suppression d'un compte",
+  "user.password_reset_link": "Lien de réinitialisation du mot de passe créé",
   "admin.role": "Modification d'un rôle d'administration",
   "request.update": "Modification d'une demande",
   "request.reply": "Réponse à un utilisateur",

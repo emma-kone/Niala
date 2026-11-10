@@ -3,6 +3,7 @@ import { foldText, quoteInText, wrapUntrusted } from "@/server/ai/guard";
 import { generateStructured } from "@/server/ai/structured";
 import { evaluateClaim, isSensitive, summarize, type ClaimBasis, type ClaimDomain, type ClaimEvaluation, type ClaimType, type Confidence, type EvaluatedEvidence, type EvaluatedSource } from "./confidence";
 import { independentGroups } from "./cross-check";
+import { annotationInEnglish } from "./annotations-en";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Vérification d'une réponse, affirmation par affirmation.
@@ -276,7 +277,7 @@ function dropCitations(span: string, rejected: number[]): string {
  * Retire les citations qui ne soutiennent pas leur affirmation et place chaque avertissement à côté de l'affirmation
  * concernée. Les affirmations confirmées restent intactes, et le nombre d'avertissements est borné pour rester lisible.
  */
-export function applyVerification(answer: string, report: VerificationReport): string {
+export function applyVerification(answer: string, report: VerificationReport, lang: "fr" | "en" = "fr"): string {
   if (report.status !== "effectuee") return answer;
   const located = report.claims
     .map((claim) => ({ claim, at: locate(answer, claim.text) }))
@@ -298,7 +299,7 @@ export function applyVerification(answer: string, report: VerificationReport): s
     const line = answer.slice(lineStart, nextBreak < 0 ? answer.length : nextBreak);
     // Une même remarque n'est répétée ni sur la ligne, ni à côté d'un avertissement déjà écrit par l'IA.
     const noteKey = `${lineStart}|${claim.annotation}`;
-    const note = withNote.has(claim) && !/[⚠❌]/u.test(line) && !noted.has(noteKey) ? ` *(⚠️ ${claim.annotation})*` : "";
+    const note = withNote.has(claim) && !/[⚠❌]/u.test(line) && !noted.has(noteKey) ? ` *(⚠️ ${lang === "en" ? annotationInEnglish(claim.annotation!) : claim.annotation})*` : "";
     if (note) noted.add(noteKey);
     out = out.slice(0, at.start) + span.trimEnd() + punctuation + note + out.slice(end + punctuation.length);
   }

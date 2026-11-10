@@ -20,7 +20,7 @@ autoriser `https://<ADMIN_HOST>/auth/callback` dans Supabase (Authentication →
 
 ### Adresse secrète (`ADMIN_PATH`)
 
-Variable d'environnement : 8 caractères minimum (lettres, chiffres, `-`, `_`), jamais le nom d'une page existante. Une adresse lisible (ex. `nialaspace-admin`) est pratique mais devinable : la protection repose alors sur la connexion. Pour une vraie barrière, une valeur longue et aléatoire, par exemple
+Variable d'environnement : 8 caractères minimum (lettres, chiffres, `-`, `_`), jamais le nom d'une page existante. Une adresse lisible (ex. `espace-exemple`) est pratique mais devinable : la protection repose alors sur la connexion. Pour une vraie barrière, une valeur longue et aléatoire, par exemple
 `node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))"`. À définir dans `.env` ET dans les variables de Vercel.
 Visiter `https://<domaine>/<ADMIN_PATH>` dépose un cookie de passage (`niala_gate`, httpOnly, 30 jours) puis redirige vers la page de
 connexion ; sans ce cookie, toute requête vers `/admin…` ou `/api/admin…` est réécrite vers une page inexistante (404 standard, aucun indice).

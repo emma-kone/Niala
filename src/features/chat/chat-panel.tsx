@@ -12,6 +12,7 @@ import { confirmAction } from "@/components/notifications";
 import { ChatComposer, type ComposerHandle, type ContextDocument, type RecentDoc, type SubjectChoice } from "./chat-composer";
 import { AssistantMessage, LiveMessage, TypingBubble, UserBubble } from "./chat-message";
 import { ChatSidebar } from "./chat-sidebar";
+import { ChatLanguageSwitch, useChatLang } from "./chat-language";
 import { ChatWelcome, type Suggestion } from "./chat-welcome";
 import type { ChatCitation, ChatMessageDto, ConversationDto } from "./types";
 
@@ -62,6 +63,7 @@ export default function ChatPanel({ scope, documentId, onCitation, variant = "pa
   const [notice, setNotice] = useState<Notice | null>(null);
   const [status, setStatus] = useState<AiStatus | null>(null);
   const [web, setWeb] = useState(true);
+  const [lang, setLang] = useChatLang();
   const [subjects, setSubjects] = useState<SubjectChoice[]>([]);
   const [subjectId, setSubjectId] = useState<string>(ALL);
   const [recent, setRecent] = useState<RecentDoc[]>([]);
@@ -220,7 +222,7 @@ export default function ChatPanel({ scope, documentId, onCitation, variant = "pa
       const conversation = id;
       const r = await postStream<{ message: ChatMessageDto; title: string }>(
         `/api/conversations/${conversation}/messages`,
-        { content: request.content, web: web && webAvailable, ...(request.regenerate ? { regenerate: true } : {}), ...(request.documentIds?.length ? { documentIds: request.documentIds } : {}) },
+        { content: request.content, web: web && webAvailable, lang, ...(request.regenerate ? { regenerate: true } : {}), ...(request.documentIds?.length ? { documentIds: request.documentIds } : {}) },
         {
           status: (t) => {
             streamed.current = "";
@@ -343,6 +345,12 @@ export default function ChatPanel({ scope, documentId, onCitation, variant = "pa
 
   const webHint = webAvailable ? (status?.web?.backend === "wikipedia" ? "Wikipédia uniquement : aucun moteur web complet n'est configuré." : "Sources officielles et universitaires en priorité.") : "Aucun moteur de recherche web n'est configuré.";
   const settings = (
+    <div className="space-y-3">
+    <div className="text-sm">
+      <p className="mb-1.5 font-medium">Langue de discussion</p>
+      <ChatLanguageSwitch value={lang} onChange={setLang} />
+      <p className="mt-1 text-xs leading-snug text-muted-foreground">{lang === "en" ? "L'IA vous répond en anglais." : "L'IA vous répond en français."}</p>
+    </div>
     <label className="flex items-start gap-2.5 text-sm">
       <Switch checked={web && webAvailable} onCheckedChange={toggleWeb} disabled={!webAvailable} aria-label="Recherche web" className="mt-0.5" />
       <span className="min-w-0">
@@ -352,6 +360,7 @@ export default function ChatPanel({ scope, documentId, onCitation, variant = "pa
         <span className="block text-xs leading-snug text-muted-foreground">{webHint}</span>
       </span>
     </label>
+    </div>
   );
 
   const sidebarEl = <ChatSidebar conversations={conversations} activeId={activeId} onNew={newConversation} onOpen={(id) => void open(id)} onRename={(id, t) => void rename(id, t)} onRemove={(id) => void remove(id)} settings={settings} />;
@@ -407,6 +416,7 @@ export default function ChatPanel({ scope, documentId, onCitation, variant = "pa
               <History className="h-4 w-4" aria-hidden />
             </Button>
             <p className="min-w-0 flex-1 truncate text-sm font-medium">{active?.title ?? ""}</p>
+            <ChatLanguageSwitch value={lang} onChange={setLang} />
             {(!sidebar || activeId) && (
               <Button size="icon" variant="ghost" className="h-8 w-8 md:hidden" onClick={newConversation} aria-label="Nouvelle conversation">
                 <MessageSquarePlus className="h-4 w-4" aria-hidden />
@@ -428,6 +438,7 @@ export default function ChatPanel({ scope, documentId, onCitation, variant = "pa
                 ))}
               </SelectContent>
             </Select>
+            <ChatLanguageSwitch value={lang} onChange={setLang} />
             <Button size="icon" variant={web && webAvailable ? "secondary" : "ghost"} className="h-8 w-8 shrink-0" onClick={() => toggleWeb(!web)} disabled={!webAvailable} aria-pressed={web && webAvailable} aria-label="Recherche web" title={webAvailable ? (web ? "Recherche web activée" : "Recherche web désactivée") : "Recherche web indisponible"}>
               <Globe className="h-4 w-4" aria-hidden />
             </Button>

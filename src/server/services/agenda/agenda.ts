@@ -34,6 +34,8 @@ export const createEventSchema = z.object({
   teacher: optionalText(120),
   groupName: optionalText(120),
   description: optionalText(2000),
+  /** Emploi du temps qui reçoit le cours (créé à la main ou importé). */
+  scheduleId: z.string().min(1).max(40).nullable().optional(),
   force: z.boolean().optional(),
 });
 
@@ -57,9 +59,41 @@ export const patchEventSchema = z.object({
 
 type EventRow = Awaited<ReturnType<typeof loadEvents>>[number];
 
-const loadEvents = (userId: string) => db.scheduleEvent.findMany({ where: { userId }, include: { overrides: true } });
+/**
+ * Emploi du temps suivi par l'étudiant parmi ceux qu'il a importés. null : tous sont affichés (comportement d'origine).
+ * Un emploi du temps supprimé entre-temps revient à « tous ».
+ */
+export async function activeScheduleOf(userId: string): Promise<string | null> {
+  const s = await db.userSettings.findUnique({ where: { userId }, select: { activeScheduleId: true } });
+  if (!s?.activeScheduleId) return null;
+  const exists = await db.scheduleImport.count({ where: { id: s.activeScheduleId, userId, status: "CONFIRMED" } });
+  return exists ? s.activeScheduleId : null;
+}
+
+/** Cours et pauses visibles : ceux saisis à la main et ceux de l'emploi du temps suivi. */
+export const scheduleFilter = (active: string | null) => (active ? { OR: [{ importId: null }, { importId: active }] } : {});
+
+/**
+ * Périmètre lu : un emploi du temps précis (`scheduleId`, vérifié comme appartenant à l'étudiant), ou à défaut
+ * l'emploi du temps suivi (null = tous).
+ */
+async function scopeWhere(userId: string, scheduleId?: string | null) {
+  if (scheduleId) {
+    await ownedSchedule(userId, scheduleId);
+    return { importId: scheduleId };
+  }
+  return scheduleFilter(await activeScheduleOf(userId));
+}
+
+export async function ownedSchedule(userId: string, id: string) {
+  const row = await db.scheduleImport.findFirst({ where: { id, userId, status: "CONFIRMED" }, select: { id: true } });
+  if (!row) throw new ApiHttpError("Emploi du temps introuvable.", 404);
+  return row;
+}
+
+const loadEvents = async (userId: string, scheduleId?: string | null) => db.scheduleEvent.findMany({ where: { userId, ...(await scopeWhere(userId, scheduleId)) }, include: { overrides: true } });
 const toRecord = (e: EventRow): ScheduleEventRecord => ({ ...e, recurrence: e.recurrence as Recurrence, weekPattern: e.weekPattern as WeekPattern, dates: e.dates as string[] | null });
-const loadBreaks = (userId: string): Promise<BreakRecord[]> => db.scheduleBreak.findMany({ where: { userId } });
+export const loadBreaks = async (userId: string, scheduleId?: string | null): Promise<(BreakRecord & { id: string; importId: string | null })[]> => db.scheduleBreak.findMany({ where: { userId, ...(await scopeWhere(userId, scheduleId)) } });
 
 export async function weekSwapOf(userId: string): Promise<boolean> {
   const s = await db.userSettings.findUnique({ where: { userId }, select: { scheduleWeekSwap: true } });
@@ -71,17 +105,17 @@ function expand(rows: EventRow[], from: string, to: string, swap: boolean): Occu
 }
 
 /** Séances d'une période avec leur matière. */
-export async function occurrencesBetween(userId: string, from: string, to: string) {
-  const [rows, swap, subjects, breaks] = await Promise.all([loadEvents(userId), weekSwapOf(userId), db.subject.findMany({ where: { userId }, select: { id: true, name: true, color: true, icon: true }, orderBy: { name: "asc" } }), loadBreaks(userId)]);
+export async function occurrencesBetween(userId: string, from: string, to: string, scheduleId?: string | null) {
+  const [rows, swap, subjects, breaks] = await Promise.all([loadEvents(userId, scheduleId), weekSwapOf(userId), db.subject.findMany({ where: { userId }, select: { id: true, name: true, color: true, icon: true }, orderBy: { name: "asc" } }), loadBreaks(userId, scheduleId)]);
   const byId = new Map(subjects.map((s) => [s.id, s]));
   const occurrences = expand(rows, from, to, swap).map((o) => ({ ...o, subject: o.subjectId ? (byId.get(o.subjectId) ?? null) : null }));
   return { occurrences, subjects, weekSwap: swap, breaks };
 }
 
-export async function listRange(userId: string, from: string, to: string) {
+export async function listRange(userId: string, from: string, to: string, scheduleId?: string | null) {
   if (!isDate(from) || !isDate(to) || to < from) throw new ApiHttpError("Période invalide.", 422);
   if (daysBetween(from, to) > MAX_RANGE_DAYS) throw new ApiHttpError("Période trop longue.", 422);
-  return occurrencesBetween(userId, from, to);
+  return occurrencesBetween(userId, from, to, scheduleId);
 }
 
 async function requireOwnedSubject(userId: string, subjectId: string) {
@@ -126,11 +160,11 @@ export async function createEvent(userId: string, input: z.infer<typeof createEv
   const subject = input.subjectId ? await requireOwnedSubject(userId, input.subjectId) : null;
   const title = input.title?.trim() || subject?.name;
   if (!title) throw new ApiHttpError("Indiquez un titre ou choisissez une matière.", 422);
-  const [rows, swap, breaks] = await Promise.all([loadEvents(userId), weekSwapOf(userId), loadBreaks(userId)]);
-  const { force, ...data } = input;
+  const [rows, swap, breaks] = await Promise.all([loadEvents(userId, input.scheduleId), weekSwapOf(userId), loadBreaks(userId, input.scheduleId)]);
+  const { force, scheduleId, ...data } = input;
   const recurrence = data.recurrence;
   assertFree(seriesSlots({ ...data, recurrence, until: data.until ?? null }, swap), rows, breaks, swap, () => false, force);
-  return db.scheduleEvent.create({ data: { ...data, title, userId, subjectId: subject?.id ?? null, until: recurrence === "WEEKLY" ? (data.until ?? null) : null, weekPattern: recurrence === "WEEKLY" ? data.weekPattern : "ALL" } });
+  return db.scheduleEvent.create({ data: { ...data, title, userId, importId: scheduleId ?? null, subjectId: subject?.id ?? null, until: recurrence === "WEEKLY" ? (data.until ?? null) : null, weekPattern: recurrence === "WEEKLY" ? data.weekPattern : "ALL" } });
 }
 
 async function ownedEvent(userId: string, id: string) {
@@ -142,7 +176,8 @@ async function ownedEvent(userId: string, id: string) {
 export async function updateEvent(userId: string, id: string, patch: z.infer<typeof patchEventSchema>) {
   const event = await ownedEvent(userId, id);
   if (patch.subjectId) await requireOwnedSubject(userId, patch.subjectId);
-  const [rows, swap, breaks] = await Promise.all([loadEvents(userId), weekSwapOf(userId), loadBreaks(userId)]);
+  // Les chevauchements se vérifient dans l'emploi du temps du cours modifié.
+  const [rows, swap, breaks] = await Promise.all([loadEvents(userId, event.importId), weekSwapOf(userId), loadBreaks(userId, event.importId)]);
   const override = event.overrides.find((o) => o.date === patch.occurrenceDate);
   const current = {
     date: override?.newDate ?? patch.occurrenceDate,

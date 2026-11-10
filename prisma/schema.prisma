@@ -71,6 +71,7 @@ model User {
   chatMessages     ConversationMessage[]
   supportRequests  SupportRequest[]
   notifications    UserNotification[]
+  passwordResets   PasswordResetToken[]
 }
 
 model UserSettings {
@@ -83,7 +84,9 @@ model UserSettings {
   maxUploadMB   Int     @default(20)
   hintsEnabled  Boolean @default(true)
   aiModel       String  @default("claude-sonnet-5-5")
-  exerciseLang  String  @default("fr")
+  exerciseLang  String  @default("fr") // ancien réglage : la langue d'un exercice suit désormais celle de son document
+  chatLang      String  @default("fr") // fr | en : langue de discussion avec l'assistant IA
+  activeScheduleId String? // emploi du temps importé à suivre ; null = tous les emplois du temps
   retentionDays Int     @default(0) // 0 = conservation illimitée
   textSize         String  @default("normal") // normal | large
   correctionPref   String  @default("final") // immediate | final : valeur proposée à la création d'un exercice
@@ -858,6 +861,7 @@ model Exercise {
   status      ExerciseStatus @default(READY)
   origin      String         @default("DOCUMENT") // DOCUMENT | FREE | IMPORTED
   saved       Boolean        @default(true) // false : exercice ponctuel, absent de « Mes exercices » et purgé ensuite
+  language    String? // fr | en : langue de l'énoncé (déduite du document) ; null pour les exercices antérieurs
   createdAt   DateTime       @default(now())
 
   user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -1281,6 +1285,8 @@ model ScheduleImport {
   size        Int
   sha256      String
   storageKey  String
+  label       String? // nom donné à l'emploi du temps (ex. « Semestre 1 »)
+  source      String    @default("IMPORT") // IMPORT (document importé) | MANUAL (créé à la main, sans fichier)
   status      String    @default("REVIEW") // REVIEW | CONFIRMED
   draft       Json
   warnings    Json
@@ -1529,4 +1535,19 @@ model UserNotification {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, readAt, createdAt])
+}
+
+/// Lien de réinitialisation du mot de passe : seule l'empreinte SHA-256 du jeton est conservée.
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdBy String    @default("USER") // USER (demande depuis la page de connexion) | ADMIN (lien créé par l'équipe)
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
 }

@@ -13,6 +13,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { routes } from "@/config/routes";
 import type { LabKind, LabListItem } from "./types";
 import { confirmAction } from "@/components/notifications";
+import { useCachedState } from "@/hooks/use-cached-state";
+import { useBackgroundRefresh } from "@/hooks/use-background-refresh";
 
 const errText = (e: unknown, fb: string) => (e instanceof Error ? e.message : fb);
 const CODE_LANGS = [
@@ -36,15 +38,15 @@ interface ImportResponse {
 export default function LabsHome({ kind }: { kind: LabKind }) {
   const router = useRouter();
   const base = kind === "SQL" ? routes.sql : routes.code;
-  const [items, setItems] = useState<LabListItem[] | null>(null);
-  const [caps, setCaps] = useState<Capabilities | null>(null);
+  const [items, setItems] = useCachedState<LabListItem[] | null>(["labs", kind], null);
+  const [caps, setCaps] = useCachedState<Capabilities | null>(["labs-caps"], null);
   const [error, setError] = useState<string | null>(null);
   const [lang, setLang] = useState("python");
   const [fixture, setFixture] = useState("bibliotheque");
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   // import d'un document
-  const [subjects, setSubjects] = useState<{ id: string; name: string }[]>([]);
+  const [subjects, setSubjects] = useCachedState<{ id: string; name: string }[]>(["subjects-list"], []);
   const [subjectId, setSubjectId] = useState("");
   const [docs, setDocs] = useState<{ id: string; name: string }[]>([]);
   const [docId, setDocId] = useState("");
@@ -60,6 +62,7 @@ export default function LabsHome({ kind }: { kind: LabKind }) {
       setError(errText(e, "Chargement impossible."));
     }
   }, [kind]);
+  useBackgroundRefresh(load, { topics: ["labs"] });
 
   useEffect(() => {
     void load();

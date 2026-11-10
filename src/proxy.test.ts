@@ -85,8 +85,8 @@ describe("adresse secrète du back-office (ADMIN_PATH)", () => {
   });
 
   it("fonctionne avec une adresse lisible", async () => {
-    process.env.ADMIN_PATH = "nialaspace-admin";
-    const entry = await call("niala.test", "/nialaspace-admin", undefined);
+    process.env.ADMIN_PATH = "espace-exemple";
+    const entry = await call("niala.test", "/espace-exemple", undefined);
     expect(entry.status).toBe(307);
     expect(denied(await call("niala.test", "/admin", undefined))).toBe(true);
   });
@@ -104,7 +104,7 @@ describe("adresse secrète du back-office (ADMIN_PATH)", () => {
     }
   });
 
-  it("accepte une adresse lisible comme nialaspace-admin, refuse les valeurs trop courtes ou réservées et ferme le back-office en production sans ADMIN_PATH", async () => {
+  it("accepte une adresse lisible comme espace-exemple, refuse les valeurs trop courtes ou réservées et ferme le back-office en production sans ADMIN_PATH", async () => {
     for (const bad of ["admin", "court", "reglages", "a b c d e f g h", "../admin-x"]) {
       process.env.ADMIN_PATH = bad;
       expect((await call("niala.test", "/admin", undefined)).headers.get("x-middleware-rewrite")).toBeNull(); // hors production, valeur invalide ignorée
@@ -118,7 +118,7 @@ describe("adresse secrète du back-office (ADMIN_PATH)", () => {
 });
 
 describe("code d'accès devant la connexion (ADMIN_ACCESS_HASH)", () => {
-  const SLUG = "nialaspace-admin";
+  const SLUG = "espace-exemple";
   const HASH = "a".repeat(32) + "." + "b".repeat(128);
   const denied = (r: Response) => r.headers.get("x-middleware-rewrite")?.includes("__niala_absent__") === true;
 

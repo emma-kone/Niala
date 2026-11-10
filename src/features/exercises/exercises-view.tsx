@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SubjectTabs } from "@/features/subject-files/tabs";
 import { exercisesBase, fmtPoints, type ExerciseListItem } from "./types";
+import { useBackgroundRefresh } from "@/hooks/use-background-refresh";
 
 const errText = (e: unknown, fb: string) => (e instanceof Error ? e.message : fb);
 const FILTERS: { value: string; label: string }[] = [{ value: "all", label: "Tous" }, { value: "in_progress", label: "En cours" }, { value: "IMPORTED", label: "Sujets importés" }, { value: "FREE", label: "Génération libre" }, { value: "DOCUMENT", label: "Depuis un cours" }];
@@ -37,6 +38,7 @@ export default function ExercisesView({ subjectId }: { subjectId?: string }) {
       setError({ message: errText(e, "Chargement impossible."), status: (e as { status?: number }).status });
     }
   }, [subjectId, qc]);
+  useBackgroundRefresh(load, { topics: ["exercises"] });
 
   useEffect(() => {
     void load();

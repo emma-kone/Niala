@@ -4,7 +4,7 @@ import { ApiHttpError } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
 import { DEFAULT_PREFS, PRIORITIES, TASK_STATUSES, TASK_TYPES, effectiveStatus, isOpen, planStudySessions, type BusySlot, type PlannerPrefs, type StoredStatus } from "@/server/domain/academic";
 import { addDays, breakOverlap, findConflicts, isDate, overlaps, validateTimes, weekday } from "@/server/domain/schedule";
-import { occurrencesBetween } from "./agenda";
+import { loadBreaks, occurrencesBetween, ownedSchedule } from "./agenda";
 
 // Tâches, séances de travail et préférences de l'agenda académique. Tout est filtré par propriétaire.
 
@@ -100,37 +100,17 @@ export async function deleteTask(userId: string, id: string) {
 
 // ── Préférences ──────────────────────────────────────────────────────────────
 
-export const prefsSchema = z.object({
-  workStart: minutes,
-  workEnd: minutes,
-  maxDailyMinutes: z.number().int().min(30).max(720),
-  restMinutes: z.number().int().min(0).max(120),
-  weekends: z.boolean(),
-  quietStart: minutes,
-  quietEnd: minutes,
-  courseReminderMinutes: z.number().int().min(0).max(240).default(DEFAULT_PREFS.courseReminderMinutes),
-  taskReminders: z.boolean().default(true),
-  sessionReminders: z.boolean().default(true),
-  lateReminders: z.boolean().default(true),
-});
-
+/** Préférences de planification : valeurs enregistrées autrefois, sinon valeurs par défaut (plus de réglage à l'écran). */
 export async function getPrefs(userId: string): Promise<PlannerPrefs> {
   const s = await db.userSettings.findUnique({ where: { userId }, select: { agendaPrefs: true } });
   return { ...DEFAULT_PREFS, ...((s?.agendaPrefs as Partial<PlannerPrefs> | null) ?? {}) };
-}
-
-export async function savePrefs(userId: string, prefs: PlannerPrefs) {
-  if (prefs.workEnd <= prefs.workStart) throw new ApiHttpError("La fin de la période de travail doit suivre son début.", 422);
-  const agendaPrefs = prefs as unknown as Prisma.InputJsonValue;
-  await db.userSettings.upsert({ where: { userId }, create: { userId, agendaPrefs }, update: { agendaPrefs } });
-  return prefs;
 }
 
 // ── Planification ────────────────────────────────────────────────────────────
 
 /** Tout ce qui occupe l'étudiant : cours, pauses et séances déjà acceptées. */
 async function busySlots(userId: string, from: string, to: string, exceptTaskId?: string): Promise<BusySlot[]> {
-  const [{ occurrences }, sessions, breaks] = await Promise.all([occurrencesBetween(userId, from, to), db.studySession.findMany({ where: { userId, date: { gte: from, lte: to }, ...(exceptTaskId ? { taskId: { not: exceptTaskId } } : {}) } }), db.scheduleBreak.findMany({ where: { userId } })]);
+  const [{ occurrences }, sessions, breaks] = await Promise.all([occurrencesBetween(userId, from, to), db.studySession.findMany({ where: { userId, date: { gte: from, lte: to }, ...(exceptTaskId ? { taskId: { not: exceptTaskId } } : {}) } }), loadBreaks(userId)]);
   const out: BusySlot[] = [...occurrences.filter((o) => !o.allDay), ...sessions].map((s) => ({ date: s.date, startMinutes: s.startMinutes, endMinutes: s.endMinutes }));
   // Une journée couverte par un congé ou des examens n'est pas proposée comme disponible par défaut.
   for (const o of occurrences.filter((x) => x.allDay && x.kind !== "HOLIDAY")) out.push({ date: o.date, startMinutes: 0, endMinutes: 1440 });
@@ -161,7 +141,7 @@ export async function acceptPlan(userId: string, id: string, input: z.infer<type
   if (conflict) throw new ApiHttpError("Deux séances se chevauchent.", 422);
   if (!input.force && input.sessions.length) {
     const dates = input.sessions.map((s) => s.date).sort();
-    const [{ occurrences }, others, breaks] = await Promise.all([occurrencesBetween(userId, dates[0], dates[dates.length - 1]), db.studySession.findMany({ where: { userId, taskId: { not: id } } }), db.scheduleBreak.findMany({ where: { userId } })]);
+    const [{ occurrences }, others, breaks] = await Promise.all([occurrencesBetween(userId, dates[0], dates[dates.length - 1]), db.studySession.findMany({ where: { userId, taskId: { not: id } } }), loadBreaks(userId)]);
     const busy = [...occurrences.filter((o) => !o.allDay).map((o) => ({ key: o.key, date: o.date, title: o.title, startMinutes: o.startMinutes, endMinutes: o.endMinutes })), ...others.map((o) => ({ key: o.id, date: o.date, title: "une autre séance", startMinutes: o.startMinutes, endMinutes: o.endMinutes }))];
     for (const s of input.sessions) {
       const clash = findConflicts(s, busy)[0];
@@ -186,16 +166,34 @@ export async function setSessionDone(userId: string, id: string, done: boolean) 
   return { ok: true };
 }
 
-export async function listBreaks(userId: string) {
-  return db.scheduleBreak.findMany({ where: { userId }, orderBy: { startMinutes: "asc" } });
+export async function listBreaks(userId: string, scheduleId?: string | null) {
+  return (await loadBreaks(userId, scheduleId)).sort((a, b) => (a.weekday ?? 0) - (b.weekday ?? 0) || a.startMinutes - b.startMinutes);
 }
 
-export const breakSchema = z.object({ label: z.string().trim().min(1).max(60), startMinutes: minutes, endMinutes: minutes, weekday: z.number().int().min(1).max(7).nullable().default(null) });
+export const breakSchema = z.object({
+  label: z.string().trim().min(1).max(60),
+  startMinutes: minutes,
+  endMinutes: minutes,
+  weekday: z.number().int().min(1).max(7).nullable().default(null),
+  /** Emploi du temps auquel appartient la pause (ou la plage libre, le déjeuner…). */
+  scheduleId: z.string().min(1).max(40).nullable().optional(),
+});
+export const patchBreakSchema = breakSchema.omit({ scheduleId: true }).partial();
 
 export async function createBreak(userId: string, input: z.infer<typeof breakSchema>) {
   const problem = validateTimes(input.startMinutes, input.endMinutes);
   if (problem) throw new ApiHttpError(problem, 422);
-  return db.scheduleBreak.create({ data: { ...input, userId } });
+  const { scheduleId, ...data } = input;
+  if (scheduleId) await ownedSchedule(userId, scheduleId);
+  return db.scheduleBreak.create({ data: { ...data, userId, importId: scheduleId ?? null } });
+}
+
+export async function updateBreak(userId: string, id: string, patch: z.infer<typeof patchBreakSchema>) {
+  const current = await db.scheduleBreak.findFirst({ where: { id, userId } });
+  if (!current) throw new ApiHttpError("Pause introuvable.", 404);
+  const problem = validateTimes(patch.startMinutes ?? current.startMinutes, patch.endMinutes ?? current.endMinutes);
+  if (problem) throw new ApiHttpError(problem, 422);
+  return db.scheduleBreak.update({ where: { id }, data: patch });
 }
 
 export async function deleteBreak(userId: string, id: string) {

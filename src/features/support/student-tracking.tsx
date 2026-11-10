@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { usePathname } from "next/navigation";
-import { api } from "@/lib/client-api";
+import { usePathname, useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
+import { NOTIFICATIONS_KEY, fetchNotifications, prefetchSuggestions } from "./support-data";
 import { notify } from "@/components/notifications";
 
 // Suivi d'usage côté navigateur (balises légères, sans attente ni effet sur l'interface) et rappel des notifications de l'équipe.
@@ -37,6 +38,8 @@ function beacon(body: Record<string, unknown>) {
 
 export function StudentTracking() {
   const pathname = usePathname();
+  const router = useRouter();
+  const qc = useQueryClient();
   const last = useRef<string>("");
   const loadSent = useRef(false);
   const announced = useRef(false);
@@ -66,8 +69,7 @@ export function StudentTracking() {
   useEffect(() => {
     if (announced.current) return;
     announced.current = true;
-    api
-      .get<{ unread: number; items: { title: string; readAt: string | null }[] }>("/api/notifications")
+    qc.fetchQuery({ queryKey: NOTIFICATIONS_KEY, queryFn: fetchNotifications })
       .then((r) => {
         if (r.unread > 0 && shouldAnnounce()) {
           const latest = r.items.find((i) => !i.readAt);
@@ -75,7 +77,16 @@ export function StudentTracking() {
         }
       })
       .catch(() => undefined);
-  }, []);
+    // Une fois l'application chargée et au repos : la page Suggestions et ses données sont préparées en arrière-plan,
+    // pour que le module s'ouvre aussitôt.
+    const warm = () => {
+      router.prefetch("/suggestions");
+      prefetchSuggestions(qc);
+    };
+    const idle = (window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
+    if (idle) idle(warm, { timeout: 4000 });
+    else setTimeout(warm, 2000);
+  }, [qc, router]);
 
   return null;
 }

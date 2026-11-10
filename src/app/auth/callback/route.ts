@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { setLinkCookie, setSessionCookie } from "@/lib/auth";
-import { limit } from "@/lib/api-helpers";
+import { clientIp, limit } from "@/lib/api-helpers";
 import { createClient } from "@/lib/supabase/server";
 import { GoogleSignInError, type GoogleProfile, googleProfileOf, signInWithGoogle } from "@/server/services/accounts";
 import { cookies } from "next/headers";
@@ -31,7 +31,7 @@ export async function GET(req: Request) {
   if (!code) return fail("failed");
 
   try {
-    limit("google-callback", 60, 60_000);
+    limit(`google-callback:${clientIp(req)}`, 20, 60_000);
   } catch {
     return fail("failed");
   }

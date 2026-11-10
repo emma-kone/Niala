@@ -1,4 +1,4 @@
-import { HelpSection } from "@/features/support/help-section";
+import { SuggestionsModule } from "@/features/support/help-section";
 
 export const metadata = { title: "Suggestions et retours — Niala" };
 
@@ -10,7 +10,7 @@ export default function SuggestionsPage() {
         <h1 className="typo-h1">Suggestions et retours</h1>
         <p className="typo-subtitle mt-1">Proposez une amélioration, signalez un problème ou demandez de l&apos;aide. L&apos;équipe Niala lit chaque message et vous répond ici.</p>
       </header>
-      <HelpSection page />
+      <SuggestionsModule />
     </div>
   );
 }

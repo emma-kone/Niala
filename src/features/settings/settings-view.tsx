@@ -9,7 +9,7 @@
 import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, Bell, BookOpenCheck, Download, LifeBuoy, Loader2, LogOut, MonitorSmartphone, ShieldCheck, SlidersHorizontal, Trash2, UserRound, XCircle, type LucideIcon } from "lucide-react";
+import { ArrowRight, Bell, BookOpenCheck, Loader2, LogOut, MonitorSmartphone, ShieldCheck, SlidersHorizontal, Trash2, UserRound, XCircle, type LucideIcon } from "lucide-react";
 import { api } from "@/lib/client-api";
 import { routes } from "@/config/routes";
 import { cn } from "@/lib/utils";
@@ -27,7 +27,6 @@ import { EXERCISE_MODES, MODE_META } from "@/server/domain/exercise-types";
 import { useAppStore } from "@/store/app-store";
 import { PROFILE_KEY, fetchProfile, profileSummary, type Profile } from "@/features/profile/types";
 import { UserAvatar } from "@/features/profile/user-avatar";
-import { HelpSection } from "@/features/support/help-section";
 import { startTour } from "@/components/tour/product-tour";
 import { STUDENT_TOUR_ID } from "@/features/tour/steps";
 import { useSettings, type UserSettings } from "./use-settings";
@@ -37,7 +36,6 @@ const SECTIONS: { id: string; label: string; icon: LucideIcon }[] = [
   { id: "preferences", label: "Préférences générales", icon: SlidersHorizontal },
   { id: "apprentissage", label: "Apprentissage", icon: BookOpenCheck },
   { id: "notifications", label: "Notifications", icon: Bell },
-  { id: "aide", label: "Aide, suggestions et retours", icon: LifeBuoy },
   { id: "donnees", label: "Confidentialité et données", icon: ShieldCheck },
 ];
 
@@ -325,13 +323,9 @@ export default function SettingsView() {
             <Skeleton className="h-96 rounded-3xl" aria-hidden />
           ) : (
             <>
-              <Section id="preferences" title="Préférences générales" text="L'apparence et la langue de Niala.">
-                <Row title="Langue de l'interface" text="Niala est disponible en français. D'autres langues seront proposées ici lorsqu'elles existeront."><span className="text-sm font-medium">Français</span></Row>
+              <Section id="preferences" title="Préférences générales" text="L'apparence de Niala.">
                 <Row title="Visite guidée" text="Revoir la présentation des modules de Niala.">
                   <Button type="button" variant="outline" size="sm" onClick={() => startTour(STUDENT_TOUR_ID)}>Revoir la visite</Button>
-                </Row>
-                <Row title="Langue des exercices" text="Langue des énoncés générés, des explications et du tuteur." htmlFor="setting-lang">
-                  <Choice id="setting-lang" value={settings.exerciseLang} onChange={(v) => void update({ exerciseLang: v })} options={[{ value: "fr", label: "Français" }, { value: "en", label: "Anglais" }]} />
                 </Row>
                 <Row title="Thème" htmlFor="setting-theme">
                   <Choice id="setting-theme" value={theme} onChange={(v) => void changeTheme(v)} options={[{ value: "system", label: "Système" }, { value: "light", label: "Clair" }, { value: "dark", label: "Sombre" }]} />
@@ -363,22 +357,17 @@ export default function SettingsView() {
                 </Row>
               </Section>
 
-              <Section id="notifications" title="Notifications" text="Messages affichés dans Niala. Les rappels de cours et leurs horaires se règlent dans l'agenda.">
+              <Section id="notifications" title="Notifications" text="Messages affichés dans Niala et, si vous l'autorisez, sur votre appareil. Le moment de chaque rappel se choisit dans la tâche.">
                 {toggle("notifyProgress", "Progression", "Votre résultat et sa prise en compte à la fin d'un exercice.")}
                 {toggle("notifyRevision", "Rappels de révision", "Au plus une fois par jour, les notions qu'il est utile de retravailler.")}
-                {toggle("notifyActivities", "Activités et exercices", "Cours, séances de travail, échéances et retards de votre agenda.")}
+                {toggle("notifyActivities", "Tâches, cours et rappels", "Rappels de vos tâches à l'heure prévue, de vos cours et de vos séances de travail.")}
               </Section>
             </>
           )}
 
-          <HelpSection />
-
           <Section id="donnees" title="Confidentialité et données" text="Vos données vous appartiennent.">
             <Row title="Utilisation de vos données" text="Ce que Niala collecte, pourquoi, et qui y accède.">
               <Button asChild variant="outline" size="sm"><Link href={routes.privacy}>Politique de confidentialité</Link></Button>
-            </Row>
-            <Row title="Copie de vos données" text="Profil, préférences, matières, notes, exercices et résultats, au format JSON.">
-              <Button asChild variant="outline" size="sm" className="gap-1.5"><a href="/api/account/export" download><Download className="h-4 w-4" aria-hidden /> Télécharger</a></Button>
             </Row>
             {profile && <Row title="Supprimer mon compte" text="Efface définitivement votre compte et tous vos contenus."><DeleteAccount profile={profile} /></Row>}
           </Section>

@@ -28,7 +28,7 @@ interface SnapshotQuestion {
   concepts: { id: string; name: string }[];
 }
 export interface Snapshot {
-  exercise: { id: string; title: string; totalPoints: number; documentId: string | null; documentName: string | null; versionId: string | null; versionNumber: number | null; subjectId: string | null; correctionMode?: CorrectionMode; assistance?: Assistance; level?: string | null };
+  exercise: { id: string; title: string; totalPoints: number; documentId: string | null; documentName: string | null; versionId: string | null; versionNumber: number | null; subjectId: string | null; correctionMode?: CorrectionMode; assistance?: Assistance; level?: string | null; language?: string | null };
   questions: SnapshotQuestion[];
   /** Bilan rédigé par l'IA après la correction : seul ajout à la copie figée, qui ne modifie aucune question. */
   review?: AttemptReview;
@@ -65,6 +65,7 @@ export async function startAttempt(userId: string, exerciseId: string, opts: { f
       correctionMode: (exercise.config as { correctionMode?: CorrectionMode } | null)?.correctionMode ?? "final",
       assistance: assistanceOf((exercise.config as { mode?: ExerciseMode } | null)?.mode),
       level: (exercise.config as { free?: { level?: string } } | null)?.free?.level ?? null,
+      language: exercise.language ?? null,
     },
     questions: exercise.questions.map((q) => ({
       position: q.position,

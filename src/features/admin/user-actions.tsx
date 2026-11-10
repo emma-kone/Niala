@@ -15,6 +15,7 @@ export function UserActions(p: Props) {
   const [reason, setReason] = useState("");
   const [mode, setMode] = useState<null | "edit" | "delete">(null);
   const [typed, setTyped] = useState("");
+  const [resetLink, setResetLink] = useState<{ url: string; expiresAt: string } | null>(null);
   const [form, setForm] = useState({ name: p.name ?? "", category: p.category ?? "", institution: p.institution ?? "", field: p.field ?? "" });
 
   async function run(task: () => Promise<unknown>, ok: string) {
@@ -62,6 +63,18 @@ export function UserActions(p: Props) {
     }
   }
 
+  async function createResetLink() {
+    if (!(await confirmAction(`Créer un lien de réinitialisation du mot de passe pour ${p.email} ? Valable 24 h et une seule fois ; tout lien précédent est annulé. Transmettez-le uniquement à l'étudiant, par un canal vérifié.`, { title: "Lien de réinitialisation", confirmLabel: "Créer le lien" }))) return;
+    setBusy(true);
+    try {
+      setResetLink(await api.post<{ url: string; expiresAt: string }>(`/api/admin/users/${p.id}/reset-link`));
+    } catch (e) {
+      notify({ title: "Action impossible", description: e instanceof Error ? e.message : "Réessayez.", variant: "error" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const btn = "rounded-lg border px-3 py-1.5 text-sm font-medium hover:bg-muted disabled:opacity-50";
   const input = "h-9 w-full rounded-lg border bg-background px-2.5 text-sm";
 
@@ -82,6 +95,14 @@ export function UserActions(p: Props) {
             <button disabled={busy} onClick={() => void setStatus("ACTIVE")} className={btn}>Réactiver le compte</button>
           )}
           <button disabled={busy} onClick={() => setMode(mode === "edit" ? null : "edit")} className={btn}>Modifier les renseignements</button>
+          {p.status === "ACTIVE" && <button disabled={busy} onClick={() => void createResetLink()} className={btn}>Lien de réinitialisation du mot de passe</button>}
+          {resetLink && (
+            <div className="space-y-2 rounded-xl border p-3">
+              <p className="text-xs text-muted-foreground">Lien à usage unique, valable jusqu&apos;au {new Date(resetLink.expiresAt).toLocaleString("fr-FR")}. Il n&apos;est affiché qu&apos;une fois.</p>
+              <input readOnly className={input} value={resetLink.url} aria-label="Lien de réinitialisation" onFocus={(e) => e.currentTarget.select()} />
+              <button type="button" className={btn} onClick={() => void navigator.clipboard.writeText(resetLink.url).then(() => notify({ title: "Lien copié", variant: "success" }))}>Copier le lien</button>
+            </div>
+          )}
           {mode === "edit" && (
             <form onSubmit={save} className="space-y-2 rounded-xl border p-3">
               <label className="block text-xs text-muted-foreground">Nom<input className={`${input} mt-1`} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} maxLength={80} /></label>

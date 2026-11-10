@@ -264,6 +264,41 @@ samp,
     @apply bg-background text-foreground;
   }
 
+  /* ── Curseurs selon ce qui est survolé ────────────────────────────────────
+     Flèche par défaut, y compris sur le texte (jamais de curseur « texte » sur un paragraphe ou un titre) ;
+     main sur tout ce qui se clique ; curseur de saisie uniquement là où l'on écrit ; interdit sur ce qui est
+     désactivé. Les classes utilitaires (cursor-grab…) restent prioritaires sur ces règles de base. */
+  html, body {
+    cursor: default;
+  }
+  a[href], area[href], button, summary, select, label[for], label:has(> input[type="checkbox"]), label:has(> input[type="radio"]),
+  input[type="checkbox"], input[type="radio"], input[type="file"], input[type="range"], input[type="color"],
+  input[type="submit"], input[type="button"], input[type="reset"], input[type="date"]::-webkit-calendar-picker-indicator,
+  [role="button"], [role="tab"], [role="radio"], [role="checkbox"], [role="switch"], [role="link"],
+  [role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"], [role="option"], [role="slider"], [role="combobox"]:not(input),
+  [data-slot="select-trigger"], [onclick] {
+    cursor: pointer;
+  }
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([readonly]),
+  textarea:not([readonly]), [contenteditable=""], [contenteditable="true"], .ProseMirror, .cm-content {
+    cursor: text;
+  }
+  input[readonly], textarea[readonly] {
+    cursor: default;
+  }
+  [aria-roledescription="draggable"], [draggable="true"] {
+    cursor: grab;
+  }
+  [aria-roledescription="draggable"]:active, [draggable="true"]:active {
+    cursor: grabbing;
+  }
+  [aria-busy="true"] {
+    cursor: progress;
+  }
+  :disabled, [aria-disabled="true"], [data-disabled] {
+    cursor: not-allowed;
+  }
+
   /* Titres responsive : jamais de débordement */
   h1, h2, h3, h4, h5, h6 {
     text-wrap: balance;
@@ -513,4 +548,11 @@ samp,
     0%, 60%, 100% { opacity: 0.45; }
     30% { opacity: 1; }
   }
+}
+
+/* Lecteur PDF : pdf.js impose un curseur « texte » sur les passages du document. On garde la flèche, comme sur le reste
+   du texte de Niala ; la sélection d'un passage (annotations, citations) fonctionne toujours. Règle hors couche : elle
+   doit l'emporter sur la feuille de style de pdf.js. */
+.textLayer :is(span, br) {
+  cursor: default;
 }

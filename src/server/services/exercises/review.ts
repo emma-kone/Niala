@@ -20,7 +20,7 @@ const reviewSchema = z.object({
 });
 export type AttemptReview = z.infer<typeof reviewSchema>;
 
-const SYSTEM = `Tu es un enseignant bienveillant et précis. Tu rédiges en français le bilan d'un exercice déjà corrigé.
+const SYSTEM = `Tu es un enseignant bienveillant et précis. Tu rédiges le bilan d'un exercice déjà corrigé, dans la langue de ses énoncés (en anglais si les énoncés sont en anglais, sinon en français).
 ${UNTRUSTED_RULES}
 
 Règles :

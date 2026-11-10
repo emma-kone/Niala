@@ -57,6 +57,11 @@ export async function handle<T>(fn: () => Promise<T>): Promise<NextResponse> {
   }
 }
 
+/** Adresse du client telle que transmise par l'hébergeur (première adresse de x-forwarded-for). */
+export function clientIp(req: Request): string {
+  return (req.headers.get("x-forwarded-for") ?? "").split(",")[0]?.trim() || req.headers.get("x-real-ip") || "inconnue";
+}
+
 export function limit(key: string, max: number, windowMs: number) {
   if (!rateLimit(key, max, windowMs)) {
     throw new ApiHttpError("Trop de requêtes — patientez un instant avant de réessayer.", 429);

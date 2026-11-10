@@ -19,6 +19,7 @@ const patchSchema = z.object({
   maxUploadMB: z.number().int().min(1).max(50).optional(),
   hintsEnabled: z.boolean().optional(),
   exerciseLang: z.enum(["fr", "en"]).optional(),
+  chatLang: z.enum(["fr", "en"]).optional(),
   textSize: z.enum(["normal", "large"]).optional(),
   correctionPref: z.enum(["immediate", "final"]).optional(),
   explanationLevel: z.enum(["simple", "standard", "detailed"]).optional(),

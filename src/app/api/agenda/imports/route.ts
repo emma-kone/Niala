@@ -18,6 +18,7 @@ export async function POST(req: Request) {
     });
     const file = form.get("file");
     if (!(file instanceof File)) throw new ApiHttpError("Aucun fichier reçu.", 422);
-    return startImport(user.id, file);
+    const target = form.get("scheduleId");
+    return startImport(user.id, file, typeof target === "string" && target ? target : null);
   });
 }

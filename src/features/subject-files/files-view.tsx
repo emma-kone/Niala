@@ -53,6 +53,8 @@ import { uploadFiles, type UploadItem } from "./upload";
 import { formatDate, formatSize, STATUS_LABEL, type DocumentDetails, type DocumentDto, type ExplorerResponse, type FolderDto } from "./types";
 import { Properties } from "./properties";
 import { SubjectTabs } from "./tabs";
+import { useCachedState } from "@/hooks/use-cached-state";
+import { useBackgroundRefresh } from "@/hooks/use-background-refresh";
 
 type Sort = "name" | "date" | "size" | "type";
 type Entry = { kind: "folder"; item: FolderDto } | { kind: "doc"; item: DocumentDto };
@@ -66,7 +68,7 @@ export default function SubjectFilesView({ subjectId }: { subjectId: string }) {
   const { toast } = useToast();
   const folderId = params.get("dossier");
 
-  const [data, setData] = useState<ExplorerResponse | null>(null);
+  const [data, setData] = useCachedState<ExplorerResponse | null>(["files", subjectId, folderId], null);
   const [error, setError] = useState<{ message: string; status?: number } | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -94,9 +96,9 @@ export default function SubjectFilesView({ subjectId }: { subjectId: string }) {
     return () => clearTimeout(t);
   }, [search]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (silent = false) => {
     const seq = ++requestSeq.current;
-    setLoading(true);
+    if (!silent) setLoading(true);
     const sp = new URLSearchParams();
     if (folderId) sp.set("folderId", folderId);
     if (query) sp.set("q", query);
@@ -109,7 +111,7 @@ export default function SubjectFilesView({ subjectId }: { subjectId: string }) {
       if (seq !== requestSeq.current) return; // réponse périmée
       setData(res);
       setError(null);
-      setSelected(new Set());
+      if (!silent) setSelected(new Set());
     } catch (e) {
       if (seq !== requestSeq.current) return;
       setError({ message: errText(e, "Chargement impossible."), status: (e as { status?: number }).status });
@@ -121,6 +123,8 @@ export default function SubjectFilesView({ subjectId }: { subjectId: string }) {
   useEffect(() => {
     void load();
   }, [load]);
+  const silentLoad = useCallback(() => load(true), [load]);
+  useBackgroundRefresh(silentLoad, { topics: ["files"], enabled: selected.size === 0 && !uploads.some((u) => u.phase === "sending") });
 
   // Rafraîchit tant que des fichiers sont en cours de traitement
   const busyDocs = data?.documents.some((d) => d.status === "PENDING" || d.status === "PROCESSING");

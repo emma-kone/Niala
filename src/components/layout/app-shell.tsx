@@ -24,7 +24,7 @@ import type { SessionBootstrap } from "@/server/services/session";
 
 /** Les données déjà chargées restent affichées pendant leur actualisation : changer de module ne repart plus de zéro. */
 function makeQueryClient(initial: SessionBootstrap) {
-  const client = new QueryClient({ defaultOptions: { queries: { staleTime: 30_000, gcTime: 10 * 60_000, retry: 1, refetchOnWindowFocus: false } } });
+  const client = new QueryClient({ defaultOptions: { queries: { staleTime: 30_000, gcTime: 30 * 60_000, retry: 1, refetchOnWindowFocus: true, refetchOnReconnect: true } } });
   if (initial.settings) client.setQueryData(SETTINGS_KEY, initial.settings);
   return client;
 }

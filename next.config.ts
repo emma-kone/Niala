@@ -20,7 +20,11 @@ const nextConfig: NextConfig = {
       "./node_modules/lines-and-columns/**/*",
     ],
   },
-  /* config options here */
+  experimental: {
+    // Un module déjà visité se rouvre instantanément depuis le cache du navigateur (sans écran de chargement) ;
+    // ses données sont ensuite rafraîchies en arrière-plan par le module lui-même.
+    staleTimes: { dynamic: 180, static: 600 },
+  },
   reactStrictMode: false,
   allowedDevOrigins: ["192.168.229.1"],
 };

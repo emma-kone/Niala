@@ -97,7 +97,8 @@ export default function PdfViewer({ src, downloadUrl, fileName, initialPage = 1,
   // ── Chargement du document ──
   useEffect(() => {
     let cancelled = false;
-    let loaded: PDFDocumentProxy | null = null;
+    // pdf.js 6 : le document se ferme par sa tâche de chargement (worker et requêtes compris).
+    let loading: { destroy(): Promise<void> } | null = null;
     setError(null);
     setDoc(null);
     (async () => {
@@ -106,9 +107,9 @@ export default function PdfViewer({ src, downloadUrl, fileName, initialPage = 1,
         if (cancelled) return;
         setPdfjs(lib);
         const task = lib.getDocument({ url: src, withCredentials: true });
+        loading = task;
         const pdf = await task.promise;
-        if (cancelled) return void pdf.destroy();
-        loaded = pdf;
+        if (cancelled) return void task.destroy();
         const first = await pdf.getPage(1);
         const vp = first.getViewport({ scale: 1 });
         if (cancelled) return;
@@ -129,7 +130,7 @@ export default function PdfViewer({ src, downloadUrl, fileName, initialPage = 1,
     })();
     return () => {
       cancelled = true;
-      loaded?.destroy();
+      void loading?.destroy();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [src]);

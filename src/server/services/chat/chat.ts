@@ -47,6 +47,8 @@ export const messageSchema = z
     documentIds: z.array(z.string().min(1)).max(12).optional(),
     /** Relance la dernière question au lieu d'en poser une nouvelle. */
     regenerate: z.boolean().optional(),
+    /** Langue de discussion choisie par l'étudiant (français ou anglais). */
+    lang: z.enum(["fr", "en"]).optional(),
   })
   .refine((m) => m.regenerate || m.content.length > 0, { message: "Message vide.", path: ["content"] });
 
@@ -302,8 +304,16 @@ function coverageText(docs: { doc: DocInfo; cov: Coverage }[]): string {
     .join("\n");
 }
 
-function systemPrompt(scope: "GLOBAL" | "DOCUMENT", docs: { doc: DocInfo; cov: Coverage }[], totalDocs: number, web: boolean): string {
-  return `Tu es l'assistant pédagogique de Niala, une plateforme d'apprentissage personnelle. Tu aides un étudiant : comprendre ses cours, répondre à ses questions de connaissances générales, donner des explications, des exemples, des comparaisons, des approfondissements et des exercices d'application. Réponds en français (sauf demande contraire), de façon structurée et concise, en Markdown simple. Écris les formules mathématiques en LaTeX entre doubles dollars, par exemple $$n! = n \\times (n-1)!$$ ; n'utilise jamais un dollar seul pour une formule.
+export type ChatLang = "fr" | "en";
+
+/** Consigne de langue : en anglais, toute la réponse est rédigée en anglais, y compris les mentions imposées plus bas. */
+function languageRule(lang: ChatLang): string {
+  if (lang === "fr") return "Réponds en français (sauf demande contraire)";
+  return "LANGUE DE LA CONVERSATION : ANGLAIS. L'étudiant a choisi de discuter en anglais : rédige TOUTES tes réponses en anglais, même si ses documents, ses messages ou ces consignes sont en français (traduis les passages de cours que tu cites et garde entre parenthèses le terme d'origine quand c'est utile). Les mentions imposées ci-dessous s'écrivent en anglais : « According to your document, … », « outside the course: … », « ⚠️ Unofficial / unverified information: », « ❌ I could not find reliable information on … », « (from my own knowledge, not verified online) ». Réponds";
+}
+
+function systemPrompt(scope: "GLOBAL" | "DOCUMENT", docs: { doc: DocInfo; cov: Coverage }[], totalDocs: number, web: boolean, lang: ChatLang = "fr"): string {
+  return `Tu es l'assistant pédagogique de Niala, une plateforme d'apprentissage personnelle. Tu aides un étudiant : comprendre ses cours, répondre à ses questions de connaissances générales, donner des explications, des exemples, des comparaisons, des approfondissements et des exercices d'application. ${languageRule(lang)}, de façon structurée et concise, en Markdown simple. Écris les formules mathématiques en LaTeX entre doubles dollars, par exemple $$n! = n \\times (n-1)!$$ ; n'utilise jamais un dollar seul pour une formule.
 
 ${scope === "DOCUMENT" ? "Tu discutes d'UN SEUL cours. Tu n'as accès à aucun autre document." : `Tu as accès à la bibliothèque de l'étudiant (${totalDocs} document(s) consultables). L'étudiant peut aussi te poser des questions sans rapport avec ses cours : réponds alors directement, sans chercher dans ses documents.`}
 
@@ -351,6 +361,14 @@ async function logUsage(userId: string, model: string, promptChars: number, resp
 
 export type ChatEvent = { type: "status"; text: string } | { type: "delta"; text: string };
 
+const TOOL_STATUS_EN: Record<string, string> = {
+  search_web: "Searching the web…",
+  search_passages: "Searching your courses…",
+  read_pages: "Reading pages…",
+  get_outline: "Reading the outline…",
+  list_documents: "Checking your documents…",
+};
+
 const TOOL_STATUS: Record<string, string> = {
   search_web: "Recherche sur le web…",
   search_passages: "Recherche dans vos cours…",
@@ -370,6 +388,8 @@ export interface SendOptions {
   documentIds?: string[];
   /** Interruption demandée par l'étudiant : le texte déjà rédigé est conservé. */
   signal?: AbortSignal;
+  /** Langue de discussion choisie dans le chat ; à défaut, celle enregistrée dans les préférences. */
+  lang?: ChatLang;
 }
 
 /** Code renvoyé quand l'étudiant interrompt une génération avant le moindre texte. */
@@ -383,11 +403,13 @@ export async function sendMessage(userId: string, conversationId: string, conten
   const scope = conv.scope;
   const scopeFilter: Scope = scope === "DOCUMENT" ? { documentIds: [conv.documentId!] } : { subjectId: conv.subjectId, ...(options.documentIds?.length ? { documentIds: options.documentIds } : {}) };
   // Lectures groupées : chaque aller-retour vers la base coûte environ 0,5 s.
-  const [, docs, history] = await Promise.all([
+  const [, docs, history, settings] = await Promise.all([
     checkQuota(userId),
     resolveDocs(userId, scopeFilter),
     db.conversationMessage.findMany({ where: { conversationId, userId }, orderBy: { createdAt: "desc" }, take: HISTORY_MESSAGES, select: { role: true, content: true } }),
+    options.lang ? null : db.userSettings.findUnique({ where: { userId }, select: { chatLang: true } }),
   ]);
+  const lang: ChatLang = options.lang ?? (settings?.chatLang === "en" ? "en" : "fr");
   if (scope === "DOCUMENT" && docs.length === 0) {
     const exists = await db.document.findFirst({ where: { id: conv.documentId!, userId }, select: { id: true } });
     if (!exists) throw new ApiHttpError("Document introuvable.", 404);
@@ -407,7 +429,7 @@ export async function sendMessage(userId: string, conversationId: string, conten
   const webOn = options.web !== false && (await webStatus()) !== null;
   const ev = new Evidence();
   const ctx: ToolContext = { userId, scope, scopeFilter, docs, ev, signal: options.signal ? AbortSignal.any([AbortSignal.timeout(110_000), options.signal]) : AbortSignal.timeout(110_000), web: webOn };
-  const system = systemPrompt(scope, withCoverage, docs.length, webOn);
+  const system = systemPrompt(scope, withCoverage, docs.length, webOn, lang);
   const tools = webOn ? [...TOOLS[scope], WEB_TOOL] : TOOLS[scope];
   const turns: ChatTurn[] = [
     ...history.reverse().map((m): ChatTurn => ({ role: m.role === "USER" ? "user" : "model", parts: [{ text: m.content }] })),
@@ -432,7 +454,7 @@ export async function sendMessage(userId: string, conversationId: string, conten
       turns.push({ role: "model", parts: res.modelParts });
       partial = "";
       // Un nouveau statut annonce une étape : le client efface le texte provisoire éventuel.
-      options.emit?.({ type: "status", text: TOOL_STATUS[res.calls[0].name] ?? "Recherche…" });
+      options.emit?.({ type: "status", text: (lang === "en" ? TOOL_STATUS_EN : TOOL_STATUS)[res.calls[0].name] ?? (lang === "en" ? "Searching…" : "Recherche…") });
       const responses: ChatPart[] = await Promise.all(res.calls.slice(0, 4).map(async (call) => ({ functionResponse: { name: call.name, response: await runTool(ctx, call.name, call.args) } })));
       turns.push({ role: "user", parts: responses });
     }
@@ -465,7 +487,7 @@ export async function sendMessage(userId: string, conversationId: string, conten
   const citedDocument = resolved.citations.some((c) => c.kind !== "web");
   const check = async () => {
     const verification = await verifyAnswer({ userId, question: content, answer: resolved.text, sources: sourcesOf(ev), citedDocument, webStatus: webState, search: crossCheck, deadlineAt: started + VERIFICATION_DEADLINE_MS });
-    const final = resolveCitations(applyVerification(resolved.text, verification), ev.known);
+    const final = resolveCitations(applyVerification(resolved.text, verification, lang), ev.known);
     // Une source qui sert de preuve reste consultable, même si la réponse ne la cite pas.
     const proofs = verification.claims.flatMap((c) => c.evidence.map((e) => e.n)).filter((n) => !final.citations.some((c) => c.n === n));
     const citations = [...final.citations, ...[...new Set(proofs)].map((n) => ev.known.get(n)!)].sort((a, b) => a.n - b.n);

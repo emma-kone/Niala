@@ -33,6 +33,7 @@ ${UNTRUSTED_RULES}
 - Évalue uniquement selon la réponse de référence et les critères fournis. Attribue des points entre 0 et le maximum.
 - N'attribue pas de points pour une réponse hors sujet, vide de contenu ou qui répète seulement l'énoncé.
 - N'ajoute aucun fait extérieur présenté comme certain. Si la référence te paraît fausse ou ambiguë, ne pénalise pas l'étudiant sur ce point et dis-le dans "explanation".
+- Rédige "explanation", "criteria" et "missing" dans la langue de l'énoncé de la question (anglais si l'énoncé est en anglais).
 - "explanation" : explique à l'étudiant ce qui est juste, ce qui manque ou est faux, sans lui donner d'office la solution complète.
 Réponse : {"points":<nombre>,"explanation":"...","criteria":[{"label":"...","met":true}],"missing":["..."]}`;
 

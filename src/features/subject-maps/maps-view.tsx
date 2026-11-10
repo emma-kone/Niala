@@ -15,14 +15,16 @@ import { SubjectTabs } from "@/features/subject-files/tabs";
 import { NameDialog } from "@/features/subject-files/dialogs";
 import type { MapListItem } from "@/features/maps/types";
 import { confirmAction } from "@/components/notifications";
+import { useCachedState } from "@/hooks/use-cached-state";
+import { useBackgroundRefresh } from "@/hooks/use-background-refresh";
 
 const errText = (e: unknown, fb: string) => (e instanceof Error ? e.message : fb);
 
 export default function SubjectMapsView({ subjectId }: { subjectId: string }) {
   const router = useRouter();
   const { toast } = useToast();
-  const [subject, setSubject] = useState<{ name: string; color: string; icon?: string | null } | null>(null);
-  const [maps, setMaps] = useState<MapListItem[] | null>(null);
+  const [subject, setSubject] = useCachedState<{ name: string; color: string; icon?: string | null } | null>(["subject", subjectId], null);
+  const [maps, setMaps] = useCachedState<MapListItem[] | null>(["maps", subjectId], null);
   const [error, setError] = useState<{ message: string; status?: number } | null>(null);
   const [creating, setCreating] = useState<"STRUCTURE" | "CONCEPT" | null>(null);
   const [renaming, setRenaming] = useState<MapListItem | null>(null);
@@ -36,6 +38,7 @@ export default function SubjectMapsView({ subjectId }: { subjectId: string }) {
       setError({ message: errText(e, "Chargement impossible."), status: (e as { status?: number }).status });
     }
   }, [subjectId]);
+  useBackgroundRefresh(load, { topics: ["maps"] });
 
   useEffect(() => {
     api.get<{ subject: { name: string; color: string; icon?: string | null } }>(`/api/subjects/${subjectId}`).then((r) => setSubject(r.subject)).catch(() => undefined);

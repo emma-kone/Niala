@@ -8,6 +8,7 @@ import { SubjectIcon } from "@/components/subject-icon";
 import { routes } from "@/config/routes";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useCachedState } from "@/hooks/use-cached-state";
 
 interface Group {
   subject: { id: string; name: string; color: string; icon?: string | null };
@@ -16,7 +17,7 @@ interface Group {
 
 /** Toutes les notes, regroupées par matière. La création et l'édition restent dans l'espace de chaque matière. */
 export default function AllNotesView() {
-  const [groups, setGroups] = useState<Group[] | null>(null);
+  const [groups, setGroups] = useCachedState<Group[] | null>(["notes-all"], null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {

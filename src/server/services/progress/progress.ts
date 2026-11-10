@@ -6,7 +6,7 @@ import { BAND_LABEL, DIFFICULTY_EVIDENCE_WEIGHT, MIN_CONFIDENCE, answerEvidenceS
 import { buildRecommendations, type ConceptView, type ErrorTally } from "@/server/domain/recommend";
 import { buildSuggestions, pickHighlight, type CourseToday, type ScheduleStatus } from "@/server/domain/dashboard";
 import { addDays } from "@/server/domain/schedule";
-import { occurrencesBetween } from "@/server/services/agenda/agenda";
+import { loadBreaks, occurrencesBetween } from "@/server/services/agenda/agenda";
 import { listTasks, taskOverview } from "@/server/services/agenda/tasks";
 import { isOpen } from "@/server/domain/academic";
 
@@ -264,7 +264,7 @@ export async function dashboard(userId: string, clock: { date: string; minutes: 
     db.exerciseAttempt.findMany({ where: { userId, status: "GRADED", exerciseId: { not: null } }, orderBy: { finishedAt: "desc" }, take: 5, select: { id: true, score: true, maxScore: true, finishedAt: true, exerciseId: true, exercise: { select: { title: true, subjectId: true } } } }),
     db.labRun.findMany({ where: { userId }, orderBy: { createdAt: "desc" }, take: 5, select: { id: true, createdAt: true, tests: true, workspace: { select: { id: true, title: true, kind: true } } } }),
     agendaOverview(userId, clock),
-    db.scheduleBreak.findMany({ where: { userId }, select: { label: true, startMinutes: true, endMinutes: true, weekday: true } }).catch(() => []),
+    loadBreaks(userId).then((rows) => rows.map(({ label, startMinutes, endMinutes, weekday }) => ({ label, startMinutes, endMinutes, weekday }))).catch(() => []),
   ]);
 
   const perSubject = subjects.map((s) => {

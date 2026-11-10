@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Loader2, Paperclip, X } from "lucide-react";
@@ -13,15 +12,13 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { MODULES, REQUEST_STATUSES, REQUEST_TYPES, CLOSED_STATUSES, type RequestStatus } from "@/server/analytics/definitions";
 
-// « Aide, suggestions et retours » : dépôt d'une demande, suivi (« Mes demandes »), réponses de l'équipe et notifications.
+// Module Suggestions : dépôt d'une demande, suivi (« Mes demandes »), réponses reçues de l'équipe et notifications, chacun
+// dans son onglet. Ce contenu ne figure plus dans les Paramètres.
 // L'adresse e-mail n'est jamais redemandée : la demande est rattachée au compte connecté.
 
-interface MyRequest { id: string; reference: string; type: string; subject: string; status: string; createdAt: string; updatedAt: string; replies: number }
-interface Detail { id: string; reference: string; type: string; subject: string; description: string; module: string | null; status: string; createdAt: string; attachments: { index: number; name: string; size: number }[]; messages: { id: string; authorRole: "USER" | "ADMIN"; authorName: string | null; body: string; createdAt: string }[] }
-interface NotificationsData { items: { id: string; kind: string; title: string; body: string | null; link: string | null; readAt: string | null; createdAt: string }[]; unread: number }
+import { NOTIFICATIONS_KEY, REPLIES_KEY, REQUESTS_KEY, fetchNotifications, fetchReplies, fetchRequest, fetchRequests, requestKey, type MyRequest } from "./support-data";
 
-export const REQUESTS_KEY = ["support-requests"] as const;
-export const NOTIFICATIONS_KEY = ["notifications"] as const;
+export { NOTIFICATIONS_KEY, REPLIES_KEY, REQUESTS_KEY };
 
 const MAX_FILES = 3;
 const MAX_BYTES = 5 * 1024 * 1024;
@@ -150,7 +147,7 @@ function RequestForm({ onSent }: { onSent: (reference: string, id: string) => vo
 
 function RequestDetail({ id, onChanged }: { id: string; onChanged: () => void }) {
   const qc = useQueryClient();
-  const { data, isLoading, error } = useQuery({ queryKey: ["support-request", id], queryFn: () => api.get<{ request: Detail }>(`/api/support/requests/${id}`).then((r) => r.request) });
+  const { data, isLoading, error } = useQuery({ queryKey: requestKey(id), queryFn: () => fetchRequest(id) });
   const [reply, setReply] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -164,7 +161,7 @@ function RequestDetail({ id, onChanged }: { id: string; onChanged: () => void })
     try {
       await api.post(`/api/support/requests/${id}/reply`, { body: reply });
       setReply("");
-      await qc.invalidateQueries({ queryKey: ["support-request", id] });
+      await qc.invalidateQueries({ queryKey: requestKey(id) });
       onChanged();
       notify({ title: "Message envoyé", variant: "success", durationMs: 2500 });
     } catch (err) {
@@ -200,21 +197,23 @@ function RequestDetail({ id, onChanged }: { id: string; onChanged: () => void })
   );
 }
 
-function MyRequests({ openId, setOpenId }: { openId: string | null; setOpenId: (id: string | null) => void }) {
+function MyRequests({ openId, setOpenId, filter }: { openId: string | null; setOpenId: (id: string | null) => void; filter: "all" | "open" | "closed" }) {
   const qc = useQueryClient();
-  const { data, isLoading, error } = useQuery({ queryKey: REQUESTS_KEY, queryFn: () => api.get<{ requests: MyRequest[] }>("/api/support/requests").then((r) => r.requests) });
+  const { data, isLoading, error } = useQuery({ queryKey: REQUESTS_KEY, queryFn: fetchRequests });
   if (isLoading) return <div className="space-y-2 py-3.5">{[0, 1].map((i) => <div key={i} className="h-12 animate-pulse rounded-xl bg-muted" aria-hidden />)}</div>;
   if (error) return <p role="alert" className="py-3.5 text-sm text-destructive">{errorText(error, "Impossible de charger vos demandes.")}</p>;
   if (!data?.length) return <p className="typo-meta py-3.5">Vous n&apos;avez pas encore envoyé de demande.</p>;
+  const shown = data.filter((r) => filter === "all" || (filter === "closed") === CLOSED_STATUSES.includes(r.status as RequestStatus));
+  if (!shown.length) return <p className="typo-meta py-3.5">{filter === "open" ? "Aucune demande en cours." : "Aucune demande clôturée."}</p>;
   return (
     <ul className="space-y-2 py-3.5">
-      {data.map((r) => (
+      {shown.map((r) => (
         <li key={r.id}>
-          <button type="button" aria-expanded={openId === r.id} onClick={() => setOpenId(openId === r.id ? null : r.id)} className="flex w-full flex-wrap items-center justify-between gap-2 rounded-xl border px-3.5 py-2.5 text-left hover:bg-muted/50">
+          <button type="button" aria-expanded={openId === r.id} onPointerEnter={() => void qc.prefetchQuery({ queryKey: requestKey(r.id), queryFn: () => fetchRequest(r.id) })} onFocus={() => void qc.prefetchQuery({ queryKey: requestKey(r.id), queryFn: () => fetchRequest(r.id) })} onClick={() => setOpenId(openId === r.id ? null : r.id)} className="flex w-full flex-wrap items-center justify-between gap-2 rounded-xl border px-3.5 py-2.5 text-left hover:bg-muted/50">
             <span className="min-w-0"><span className="block truncate text-sm font-medium">{r.subject}</span><span className="typo-meta"><span className="font-mono">{r.reference}</span> · {fmt(r.createdAt)}{r.replies ? ` · ${r.replies} réponse${r.replies > 1 ? "s" : ""}` : ""}</span></span>
             <StatusChip status={r.status} />
           </button>
-          {openId === r.id && <div className="mt-2"><RequestDetail id={r.id} onChanged={() => void qc.invalidateQueries({ queryKey: REQUESTS_KEY })} /></div>}
+          {openId === r.id && <div className="mt-2"><RequestDetail id={r.id} onChanged={() => { void qc.invalidateQueries({ queryKey: REQUESTS_KEY }); void qc.invalidateQueries({ queryKey: REPLIES_KEY }); }} /></div>}
         </li>
       ))}
     </ul>
@@ -225,7 +224,7 @@ function MyRequests({ openId, setOpenId }: { openId: string | null; setOpenId: (
 
 function Inbox({ onOpenRequest }: { onOpenRequest: (id: string) => void }) {
   const qc = useQueryClient();
-  const { data } = useQuery({ queryKey: NOTIFICATIONS_KEY, queryFn: () => api.get<NotificationsData>("/api/notifications") });
+  const { data } = useQuery({ queryKey: NOTIFICATIONS_KEY, queryFn: fetchNotifications });
   if (!data?.items.length) return <p className="typo-meta py-3.5">Aucune notification pour l&apos;instant.</p>;
   async function markAll() {
     await api.post("/api/notifications", {}).catch(() => undefined);
@@ -250,44 +249,126 @@ function Inbox({ onOpenRequest }: { onOpenRequest: (id: string) => void }) {
   );
 }
 
-/** Section « Aide, suggestions et retours » des paramètres. */
-export function HelpSection({ page = false }: { page?: boolean }) {
+// ── Réponses reçues ──────────────────────────────────────────────────────────
+
+
+function Replies({ unreadIds, onOpenRequest }: { unreadIds: Set<string>; onOpenRequest: (id: string) => void }) {
+  const { data, isLoading, error } = useQuery({ queryKey: REPLIES_KEY, queryFn: fetchReplies });
+  if (isLoading) return <div className="space-y-2 py-3.5">{[0, 1].map((i) => <div key={i} className="h-16 animate-pulse rounded-xl bg-muted" aria-hidden />)}</div>;
+  if (error) return <p role="alert" className="py-3.5 text-sm text-destructive">{errorText(error, "Impossible de charger les réponses.")}</p>;
+  if (!data?.length) return <p className="typo-meta py-3.5">Aucune réponse pour l&apos;instant. Dès que l&apos;équipe répond à l&apos;une de vos demandes, sa réponse apparaît ici.</p>;
+  return (
+    <ul className="space-y-2 py-3.5">
+      {data.map((r) => (
+        <li key={r.id} className={cn("rounded-xl border p-3.5 text-sm", unreadIds.has(r.requestId) && "border-[var(--niala-accent)]/40 bg-[var(--niala-accent)]/8")}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="min-w-0 font-medium"><span className="font-mono text-xs text-muted-foreground">{r.reference}</span> · {r.subject}</p>
+            <StatusChip status={r.status} />
+          </div>
+          <p className="mt-1.5 whitespace-pre-wrap">{r.body}</p>
+          <div className="mt-2 flex items-center justify-between gap-3">
+            <time className="typo-meta" dateTime={r.createdAt}>Équipe Niala · {fmt(r.createdAt)}</time>
+            <Button type="button" variant="outline" size="sm" onClick={() => onOpenRequest(r.requestId)}>Voir la demande</Button>
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+type Tab = "nouvelle" | "suivi" | "reponses" | "annonces";
+type Filter = "all" | "open" | "closed";
+const TABS: { id: Tab; label: string; text: string }[] = [
+  { id: "nouvelle", label: "Nouvelle demande", text: "Suggestion, nouvelle fonctionnalité, problème technique, difficulté, IA, assistance…" },
+  { id: "suivi", label: "Mes demandes", text: "Les demandes que vous avez envoyées et l'état de leur traitement." },
+  { id: "reponses", label: "Réponses reçues", text: "Toutes les réponses de l'équipe Niala à vos demandes." },
+  { id: "annonces", label: "Notifications", text: "Annonces, nouveautés, maintenance et changements d'état de vos demandes." },
+];
+const FILTERS: [Filter, string][] = [["all", "Toutes"], ["open", "En cours"], ["closed", "Clôturées"]];
+
+const requestIdOf = (link: string | null) => (link ? new URLSearchParams(link.split("?")[1]?.split("#")[0]).get("demande") : null);
+
+/** Module Suggestions : déposer une demande, suivre ses demandes, lire les réponses reçues et les notifications de l'équipe. */
+export function SuggestionsModule() {
   const qc = useQueryClient();
   const [sent, setSent] = useState<{ reference: string; id: string } | null>(null);
   const [openId, setOpenId] = useState<string | null>(() => (typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("demande")));
-  const { data: notes } = useQuery({ queryKey: NOTIFICATIONS_KEY, queryFn: () => api.get<NotificationsData>("/api/notifications") });
+  const [tab, setTab] = useState<Tab>(() => {
+    if (typeof window === "undefined") return "nouvelle";
+    const q = new URLSearchParams(window.location.search);
+    const wanted = q.get("onglet") as Tab | null;
+    return wanted && TABS.some((t) => t.id === wanted) ? wanted : q.get("demande") ? "suivi" : "nouvelle";
+  });
+  const [filter, setFilter] = useState<Filter>("all");
+  const { data: notes } = useQuery({ queryKey: NOTIFICATIONS_KEY, queryFn: fetchNotifications });
+  const { data: requests } = useQuery({ queryKey: REQUESTS_KEY, queryFn: fetchRequests });
 
-  // Consulter une réponse la marque comme lue.
+  const unreadReplies = new Set((notes?.items ?? []).filter((n) => !n.readAt && n.kind === "REQUEST_REPLY").map((n) => requestIdOf(n.link)).filter((id): id is string => !!id));
+  const openCount = (requests ?? []).filter((r) => !CLOSED_STATUSES.includes(r.status as RequestStatus)).length;
+
+  // Consulter une demande marque comme lues les notifications qui s'y rapportent.
   useEffect(() => {
     if (!openId || !notes?.unread) return;
     const ids = notes.items.filter((n) => !n.readAt && n.link?.includes(openId)).map((n) => n.id);
     if (ids.length) api.post("/api/notifications", { ids }).then(() => qc.invalidateQueries({ queryKey: NOTIFICATIONS_KEY })).catch(() => undefined);
   }, [openId, notes, qc]);
 
-  const heading = (id: string, title: string, text: string, badge?: number) => (
-    <div className="pt-4 first:pt-0"><h3 id={id} className="text-sm font-semibold">{title}{!!badge && <span className="ml-2 rounded-full bg-[var(--niala-accent)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--niala-accent-foreground)]">{badge}</span>}</h3><p className="typo-meta mt-0.5">{text}</p></div>
-  );
+  function go(next: Tab) {
+    setTab(next);
+    const url = new URL(window.location.href);
+    url.searchParams.set("onglet", next);
+    if (next !== "suivi") url.searchParams.delete("demande");
+    history.replaceState(null, "", url);
+  }
+  function openRequest(id: string) {
+    setFilter("all");
+    setOpenId(id);
+    go("suivi");
+  }
+
+  const counts: Partial<Record<Tab, number>> = { suivi: openCount, reponses: unreadReplies.size, annonces: notes?.unread };
+  const current = TABS.find((t) => t.id === tab)!;
 
   return (
-    <section id="aide" aria-labelledby="aide-title" data-tour="suggestions-form" className="scroll-mt-4 rounded-3xl border bg-card p-5">
-      <div className={page ? "sr-only" : undefined}>
-        <h2 id="aide-title" className="typo-h2">Aide, suggestions et retours</h2>
-        <p className="typo-meta mt-0.5">Une idée, un problème, une difficulté ? Écrivez à l&apos;équipe Niala et suivez le traitement de votre demande.</p>
-        {!page && <Link href="/suggestions" className="mt-1 inline-block text-xs underline">Ouvrir la page Suggestions</Link>}
+    <section aria-labelledby="suggestions-tab-title" className="rounded-3xl border bg-card p-5">
+      <div role="tablist" aria-label="Sections du module Suggestions" className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1">
+        {TABS.map((t) => (
+          <button key={t.id} type="button" role="tab" id={`tab-${t.id}`} aria-selected={tab === t.id} aria-controls="suggestions-panel" onClick={() => go(t.id)} className={cn("inline-flex shrink-0 items-center rounded-xl px-3 py-2 text-sm transition-colors", tab === t.id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground")}>
+            {t.label}
+            {!!counts[t.id] && <span className="ml-1.5 rounded-full bg-[var(--niala-accent)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--niala-accent-foreground)]">{counts[t.id]}</span>}
+          </button>
+        ))}
       </div>
-      <div className="mt-2 divide-y">
-        {sent && (
-          <div role="status" className="my-3 flex gap-3 rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-4">
-            <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" aria-hidden />
-            <div className="text-sm"><p className="font-medium">Votre demande a bien été envoyée.</p><p className="mt-0.5">Référence de suivi : <span className="font-mono font-semibold">{sent.reference}</span>. Retrouvez-la ci-dessous dans « Mes demandes » ; vous serez notifié(e) de chaque réponse.</p><Button variant="outline" size="sm" className="mt-2" onClick={() => { setOpenId(sent.id); setSent(null); }}>Voir ma demande</Button></div>
+      <div id="suggestions-panel" role="tabpanel" aria-labelledby={`tab-${tab}`} className="mt-3">
+        <h2 id="suggestions-tab-title" className="typo-h2">{current.label}</h2>
+        <p className="typo-meta mt-0.5">{current.text}</p>
+        {tab === "nouvelle" && (
+          <div data-tour="suggestions-form">
+            {sent && (
+              <div role="status" className="my-3 flex gap-3 rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-4">
+                <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" aria-hidden />
+                <div className="text-sm">
+                  <p className="font-medium">Votre demande a bien été envoyée.</p>
+                  <p className="mt-0.5">Référence de suivi : <span className="font-mono font-semibold">{sent.reference}</span>. Vous la retrouvez dans « Mes demandes » ; chaque réponse de l&apos;équipe arrivera dans « Réponses reçues ».</p>
+                  <Button variant="outline" size="sm" className="mt-2" onClick={() => { openRequest(sent.id); setSent(null); }}>Suivre ma demande</Button>
+                </div>
+              </div>
+            )}
+            <RequestForm onSent={(reference, id) => { setSent({ reference, id }); void qc.invalidateQueries({ queryKey: REQUESTS_KEY }); }} />
           </div>
         )}
-        {heading("aide-envoyer", "Envoyer une demande", "Suggestion, nouvelle fonctionnalité, problème technique, difficulté, IA, assistance…")}
-        <RequestForm onSent={(reference, id) => { setSent({ reference, id }); void qc.invalidateQueries({ queryKey: REQUESTS_KEY }); }} />
-        {heading("aide-demandes", "Mes demandes", "Leur état et les réponses de l'équipe.")}
-        <MyRequests openId={openId} setOpenId={setOpenId} />
-        {heading("aide-notifs", "Notifications de l'équipe", "Annonces, nouveautés, maintenance et réponses à vos demandes.", notes?.unread)}
-        <Inbox onOpenRequest={(id) => { setOpenId(id); document.getElementById("aide-demandes")?.scrollIntoView({ behavior: "smooth" }); }} />
+        {tab === "suivi" && (
+          <>
+            <div className="mt-3 flex flex-wrap gap-1.5" role="group" aria-label="Filtrer les demandes">
+              {FILTERS.map(([k, label]) => (
+                <Button key={k} type="button" size="sm" variant={filter === k ? "secondary" : "ghost"} aria-pressed={filter === k} onClick={() => setFilter(k)}>{label}</Button>
+              ))}
+            </div>
+            <MyRequests openId={openId} setOpenId={setOpenId} filter={filter} />
+          </>
+        )}
+        {tab === "reponses" && <Replies unreadIds={unreadReplies} onOpenRequest={openRequest} />}
+        {tab === "annonces" && <Inbox onOpenRequest={openRequest} />}
       </div>
     </section>
   );

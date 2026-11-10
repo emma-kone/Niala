@@ -44,12 +44,12 @@ describe("code d'accès", () => {
 
   it("lie le cookie de passage à l'adresse et au code : en changer un invalide les cookies déjà délivrés", () => {
     process.env.ADMIN_ACCESS_HASH = gate.hashAccessCode("premier-code-1111");
-    const token = gate.gateToken("nialaspace-admin");
-    expect(gate.cookieIsValid(token, "nialaspace-admin")).toBe(true);
+    const token = gate.gateToken("espace-exemple");
+    expect(gate.cookieIsValid(token, "espace-exemple")).toBe(true);
     expect(gate.cookieIsValid(token, "autre-adresse")).toBe(false);
-    expect(gate.cookieIsValid(undefined, "nialaspace-admin")).toBe(false);
+    expect(gate.cookieIsValid(undefined, "espace-exemple")).toBe(false);
     process.env.ADMIN_ACCESS_HASH = gate.hashAccessCode("second-code-2222");
-    expect(gate.cookieIsValid(token, "nialaspace-admin")).toBe(false);
+    expect(gate.cookieIsValid(token, "espace-exemple")).toBe(false);
   });
 });
 

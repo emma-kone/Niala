@@ -174,10 +174,18 @@ export class AuthError extends Error {
 }
 
 // ── Limitation de débit simple (en mémoire) pour les routes sensibles ────────
+// Les clés sont toujours propres à un client (adresse IP, e-mail visé…) : une clé commune à tous
+// permettrait à un inconnu de bloquer la connexion de tout le monde. Compteur propre à chaque instance.
 const rateBuckets = new Map<string, { count: number; reset: number }>();
+const MAX_BUCKETS = 50_000;
+
+function purgeBuckets(now: number) {
+  for (const [k, b] of rateBuckets) if (b.reset < now) rateBuckets.delete(k);
+}
 
 export function rateLimit(key: string, max: number, windowMs: number): boolean {
   const now = Date.now();
+  if (rateBuckets.size > MAX_BUCKETS) purgeBuckets(now);
   const bucket = rateBuckets.get(key);
   if (!bucket || bucket.reset < now) {
     rateBuckets.set(key, { count: 1, reset: now + windowMs });
@@ -185,4 +193,15 @@ export function rateLimit(key: string, max: number, windowMs: number): boolean {
   }
   bucket.count += 1;
   return bucket.count <= max;
+}
+
+/** Nombre d'occurrences déjà comptées pour une clé dans sa fenêtre (sans en ajouter). */
+export function rateCount(key: string): number {
+  const bucket = rateBuckets.get(key);
+  return bucket && bucket.reset >= Date.now() ? bucket.count : 0;
+}
+
+/** Remet un compteur à zéro (par exemple après une connexion réussie). */
+export function rateReset(key: string) {
+  rateBuckets.delete(key);
 }

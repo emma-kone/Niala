@@ -9,7 +9,8 @@ import { CORRECTION_MODES, EXERCISE_MODES, MAX_SOURCE_DOCUMENTS, POINT_STEP, QUE
 import { allocatePoints, buildQuestion, maxQuestions, rawQuestionSchema, semanticProblem, type BuiltQuestion } from "@/server/domain/exercise-model";
 import { loadVersionPages } from "@/server/services/analysis/analysis-service";
 import { getStorage } from "@/server/storage";
-import { languageName, purgeOccasionalExercises } from "./attempts";
+import { purgeOccasionalExercises } from "./attempts";
+import { detectLanguage, languageLabel } from "@/server/domain/language";
 import { saveExercise, verifyPractical } from "./generation";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -83,8 +84,6 @@ export async function importExercises(userId: string, raw: unknown) {
   const found = await db.document.findMany({ where: { id: { in: documentIds }, userId }, include: { currentVersion: true } });
   if (found.length !== documentIds.length) throw new ApiHttpError("Document introuvable.", 404);
   const several = documentIds.length > 1;
-  const settings = await db.userSettings.findUnique({ where: { userId }, select: { exerciseLang: true } });
-  const language = languageName(settings?.exerciseLang);
 
   // Chaque document est lu séparément (texte, ou PDF scanné lu directement par le modèle), puis les exercices sont réunis dans l'ordre des documents.
   const sources = await Promise.all(
@@ -125,6 +124,9 @@ export async function importExercises(userId: string, raw: unknown) {
     })
   );
 
+  // Corrigés et explications ajoutés dans la langue du document (un PDF scanné sans texte reste en français).
+  const contentLang = detectLanguage(sources.map((s) => s.fullText).join("\n").slice(0, 60_000));
+  const language = languageLabel(contentLang);
   const jobs = sources.flatMap((source) => source.windows.map((text, i) => ({ source, text, i })));
   let failures = 0;
   let fatal = null as Error | null;
@@ -212,6 +214,7 @@ export async function importExercises(userId: string, raw: unknown) {
     config: { ...config, totalPoints: total, documentIds, sources: sources.map((s) => ({ id: s.doc.id, name: s.doc.name })), types: [...new Set(accepted.map((a) => a.built.type))], questionCount: accepted.length, difficulty: null, coverage: { mode: "all" }, generated: accepted.length, exercisesFound: group, notice, promptVersion: IMPORT_PROMPT_VERSION },
     accepted,
     points,
+    language: contentLang,
   });
   void TYPE_LABEL;
   return { id, subjectId: doc.subjectId, created: accepted.length, exercises: group, notice };

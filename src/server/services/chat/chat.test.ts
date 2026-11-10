@@ -74,7 +74,7 @@ async function importText(user: string, name: string, content: string) {
 
 beforeAll(async () => {
   pg = await PGlite.create();
-  for (const name of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261110000000_niala_agenda", "20261111000000_niala_academic", "20261112000000_niala_subject_icon", "20261113000000_niala_google_link", "20261109000000_niala_reliability", "20261116000000_niala_profile_exercises", "20261117000000_niala_class_level_other", "20261118000000_niala_admin"]) {
+  for (const name of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261110000000_niala_agenda", "20261111000000_niala_academic", "20261112000000_niala_subject_icon", "20261113000000_niala_google_link", "20261109000000_niala_reliability", "20261116000000_niala_profile_exercises", "20261117000000_niala_class_level_other", "20261118000000_niala_admin", "20261119000000_niala_langues_edt_reset", "20261120000000_niala_agenda_sections"]) {
     await pg.exec(readFileSync(path.join(migrations, name, "migration.sql"), "utf8"));
   }
   const port = 30000 + Math.floor(Math.random() * 10000);
@@ -166,6 +166,24 @@ describe("génération : interruption, relance et contexte", () => {
     expect(system).toContain("recursivite");
     expect(system).not.toContain("tris");
     expect(system).not.toContain("secret");
+  });
+
+  it("discute dans la langue choisie : anglais demandé, préférence du compte sinon", async () => {
+    const id = await newConversation();
+    script = () => ({ text: "Ok" });
+    seen.length = 0;
+    await chat.sendMessage(A, id, "What is recursion?", { lang: "en" });
+    expect(seen[0].system).toContain("LANGUE DE LA CONVERSATION : ANGLAIS");
+    expect(seen[0].system).not.toContain("Réponds en français");
+    seen.length = 0;
+    await chat.sendMessage(A, id, "Et en français ?");
+    expect(seen[0].system).toContain("Réponds en français");
+    const { db } = await import("@/lib/db");
+    await db.userSettings.upsert({ where: { userId: A }, create: { userId: A, chatLang: "en" }, update: { chatLang: "en" } });
+    seen.length = 0;
+    await chat.sendMessage(A, id, "Again");
+    expect(seen[0].system).toContain("ANGLAIS");
+    await db.userSettings.update({ where: { userId: A }, data: { chatLang: "fr" } });
   });
 
   it("le registre des générations n'interrompt que celles de leur propriétaire", async () => {

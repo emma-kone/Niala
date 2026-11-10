@@ -96,7 +96,7 @@ async function context(userId: string, attemptId: string, position: number) {
   const corrected = !!answer?.feedback && answer.verdict !== "ungraded";
   const revealed = a.status === "GRADED" || (snap.exercise.correctionMode === "immediate" && corrected);
   const settings = await db.userSettings.findUnique({ where: { userId }, select: { hintsEnabled: true, explanationLevel: true, exerciseLang: true } });
-  return { a, snap, q, answer, revealed, assistance: snap.exercise.assistance ?? "full", hintsEnabled: settings?.hintsEnabled ?? true, explanationLevel: settings?.explanationLevel ?? "standard", language: languageName(settings?.exerciseLang) };
+  return { a, snap, q, answer, revealed, assistance: snap.exercise.assistance ?? "full", hintsEnabled: settings?.hintsEnabled ?? true, explanationLevel: settings?.explanationLevel ?? "standard", language: languageName(snap.exercise.language ?? settings?.exerciseLang) };
 }
 
 /** Actions réellement autorisées : le navigateur n'affiche que celles-ci, le serveur les contrôle à nouveau. */

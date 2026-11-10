@@ -286,3 +286,13 @@ export async function deleteUserAccount(admin: AdminUser, id: string, raw: unkno
   return { ok: true };
 }
 
+
+/** Lien de réinitialisation du mot de passe créé par l'équipe (demande « Mot de passe oublié » sans envoi d'e-mail). */
+export async function createResetLinkFor(admin: AdminUser, id: string, origin: string) {
+  const user = await targetUser(admin, id);
+  if (user.accountStatus !== "ACTIVE") throw new ApiHttpError("Réactivez d'abord ce compte.", 409);
+  const { createAdminResetLink } = await import("@/server/services/password-reset");
+  const link = await createAdminResetLink(id, origin);
+  await audit(admin, "user.password_reset_link", { targetType: "user", targetId: id, detail: { email: user.email } });
+  return link;
+}
