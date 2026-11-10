@@ -14,6 +14,7 @@ import { LEVEL_LABEL, assessSource, inferPublication, searchGuidance, type Sourc
 import { saveVerification, type SavedSource } from "@/server/reliability/store";
 import { WebSearchUnavailableError, searchWeb, webStatus, type WebResult } from "@/server/ai/web-search";
 import { documentCoverage, outline, readPart, resolveDocs, searchPassages, type DocInfo, type Hit, type Scope } from "./retrieval";
+import { track } from "@/server/analytics/track";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Chat pédagogique. Deux portées STRICTEMENT séparées :
@@ -345,6 +346,7 @@ export interface ChatReply {
 
 async function logUsage(userId: string, model: string, promptChars: number, respChars: number, ok: boolean, error: string | undefined, started: number) {
   await db.aIUsageLog.create({ data: { userId, op: "chat.turn@1", model, promptChars, respChars, ok, error: error?.slice(0, 500) ?? null, durationMs: Date.now() - started } }).catch(() => undefined);
+  track(userId, "assistant.message", { module: "assistant", ok, durationMs: Date.now() - started });
 }
 
 export type ChatEvent = { type: "status"; text: string } | { type: "delta"; text: string };

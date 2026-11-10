@@ -17,6 +17,11 @@ model User {
   googleSub    String?  @unique // identifiant Google lié à ce compte (connexion Google sur un compte inscrit par mot de passe)
   name         String?
   sessionVersion Int    @default(0) // incrémenté pour fermer toutes les sessions ouvertes
+  adminRole    String? // SUPER_ADMIN | ADMIN | SUPPORT | ANALYST ; null = compte étudiant ordinaire (voir server/admin/rbac.ts)
+  accountStatus String  @default("ACTIVE") // ACTIVE | SUSPENDED | DISABLED
+  statusReason String? // motif interne de la dernière suspension ou désactivation
+  statusChangedAt DateTime?
+  actorKey     String?   @unique // pseudonyme d'analyse (HMAC) : relie les statistiques d'usage au compte, tant que celui-ci existe
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -64,6 +69,8 @@ model User {
   labRuns          LabRun[]
   conversations    Conversation[]
   chatMessages     ConversationMessage[]
+  supportRequests  SupportRequest[]
+  notifications    UserNotification[]
 }
 
 model UserSettings {
@@ -1352,4 +1359,174 @@ model StudySession {
   task AcademicTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
 
   @@index([userId, date])
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//                    BACK-OFFICE ADMINISTRATEUR (voir docs/ADMIN.md)
+// Les événements d'analyse ne portent AUCUNE clé étrangère vers User : l'utilisateur y est
+// pseudonymisé (HMAC) et la suppression d'un compte n'efface pas les statistiques agrégées.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// Événement d'usage. Contient un type, un module et de petites métadonnées techniques : jamais de contenu de travail.
+model AnalyticsEvent {
+  id         String   @id @default(cuid())
+  type       String // voir server/analytics/definitions.ts
+  module     String?
+  actorKey   String // pseudonyme HMAC de l'utilisateur
+  category   String? // catégorie du profil au moment de l'événement (ESATIC | OTHER_SCHOOL | TESTER)
+  source     String   @default("LIVE") // LIVE : collecté en direct | BACKFILL : reconstitué depuis les tables d'origine
+  sourceRef  String? // identifiant de la ligne d'origine d'un événement reconstitué (évite les doublons)
+  ok         Boolean  @default(true)
+  durationMs Int?
+  props      Json?
+  createdAt  DateTime @default(now())
+
+  @@unique([type, sourceRef])
+  @@index([createdAt])
+  @@index([type, createdAt])
+  @@index([actorKey, createdAt])
+}
+
+/// Une ligne par requête d'API : temps de réponse, statut et classe d'erreur (jamais le contenu de la requête).
+model RequestLog {
+  id           String   @id @default(cuid())
+  route        String
+  method       String
+  status       Int
+  durationMs   Int
+  module       String?
+  errorKind    String? // USER | APP | EXTERNAL
+  errorSummary String?
+  createdAt    DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([route, createdAt])
+  @@index([errorKind, createdAt])
+}
+
+model SupportRequest {
+  id            String    @id @default(cuid())
+  reference     String    @unique // NL-AAMM-NNNN, communiquée à l'utilisateur
+  userId        String
+  type          String // IMPROVEMENT | FEATURE | BUG | EXERCISE_DIFFICULTY | AI_ISSUE | ASSISTANCE | OTHER
+  subject       String
+  description   String
+  module        String?
+  urgency       String? // LOW | NORMAL | HIGH : urgence indiquée par l'utilisateur (facultative)
+  priority      String    @default("NORMAL") // LOW | NORMAL | HIGH | URGENT : fixée par l'équipe
+  status        String    @default("RECEIVED") // RECEIVED | PENDING_REVIEW | IN_PROGRESS | NEEDS_INFO | RESOLVED | REJECTED
+  assigneeId    String?
+  roadmapItemId String?
+  attachments   Json? // [{ key, name, mime, size }] dans le stockage privé
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  firstReplyAt  DateTime?
+  closedAt      DateTime?
+
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roadmapItem RoadmapItem?     @relation(fields: [roadmapItemId], references: [id], onDelete: SetNull)
+  messages    SupportMessage[]
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@index([roadmapItemId])
+}
+
+model SupportMessage {
+  id         String   @id @default(cuid())
+  requestId  String
+  authorId   String?
+  authorRole String // USER | ADMIN
+  authorName String?
+  internal   Boolean  @default(false) // note interne : jamais renvoyée à l'utilisateur
+  body       String
+  createdAt  DateTime @default(now())
+
+  request SupportRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@index([requestId, createdAt])
+}
+
+/// Besoin récurrent regroupant plusieurs demandes, avec son statut de feuille de route.
+model RoadmapItem {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  status      String   @default("TO_STUDY") // TO_STUDY | PLANNED | IN_DEV | DEPLOYED | REJECTED
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  requests SupportRequest[]
+
+  @@index([status])
+}
+
+/// Journal d'audit des actions du back-office. Ajout seul : un déclencheur SQL refuse toute modification ou suppression.
+model AdminAuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actorEmail String?
+  action     String
+  targetType String?
+  targetId   String?
+  result     String   @default("SUCCESS") // SUCCESS | DENIED | FAILED
+  detail     Json?
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
+}
+
+model AdminSetting {
+  key         String   @id
+  value       Json
+  updatedById String?
+  updatedAt   DateTime @updatedAt
+}
+
+/// Alerte ou incident détecté par la supervision (taux d'erreurs, IA…). Une seule alerte ouverte par clé.
+model AdminAlert {
+  id         String    @id @default(cuid())
+  key        String // identifie la règle ayant déclenché l'alerte, ex. « errors.rate »
+  severity   String // WARNING | CRITICAL
+  title      String
+  detail     String?
+  status     String    @default("OPEN") // OPEN | RESOLVED
+  createdAt  DateTime  @default(now())
+  resolvedAt DateTime?
+
+  @@index([status, createdAt])
+  @@index([key, status])
+}
+
+model Announcement {
+  id             String   @id @default(cuid())
+  kind           String // INFO | FEATURE | MAINTENANCE | ALERT
+  title          String
+  body           String
+  audience       Json // { categories?: string[], levels?: string[], institutions?: string[] } ; objet vide = tous les comptes actifs
+  recipientCount Int
+  createdById    String?
+  createdAt      DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+/// Notification affichée à l'étudiant dans Niala (annonce, réponse à une demande, changement de statut).
+model UserNotification {
+  id        String    @id @default(cuid())
+  userId    String
+  kind      String // ANNOUNCEMENT | REQUEST_UPDATE | REQUEST_REPLY
+  title     String
+  body      String?
+  link      String?
+  refId     String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt, createdAt])
 }

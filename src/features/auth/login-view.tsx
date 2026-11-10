@@ -24,6 +24,7 @@ const GOOGLE_ERRORS: Record<string, string> = {
   google_cancelled: "La connexion avec Google a été annulée.",
   google_failed: "La connexion avec Google a échoué. Réessayez dans un instant.",
   google_unverified: "Votre adresse Google n'est pas vérifiée : validez-la chez Google, puis réessayez.",
+  google_suspended: "Ce compte est suspendu ou désactivé. Contactez l'équipe Niala pour en savoir plus.",
   google_account_exists: "Un compte existe déjà avec cette adresse : connectez-vous avec votre mot de passe.",
 };
 

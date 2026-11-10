@@ -23,6 +23,11 @@ function getSecret(): string {
   return secret;
 }
 
+/** HMAC dérivé du secret de l'application, avec un domaine de séparation : pseudonymes d'analyse, jetons d'administration. */
+export function hmacFor(domain: string, value: string): string {
+  return createHmac("sha256", getSecret()).update(`${domain}.${value}`).digest("base64url");
+}
+
 // ── Hachage de mot de passe : scrypt (N=16384) + sel aléatoire ───────────────
 export function hashPassword(password: string): string {
   const salt = randomBytes(16).toString("hex");
@@ -147,7 +152,8 @@ export async function getCurrentUser() {
   try {
     const user = await db.user.findUnique({ where: { id: session.userId } });
     // Une session ouverte avant « Déconnecter tous les appareils » ou un changement de mot de passe n'est plus valable.
-    return user && user.sessionVersion === session.version ? user : null;
+    // Un compte suspendu ou désactivé par l'administration perd aussi sa session en cours.
+    return user && user.sessionVersion === session.version && user.accountStatus === "ACTIVE" ? user : null;
   } catch {
     return null;
   }

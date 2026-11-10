@@ -4,12 +4,12 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, CheckCircle2, FileQuestion, FileText, FolderOpen, Loader2, ListChecks, PenLine, Plus, Sparkles, Upload, X, Zap, type LucideIcon } from "lucide-react";
+import { ArrowLeft, CheckCircle2, FileText, FolderOpen, Loader2, ListChecks, Plus, Repeat2, Sparkles, Upload, X, Zap } from "lucide-react";
 import { api } from "@/lib/client-api";
 import { routes } from "@/config/routes";
 import { cn } from "@/lib/utils";
 import { CORRECTION_MODES, DIFFICULTIES, DIFFICULTY_LABEL, EXERCISE_MODES, MAX_SOURCE_DOCUMENTS, MODE_META, POINT_STEP, PROGRAMMING_TYPES, QUESTION_TYPES, TYPE_LABEL, type CorrectionMode, type ExerciseMode, type QuestionType } from "@/server/domain/exercise-types";
-import { LEVEL_CHOICES, OTHER_LEVEL, isLevelChoice, levelText } from "@/config/academic";
+import { OTHER_LEVEL, isLevelChoice } from "@/config/academic";
 import { PROFILE_KEY, fetchProfile } from "@/features/profile/types";
 import { useSettings } from "@/features/settings/use-settings";
 import { Switch } from "@/components/ui/switch";
@@ -21,6 +21,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { SubjectIcon } from "@/components/subject-icon";
 import { uploadFiles, type UploadItem } from "@/features/subject-files/upload";
 import { exercisesBase, fmtPoints, type ExerciseOptions } from "./types";
@@ -32,6 +33,8 @@ interface Source {
   id: string;
   name: string;
   ready: boolean;
+  /** Sujet d'exercices (TD, examen) ou cours : détecté à l'ajout du document. */
+  kind: "sheet" | "course";
 }
 interface SubjectChoice {
   id: string;
@@ -50,15 +53,11 @@ const CORRECTION_LABEL: Record<CorrectionMode, { title: string; text: string; ic
   final: { title: "À la fin", text: "Vous validez tout, puis l'IA détaille la correction.", icon: ListChecks },
 };
 const ACCEPTED_FILES = ".pdf,.docx,.pptx,.txt,.md";
+/** Déduit des éléments fournis : rien à choisir pour l'étudiant. */
 type SourceMode = "free" | "course" | "import";
-const SOURCE_MODES: { value: SourceMode; title: string; text: string; icon: LucideIcon }[] = [
-  { value: "free", title: "Génération libre", text: "Une matière et un thème suffisent.", icon: PenLine },
-  { value: "course", title: "Depuis un cours", text: "L'IA crée des questions à partir de votre document.", icon: FileText },
-  { value: "import", title: "Reproduire un sujet", text: "Vos exercices (TD, examen) deviennent interactifs.", icon: FileQuestion },
-];
 const CARD = "rounded-3xl border bg-card p-5";
 
-const sourceOf = (o: ExerciseOptions): Source => ({ id: o.document.id, name: o.document.name, ready: o.document.ready });
+const sourceOf = (o: ExerciseOptions): Source => ({ id: o.document.id, name: o.document.name, ready: o.document.ready, kind: o.document.kind });
 const optionsOf = (id: string) => api.get<ExerciseOptions>(`/api/files/${id}/exercise-options`);
 
 /** Documents sources : ceux déjà rangés dans une matière, ou un fichier venu d'ailleurs importé à l'instant. */
@@ -70,6 +69,7 @@ function SourcesPicker({ subjectId, sources, onChange }: { subjectId: string | n
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
+  const pending = useRef(0);
   const full = sources.length >= MAX_SOURCE_DOCUMENTS;
 
   useEffect(() => {
@@ -101,8 +101,10 @@ function SourcesPicker({ subjectId, sources, onChange }: { subjectId: string | n
 
   async function importFiles(files: File[]) {
     if (!files.length) return;
-    const room = MAX_SOURCE_DOCUMENTS - sources.length;
+    // Plusieurs imports peuvent se chevaucher : la place restante tient compte des fichiers encore en cours de lecture.
+    const room = Math.max(0, MAX_SOURCE_DOCUMENTS - sources.length - pending.current);
     const accepted = files.slice(0, room);
+    pending.current += accepted.length;
     setError(files.length > room ? `${MAX_SOURCE_DOCUMENTS} documents maximum : les fichiers en trop n'ont pas été importés.` : null);
     const items = accepted.map((f, i): UploadItem => ({ key: `${f.name}-${i}-${Date.now()}`, name: f.name, phase: "waiting" }));
     setUploads((u) => [...u, ...items]);
@@ -112,21 +114,22 @@ function SourcesPicker({ subjectId, sources, onChange }: { subjectId: string | n
       setUploads((u) => u.map((x) => (x.key === key ? { ...x, ...patch } : x)));
     }, items.map((i) => i.key));
     for (const item of finished.values()) {
-      if (item.phase !== "done" || !item.documentId) continue;
-      await add(item.documentId);
-      setUploads((u) => u.filter((x) => x.key !== item.key));
+      if (item.phase === "done" && item.documentId) {
+        await add(item.documentId);
+        setUploads((u) => u.filter((x) => x.key !== item.key));
+      }
+      pending.current -= 1;
     }
   }
 
   const selected = new Set(sources.map((s) => s.id));
-  const sending = uploads.some((u) => u.phase === "waiting" || u.phase === "sending" || u.phase === "processing");
 
   return (
     <section aria-labelledby="ex-sources" className={CARD}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 id="ex-sources" className="font-semibold">Documents sources</h2>
-          <p className="typo-meta mt-0.5">Les questions ne s&apos;appuient que sur ces documents ({sources.length} / {MAX_SOURCE_DOCUMENTS}).</p>
+          <h2 id="ex-sources" className="font-semibold">Documents <span className="font-normal text-muted-foreground">(facultatif)</span></h2>
+          <p className="typo-meta mt-0.5">Cours, TD, sujet d&apos;examen… Les questions ne s&apos;appuient que sur ces documents ({sources.length} / {MAX_SOURCE_DOCUMENTS}).</p>
         </div>
         <div className="flex flex-wrap gap-2">
           {subjects.length > 0 && <Popover open={open} onOpenChange={setOpen}>
@@ -153,11 +156,11 @@ function SourcesPicker({ subjectId, sources, onChange }: { subjectId: string | n
             </PopoverContent>
           </Popover>}
           <input ref={input} type="file" multiple accept={ACCEPTED_FILES} className="hidden" onChange={(e) => { const files = [...(e.target.files ?? [])]; e.target.value = ""; void importFiles(files); }} />
-          <Button type="button" variant="outline" size="sm" className="gap-1.5 rounded-full" disabled={full || sending} onClick={() => input.current?.click()}><Upload className="h-3.5 w-3.5" aria-hidden /> Importer un fichier</Button>
+          <Button type="button" variant="outline" size="sm" className="gap-1.5 rounded-full" disabled={full} onClick={() => input.current?.click()}><Upload className="h-3.5 w-3.5" aria-hidden /> Importer un fichier</Button>
         </div>
       </div>
       {sources.length === 0 && uploads.length === 0 && (
-        <p className="mt-3 flex items-center gap-2 rounded-2xl border border-dashed p-4 text-sm text-muted-foreground"><Plus className="h-4 w-4 shrink-0" aria-hidden /> Importez un fichier (PDF, DOCX, PPTX, TXT, MD){subjects.length > 0 ? ", ou choisissez un document dans vos matières" : ""}.</p>
+        <p className="mt-3 flex items-center gap-2 rounded-2xl border border-dashed p-4 text-sm text-muted-foreground"><Plus className="h-4 w-4 shrink-0" aria-hidden /> Aucun document : l&apos;exercice sera créé à partir de votre description. Vous pouvez importer un fichier (PDF, DOCX, PPTX, TXT, MD){subjects.length > 0 ? " ou choisir un document dans vos matières" : ""}.</p>
       )}
       {(sources.length > 0 || uploads.length > 0) && (
         <ul className="mt-3 grid gap-2 sm:grid-cols-2" aria-label="Documents choisis">
@@ -188,51 +191,20 @@ function SourcesPicker({ subjectId, sources, onChange }: { subjectId: string | n
   );
 }
 
-/** Sujet à reproduire : un seul fichier, déposé et lu avant la mise en forme interactive. */
-function ImportPicker({ source, phase, onFile, onClear }: { source: Source | null; phase: UploadItem | null; onFile: (f: File) => void; onClear: () => void }) {
-  const input = useRef<HTMLInputElement>(null);
-  const sending = phase && (phase.phase === "waiting" || phase.phase === "sending" || phase.phase === "processing");
-  return (
-    <section aria-labelledby="ex-import" className={CARD}>
-      <h2 id="ex-import" className="font-semibold">Document contenant les exercices</h2>
-      <p className="typo-meta mt-0.5">TD, devoir ou sujet d&apos;examen : les exercices, consignes et sous-questions sont repris tels quels pour être résolus ici.</p>
-      <input ref={input} type="file" accept={ACCEPTED_FILES} className="hidden" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) onFile(f); }} />
-      {source ? (
-        <p className="mt-3 flex items-center gap-2 rounded-2xl bg-muted/50 py-2 pl-3 pr-2 text-sm">
-          <FileText className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden /><span className="min-w-0 flex-1 truncate font-medium">{source.name}</span>
-          <button type="button" aria-label={`Retirer ${source.name}`} className="rounded-full p-1 text-muted-foreground hover:bg-background hover:text-foreground" onClick={onClear}><X className="h-3.5 w-3.5" aria-hidden /></button>
-        </p>
-      ) : (
-        <button type="button" disabled={!!sending} onClick={() => input.current?.click()} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) onFile(f); }} className="mt-3 flex w-full flex-col items-center gap-2 rounded-2xl border border-dashed px-4 py-10 text-sm text-muted-foreground transition-colors hover:bg-muted/40">
-          {sending ? <Loader2 className="h-5 w-5 animate-spin" aria-hidden /> : <Upload className="h-5 w-5" aria-hidden />}
-          {sending ? "Import et lecture du fichier…" : "Déposez un fichier ou cliquez pour le choisir"}
-          <span className="typo-meta">PDF, DOCX, PPTX, TXT ou MD</span>
-        </button>
-      )}
-      {phase?.phase === "error" && <p role="alert" className="mt-2 text-sm text-destructive">{phase.message ?? "Import impossible."}</p>}
-    </section>
-  );
-}
-
-export default function CreateExerciseView({ subjectId, documentId, presetConcepts = [], initialSource }: { subjectId: string | null; documentId: string | null; presetConcepts?: string[]; initialSource?: string | null }) {
+export default function CreateExerciseView({ subjectId, documentId, presetConcepts = [] }: { subjectId: string | null; documentId: string | null; presetConcepts?: string[] }) {
   const router = useRouter();
   const { settings } = useSettings();
   const { data: profile } = useQuery({ queryKey: PROFILE_KEY, queryFn: fetchProfile });
-  // Depuis une matière ou un document, la source est déjà connue : le choix n'est proposé que depuis le module Exercices.
-  const standalone = !subjectId && !documentId;
-  const [sourceMode, setSourceMode] = useState<SourceMode>(() => (!standalone ? "course" : initialSource === "course" || initialSource === "import" ? initialSource : "free"));
-  const [freeSubject, setFreeSubject] = useState("");
-  const [chapter, setChapter] = useState("");
-  // Tant que l'étudiant n'a rien choisi pour cet exercice, ses préférences et son profil font office de valeurs proposées.
-  const [levelChoice, setLevel] = useState("");
-  const level = levelChoice || (isLevelChoice(profile?.level) ? profile.level : "");
-  const [levelOtherChoice, setLevelOther] = useState<string | null>(null);
-  const levelOther = levelOtherChoice ?? (level === profile?.level ? (profile?.levelOther ?? "") : "");
+  // Un seul formulaire pour les trois cas : la description seule (génération libre), des documents (cours) ou un sujet
+  // d'exercices à reproduire. Le cas est déduit des éléments fournis et de la nature détectée du document.
+  const [request, setRequest] = useState("");
+  const [reproduceChoice, setReproduce] = useState<boolean | null>(null);
+  // Niveau : celui du profil ; l'IA adapte la difficulté sans que l'étudiant ait à le ressaisir.
+  const level = isLevelChoice(profile?.level) ? profile.level : OTHER_LEVEL;
+  const levelOther = level === OTHER_LEVEL ? (profile?.levelOther?.trim() || "Non précisé") : undefined;
   const [modeChoice, setMode] = useState<ExerciseMode | null>(null);
   const mode = modeChoice ?? settings?.defaultMode ?? "personnalise";
   const [keep, setKeep] = useState(true);
-  const [importSource, setImportSource] = useState<Source | null>(null);
-  const [importPhase, setImportPhase] = useState<UploadItem | null>(null);
   const [setup, setSetup] = useState<{ aiConfigured: boolean; maxQuestions: number } | null>(null);
   const [opts, setOpts] = useState<ExerciseOptions | null>(null);
   const [sources, setSources] = useState<Source[]>([]);
@@ -284,6 +256,10 @@ export default function CreateExerciseView({ subjectId, documentId, presetConcep
     };
   }, [singleId]);
 
+  // Tous les documents sont des sujets : ils sont reproduits ; un seul cours dans le lot suffit à créer de nouvelles questions.
+  const detectedSheet = sources.length > 0 && sources.every((s) => s.kind === "sheet");
+  const reproduce = sources.length > 0 && (reproduceChoice ?? detectedSheet);
+  const sourceMode: SourceMode = sources.length === 0 ? "free" : reproduce ? "import" : "course";
   // « Révision ciblée » demande les notions fragiles, qui supposent un document déjà analysé.
   const effectiveCoverage: Coverage = singleId && (coverage !== "hard" || (opts?.concepts.length ?? 0) > 0) ? coverage : "all";
   const correctionLocked = mode === "examen";
@@ -298,18 +274,9 @@ export default function CreateExerciseView({ subjectId, documentId, presetConcep
   const problems = useMemo(() => {
     const p: string[] = [];
     if (!setup) return p;
-    if (sourceMode === "free") {
-      if (freeSubject.trim().length < 2) p.push("Indiquez la matière.");
-      if (chapter.trim().length < 2) p.push("Indiquez le chapitre ou le thème.");
-      if (!level) p.push("Choisissez le niveau d'études.");
-      else if (level === OTHER_LEVEL && levelOther.trim().length < 2) p.push("Précisez le niveau d'études.");
-    }
-    if (sourceMode === "course") {
-      if (sources.length === 0) p.push("Ajoutez au moins un document.");
-      if (sources.some((s) => !s.ready)) p.push("Retirez les documents dont le texte n'a pas pu être extrait.");
-    }
+    if (sourceMode === "free" && request.trim().length < 3) p.push("Décrivez ce que vous voulez travailler, ou ajoutez un document.");
+    if (sources.some((s) => !s.ready)) p.push("Retirez les documents dont le texte n'a pas pu être extrait.");
     if (sourceMode === "import") {
-      if (!importSource) p.push("Importez le document contenant les exercices.");
       if (!Number.isFinite(total) || total <= 0 || total > 100) p.push("Indiquez un barème entre 0,25 et 100 points.");
       return p;
     }
@@ -323,21 +290,7 @@ export default function CreateExerciseView({ subjectId, documentId, presetConcep
     if (sourceMode === "course" && effectiveCoverage === "sections" && sectionIds.size === 0) p.push("Choisissez au moins une section.");
     if (sourceMode === "course" && effectiveCoverage === "concepts" && conceptIds.size === 0) p.push("Choisissez au moins une notion.");
     return p;
-  }, [setup, sources, n, total, types, effectiveCoverage, sectionIds, conceptIds, sourceMode, freeSubject, chapter, level, levelOther, importSource]);
-
-  async function importFile(file: File) {
-    const item: UploadItem = { key: `${file.name}-${Date.now()}`, name: file.name, phase: "waiting" };
-    setImportPhase(item);
-    let latest = item;
-    await uploadFiles([file], { subjectId, folderId: null }, (_key, patch) => {
-      latest = { ...latest, ...patch };
-      setImportPhase(latest);
-    }, [item.key]);
-    if (latest.phase === "done" && latest.documentId) {
-      setImportSource({ id: latest.documentId, name: file.name, ready: true });
-      setImportPhase(null);
-    }
-  }
+  }, [setup, sources, n, total, types, effectiveCoverage, sectionIds, conceptIds, sourceMode, request]);
 
   const toggle = <T,>(set: Set<T>, v: T, on: boolean) => {
     const next = new Set(set);
@@ -356,11 +309,12 @@ export default function CreateExerciseView({ subjectId, documentId, presetConcep
       const generation = { ...common, questionCount: n, types: [...types], difficulty, ...(showGauge ? { practicePercent } : {}) };
       const r =
         sourceMode === "import"
-          ? await api.post<{ id: string; subjectId: string | null }>("/api/exercises/import", { ...common, documentId: importSource!.id })
+          ? await api.post<{ id: string; subjectId: string | null }>("/api/exercises/import", { ...common, documentId: sources[0].id, documentIds: sources.map((s) => s.id) })
           : sourceMode === "free"
-            ? await api.post<{ id: string; subjectId: string | null }>("/api/exercises", { ...generation, source: "free", subject: freeSubject.trim(), chapter: chapter.trim(), level, levelOther: levelOther.trim() || undefined })
+            ? await api.post<{ id: string; subjectId: string | null }>("/api/exercises", { ...generation, source: "free", subject: request.trim().slice(0, 120), chapter: request.trim().slice(0, 200), level, levelOther })
             : await api.post<{ id: string; subjectId: string | null }>("/api/exercises", {
                 ...generation,
+                ...(request.trim() ? { focus: request.trim().slice(0, 300) } : {}),
                 documentId: sources[0].id,
                 documentIds: sources.map((s) => s.id),
                 coverage: { mode: effectiveCoverage, ...(effectiveCoverage === "sections" ? { sectionIds: [...sectionIds] } : {}), ...(effectiveCoverage === "concepts" ? { conceptIds: [...conceptIds] } : {}) },
@@ -392,54 +346,38 @@ export default function CreateExerciseView({ subjectId, documentId, presetConcep
     <form onSubmit={submit} className="mx-auto w-full max-w-[1320px] px-4 py-6 sm:px-6">
       <Link href={back} className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="h-4 w-4" aria-hidden /> Retour</Link>
       <h1 className="typo-h1">Créer un exercice</h1>
-      <p className="typo-subtitle mt-1">{sourceMode === "free" ? "Indiquez ce que vous voulez travailler : aucun document n'est nécessaire." : sourceMode === "import" ? "Résolvez vos propres sujets directement dans Niala, avec l'aide du tuteur." : "Choisissez vos sources et réglez l'exercice : rien n'est inventé en dehors de vos documents."}</p>
-
-      {standalone && (
-        <div role="radiogroup" aria-label="Point de départ de l'exercice" className="mt-5 grid gap-2 sm:grid-cols-3">
-          {SOURCE_MODES.map((s) => (
-            <label key={s.value} className={cn("flex cursor-pointer items-start gap-3 rounded-3xl border bg-card p-4 transition-colors hover:bg-muted/40 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring", sourceMode === s.value && "border-primary bg-primary/5")}>
-              <input type="radio" name="source-mode" className="sr-only" checked={sourceMode === s.value} onChange={() => setSourceMode(s.value)} />
-              <s.icon className="mt-0.5 h-5 w-5 shrink-0 text-primary" aria-hidden />
-              <span><span className="block font-semibold">{s.title}</span><span className="typo-meta">{s.text}</span></span>
-            </label>
-          ))}
-        </div>
-      )}
+      <p className="typo-subtitle mt-1">Décrivez ce que vous voulez travailler, déposez un cours ou un TD, ou les deux : Niala choisit la meilleure façon de créer l&apos;exercice.</p>
 
       {!setup.aiConfigured && <p role="alert" className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">Le service d&apos;IA n&apos;est pas configuré : la génération d&apos;exercices est indisponible.</p>}
 
       <div className="mt-5 grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
         <div className="space-y-4">
-          {sourceMode === "free" && (
-            <section aria-labelledby="ex-topic" className={cn(CARD, "space-y-4")}>
-              <h2 id="ex-topic" className="font-semibold">Sujet de l&apos;exercice</h2>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <Label htmlFor="ex-subject">Matière <span className="text-destructive" aria-hidden>*</span></Label>
-                  <Input id="ex-subject" required maxLength={120} value={freeSubject} onChange={(e) => setFreeSubject(e.target.value)} placeholder="Bases de données" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="ex-level">Niveau d&apos;études <span className="text-destructive" aria-hidden>*</span></Label>
-                  <Select value={level} onValueChange={setLevel}>
-                    <SelectTrigger id="ex-level" className="w-full"><SelectValue placeholder="Choisir un niveau" /></SelectTrigger>
-                    <SelectContent>{LEVEL_CHOICES.map((l) => <SelectItem key={l} value={l}>{l === OTHER_LEVEL ? "Autre" : levelText(l)}</SelectItem>)}</SelectContent>
-                  </Select>
-                </div>
+          <section aria-labelledby="ex-request" className={CARD}>
+            <Label htmlFor="ex-request" id="ex-request" className="text-base font-semibold">Que voulez-vous travailler ?{sources.length > 0 && <span className="ml-1 font-normal text-muted-foreground">(facultatif)</span>}</Label>
+            <p className="typo-meta mt-0.5">{sources.length > 0 ? "Précisez un chapitre, une notion ou un angle : les questions s'y concentreront." : "Matière, chapitre, notion… Aucun document n'est nécessaire."}</p>
+            <Textarea id="ex-request" rows={3} maxLength={300} value={request} onChange={(e) => setRequest(e.target.value)} className="mt-3" placeholder="Ex. : Bases de données, jointures et sous-requêtes" />
+          </section>
+
+          <SourcesPicker subjectId={subjectId} sources={sources} onChange={setSources} />
+
+          {sources.length > 0 && (
+            <fieldset className={CARD}>
+              <legend className="sr-only">Utilisation du document</legend>
+              <h2 className="font-semibold">Que faire {sources.length > 1 ? "de ces documents" : "de ce document"} ?</h2>
+              <div role="radiogroup" className="mt-3 grid gap-2 sm:grid-cols-2">
+                {([
+                  [true, "Reproduire ses exercices", sources.length > 1 ? "TD, devoirs, examens : leurs exercices sont réunis dans un seul exercice, repris tels quels." : "TD, devoir, examen : consignes et questions reprises telles quelles pour être résolues ici.", Repeat2],
+                  [false, "Créer de nouvelles questions", sources.length > 1 ? "Les documents servent de cours : l'IA en tire des questions inédites, réparties sur tous." : "Le document sert de cours : l'IA en tire des questions inédites.", Sparkles],
+                ] as const).map(([value, title, text, Icon]) => (
+                  <label key={title} className={cn("flex cursor-pointer items-start gap-3 rounded-2xl border p-3 text-sm transition-colors hover:bg-muted/40 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring", reproduce === value && "border-primary bg-primary/5")}>
+                    <input type="radio" name="document-use" className="sr-only" checked={reproduce === value} onChange={() => setReproduce(value)} />
+                    <Icon className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden />
+                    <span><span className="block font-medium">{title}{value === detectedSheet && <span className="typo-meta ml-1.5 rounded-full bg-muted px-1.5 py-0.5">détecté</span>}</span><span className="typo-meta">{text}</span></span>
+                  </label>
+                ))}
               </div>
-              {level === OTHER_LEVEL && (
-                <div className="space-y-1.5">
-                  <Label htmlFor="ex-level-other">Précisez le niveau <span className="text-destructive" aria-hidden>*</span></Label>
-                  <Input id="ex-level-other" required maxLength={80} value={levelOther} onChange={(e) => setLevelOther(e.target.value)} placeholder="Terminale, Doctorat, Formation continue…" />
-                </div>
-              )}
-              <div className="space-y-1.5">
-                <Label htmlFor="ex-chapter">Chapitre ou thème <span className="text-destructive" aria-hidden>*</span></Label>
-                <Input id="ex-chapter" required maxLength={200} value={chapter} onChange={(e) => setChapter(e.target.value)} placeholder="Jointures et sous-requêtes" />
-              </div>
-            </section>
+            </fieldset>
           )}
-          {sourceMode === "course" && <SourcesPicker subjectId={subjectId} sources={sources} onChange={setSources} />}
-          {sourceMode === "import" && <ImportPicker source={importSource} phase={importPhase} onFile={(f) => void importFile(f)} onClear={() => setImportSource(null)} />}
 
           {sourceMode !== "import" && <fieldset className={CARD}>
             <legend className="sr-only">Types de questions</legend>

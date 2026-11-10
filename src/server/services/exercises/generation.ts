@@ -28,6 +28,7 @@ import { verifyCodeReference, verifySqlSpec } from "@/server/services/labs/execu
 import { levelText } from "@/config/academic";
 import { runPool } from "@/lib/concurrency";
 import { languageName, purgeOccasionalExercises } from "./attempts";
+import { track } from "@/server/analytics/track";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ExerciseGenerationService. Sources de connaissances : uniquement les documents choisis par l'étudiant
@@ -216,7 +217,7 @@ export async function generateExercise(userId: string, rawConfig: unknown) {
       }
     }
   }
-  targets = targets.filter((t) => t.window.text.replace(/\s/g, "").length >= 120);
+  targets = targets.filter((t) => t.window.text.replace(/\s/g, "").length >= 120).map((t) => ({ ...t, focus: t.focus ?? (config.focus || undefined) }));
   if (targets.length === 0) throw new ApiHttpError("La partie choisie du document ne contient pas assez de texte.", 409);
 
   // ── Créneaux ──
@@ -237,7 +238,7 @@ export async function generateExercise(userId: string, rawConfig: unknown) {
   const seenStatements = new Set<string>();
 
   const jobs = [...byWindow].flatMap(([w, list]) => Array.from({ length: Math.ceil(list.length / MAX_SLOTS_PER_CALL) }, (_, n) => ({ w, group: list.slice(n * MAX_SLOTS_PER_CALL, (n + 1) * MAX_SLOTS_PER_CALL) })));
-  await runPool(jobs, AI_CONCURRENCY, async ({ w, group }) => {
+  const runJobs = (list: typeof jobs) => runPool(list, AI_CONCURRENCY, async ({ w, group }) => {
     {
       if (fatal) return;
       calls++;
@@ -282,6 +283,17 @@ export async function generateExercise(userId: string, rawConfig: unknown) {
       }
     }
   });
+  await runJobs(jobs);
+  // Compléments : les créneaux sans question valide sont redemandés sur d'autres extraits du cours, pour tenir le nombre demandé.
+  for (let round = 1; round <= TOP_UP_ROUNDS && !fatal && accepted.length < slots.length; round++) {
+    const missing = slots.filter((s) => !accepted.some((a) => a.slot.slot === s.slot));
+    const retry = new Map<Window, (Slot & { focus?: string })[]>();
+    missing.forEach((s, i) => {
+      const t = targets[(s.slot + round + i) % targets.length];
+      retry.set(t.window, [...(retry.get(t.window) ?? []), { ...s, focus: t.focus }]);
+    });
+    await runJobs([...retry].flatMap(([w, list]) => Array.from({ length: Math.ceil(list.length / MAX_SLOTS_PER_CALL) }, (_, n) => ({ w, group: list.slice(n * MAX_SLOTS_PER_CALL, (n + 1) * MAX_SLOTS_PER_CALL) }))));
+  }
   if (fatal && accepted.length === 0) {
     throw new ApiHttpError(fatal instanceof AiQuotaError ? fatal.message : "Le service d'IA n'est pas configuré.", fatal instanceof AiQuotaError ? 429 : 503);
   }
@@ -336,6 +348,9 @@ Règles de génération :
 Réponse : {"questions":[{"slot":<n>,"type":"...","statement":"...","concepts":["..."],"explanation":"...", ...champs du type}],"insufficient":[<slots>]}`;
 
 /** Aucune citation n'existe pour un exercice sans document : le champ du schéma commun est renseigné par le serveur. */
+/** Tours supplémentaires pour remplacer les questions écartées par la validation. */
+const TOP_UP_ROUNDS = 2;
+
 const NO_SOURCE = { quote: "Exercice libre, sans document source." };
 
 export async function generateFreeExercise(userId: string, rawConfig: unknown) {
@@ -361,11 +376,13 @@ export async function generateFreeExercise(userId: string, rawConfig: unknown) {
   let dropped = 0;
   let fatal = null as Error | null;
 
-  await runPool(groups, AI_CONCURRENCY, async (group) => {
+  const pass = (list: (typeof groups)) => runPool(list, AI_CONCURRENCY, async (group) => {
     if (fatal) return;
     const spec = [...new Set(group.map((s) => s.type))].map((t) => `- ${t} (${TYPE_LABEL[t]}) : ${FORMAT[t]}`).join("\n");
     const wanted = group.map((s) => ({ slot: s.slot, type: s.type, difficulty: s.difficulty }));
-    const user = `Langue des exercices : ${language}.\nNiveau d'études : ${levelText(config.level, config.levelOther)}.\nMatière : ${wrapUntrusted("matière", config.subject)}\nChapitre ou thème : ${wrapUntrusted("thème", config.chapter)}\n\nCréneaux à remplir :\n${JSON.stringify(wanted)}\n\nFormat des champs spécifiques :\n${spec}`;
+    // Demande en texte libre : la matière et le thème ne sont pas séparés, l'IA les déduit de la description.
+    const topic = config.subject === config.chapter ? `Sujet demandé (matière et thème à déduire) : ${wrapUntrusted("sujet", config.subject)}` : `Matière : ${wrapUntrusted("matière", config.subject)}\nChapitre ou thème : ${wrapUntrusted("thème", config.chapter)}`;
+    const user = `Langue des exercices : ${language}.\nNiveau d'études : ${levelText(config.level, config.levelOther)}.\n${topic}\n\nCréneaux à remplir :\n${JSON.stringify(wanted)}\n\nFormat des champs spécifiques :\n${spec}`;
     let result: z.infer<typeof responseSchema>;
     try {
       result = (await generateStructured({ userId, op: "exercise.generate_free", promptVersion: FREE_GENERATION_PROMPT_VERSION, system: FREE_SYSTEM, user, schema: responseSchema, maxTokens: 7000, temperature: 0.4 })).data;
@@ -393,6 +410,12 @@ export async function generateFreeExercise(userId: string, rawConfig: unknown) {
       accepted.push({ slot, built, explanation: p.data.explanation ?? null, refs: [], concepts: p.data.concepts });
     }
   });
+  await pass(groups);
+  // Compléments : les questions refusées à la validation sont redemandées pour tenir le nombre demandé.
+  for (let round = 0; round < TOP_UP_ROUNDS && !fatal && accepted.length < slots.length; round++) {
+    const missing = slots.filter((s) => !accepted.some((a) => a.slot.slot === s.slot));
+    await pass(Array.from({ length: Math.ceil(missing.length / MAX_SLOTS_PER_CALL) }, (_, n) => missing.slice(n * MAX_SLOTS_PER_CALL, (n + 1) * MAX_SLOTS_PER_CALL)));
+  }
 
   if (accepted.length === 0) {
     if (fatal) throw new ApiHttpError(fatal instanceof AiQuotaError ? fatal.message : "Le service d'IA n'est pas configuré.", fatal instanceof AiQuotaError ? 429 : 503);
@@ -414,7 +437,7 @@ export async function generateFreeExercise(userId: string, rawConfig: unknown) {
     versionId: null,
     origin: "FREE",
     saved: config.saved,
-    title: config.title?.trim() || `${config.subject} — ${config.chapter}`.slice(0, 160),
+    title: config.title?.trim() || (config.subject === config.chapter ? config.subject : `${config.subject} — ${config.chapter}`).slice(0, 160),
     totalPoints: config.totalPoints,
     config: { ...config, free: { subject: config.subject, chapter: config.chapter, level: levelText(config.level, config.levelOther) }, generated: accepted.length, notice: notes.join(" "), promptVersion: FREE_GENERATION_PROMPT_VERSION },
     accepted,
@@ -474,7 +497,7 @@ export interface ExerciseToSave {
 /** Enregistrement : exercice indépendant, avec référence éventuelle au document et à sa version. */
 export async function saveExercise(userId: string, e: ExerciseToSave): Promise<string> {
   const { subjectId } = e;
-  return db.$transaction(async (tx) => {
+  const exerciseId = await db.$transaction(async (tx) => {
     const conceptIdOf = async (name: string) => {
       const normalizedName = foldText(name);
       if (!normalizedName || !subjectId) return null; // les notions appartiennent à une matière
@@ -510,4 +533,6 @@ export async function saveExercise(userId: string, e: ExerciseToSave): Promise<s
     }
     return ex.id;
   }, { timeout: 30_000 });
+  track(userId, e.origin === "IMPORTED" ? "exercise.import" : "exercise.generate", { module: "exercises", sourceRef: exerciseId, props: { origin: e.origin, questions: e.accepted.length } });
+  return exerciseId;
 }

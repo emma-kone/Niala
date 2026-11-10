@@ -10,6 +10,7 @@ import { capabilities, runCodeFree, runCodeTests, runSqlFree, runSqlTests } from
 import { generateHint, type HintLevel } from "./hints";
 import { extractLabExercises } from "./import";
 import { refreshProgress } from "@/server/services/progress/progress";
+import { track } from "@/server/analytics/track";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Laboratoires code & SQL : espaces de travail libres ou d'exercice, exécution isolée, tests objectifs,
@@ -156,6 +157,7 @@ export async function createFree(userId: string, raw: unknown) {
     },
   });
   await touchActivity(userId, w, false);
+  track(userId, "lab.create", { module: kind === "SQL" ? "sql" : "code", sourceRef: w.id, props: { kind, mode: "FREE" } });
   return toDto(w);
 }
 
@@ -351,6 +353,7 @@ export async function runWorkspace(userId: string, id: string, raw: unknown) {
     });
   }
   await touchActivity(userId, w, tests?.summary.allPassed === true);
+  track(userId, "lab.run", { module: w.kind === "SQL" ? "sql" : "code", sourceRef: run.id, props: { kind: w.kind, mode: p.data.mode, withTests: !!tests } });
   if (tests) await refreshProgress(userId);
   return { id: run.id, createdAt: run.createdAt, mode: p.data.mode, output, tests, diagnoses };
 }

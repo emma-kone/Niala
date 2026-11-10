@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { setSessionCookie } from "@/lib/auth";
 import { handle, limit, readJson } from "@/lib/api-helpers";
 import { registerUser, signupSchema } from "@/server/services/accounts";
+import { track } from "@/server/analytics/track";
 
 /** Inscription par e-mail et mot de passe : le compte est connecté dès sa création. */
 export async function POST(req: Request) {
@@ -9,6 +10,7 @@ export async function POST(req: Request) {
     limit("register", 20, 60_000);
     const user = await registerUser(signupSchema.parse(await readJson<unknown>(req)));
     await setSessionCookie(user.id);
+    track(user.id, "account.register", { props: { method: "password" } });
     return NextResponse.json({ ok: true, user });
   });
 }

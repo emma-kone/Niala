@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, ClipboardList, FileQuestion, FileText, PenLine, Play, Plus } from "lucide-react";
+import { ChevronRight, ClipboardList, FileText, PenLine, Play, Plus } from "lucide-react";
 import { api } from "@/lib/client-api";
 import { SubjectIcon } from "@/components/subject-icon";
 import { routes } from "@/config/routes";
@@ -72,17 +72,11 @@ export default function ExercisesView({ subjectId }: { subjectId?: string }) {
             <Button asChild className="gap-1.5"><Link href={routes.newExercise}><Plus className="h-4 w-4" aria-hidden /> Créer un exercice</Link></Button>
           </header>
           {items?.length === 0 && (
-            <section aria-label="Points de départ" className="mb-6 grid gap-3 sm:grid-cols-3">
-              {[
-                { source: "free", title: "Génération libre", text: "Indiquez une matière et un thème.", icon: PenLine },
-                { source: "course", title: "Depuis un cours", text: "Importez votre cours.", icon: FileText },
-                { source: "import", title: "Reproduire un sujet", text: "Résolvez un TD ou un examen ici.", icon: FileQuestion },
-              ].map((s) => (
-                <Link key={s.source} href={`${routes.newExercise}?source=${s.source}`} className="flex items-start gap-3 rounded-3xl border bg-card p-4 transition-colors hover:bg-muted/40">
-                  <s.icon className="mt-0.5 h-5 w-5 shrink-0 text-primary" aria-hidden />
-                  <span><span className="block font-semibold">{s.title}</span><span className="typo-meta">{s.text}</span></span>
-                </Link>
-              ))}
+            <section aria-label="Point de départ" className="mb-6">
+              <Link href={routes.newExercise} className="flex items-start gap-3 rounded-3xl border bg-card p-4 transition-colors hover:bg-muted/40">
+                <PenLine className="mt-0.5 h-5 w-5 shrink-0 text-primary" aria-hidden />
+                <span><span className="block font-semibold">Créer votre premier exercice</span><span className="typo-meta">Décrivez un sujet, déposez un cours ou un TD : Niala choisit la meilleure façon de créer l&apos;exercice.</span></span>
+              </Link>
             </section>
           )}
           {items && items.length > 0 && (

@@ -47,7 +47,7 @@ const patch = (over: Record<string, unknown>) => agenda.patchEventSchema.parse({
 beforeAll(async () => {
   pg = await PGlite.create();
   const dirMig = path.join(process.cwd(), "prisma", "migrations");
-  for (const name of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261109000000_niala_reliability", "20261110000000_niala_agenda", "20261111000000_niala_academic", "20261112000000_niala_subject_icon", "20261113000000_niala_google_link", "20261116000000_niala_profile_exercises", "20261117000000_niala_class_level_other"]) await pg.exec(readFileSync(path.join(dirMig, name, "migration.sql"), "utf8"));
+  for (const name of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261109000000_niala_reliability", "20261110000000_niala_agenda", "20261111000000_niala_academic", "20261112000000_niala_subject_icon", "20261113000000_niala_google_link", "20261116000000_niala_profile_exercises", "20261117000000_niala_class_level_other", "20261118000000_niala_admin"]) await pg.exec(readFileSync(path.join(dirMig, name, "migration.sql"), "utf8"));
   const port = 30000 + Math.floor(Math.random() * 10000);
   server = new PGLiteSocketServer({ db: pg, port, host: "127.0.0.1", maxConnections: 4 });
   await server.start();

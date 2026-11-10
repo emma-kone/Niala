@@ -2,6 +2,8 @@ import { db } from "@/lib/db";
 import { ApiHttpError } from "@/lib/api-helpers";
 import { isAiConfigured } from "@/server/ai/provider";
 import { maxQuestions } from "@/server/domain/exercise-model";
+import { detectDocumentKind } from "@/server/domain/exercise-source";
+import { loadVersionPages } from "@/server/services/analysis/analysis-service";
 
 export async function getExerciseOptions(userId: string, documentId: string) {
   const doc = await db.document.findFirst({ where: { id: documentId, userId }, include: { currentVersion: true } });
@@ -16,8 +18,10 @@ export async function getExerciseOptions(userId: string, documentId: string) {
       ])
     : [[], []];
   const uniq = new Map(concepts.map((c) => [c.concept.id, c.concept]));
+  // Un PDF scanné n'a pas de texte extrait : sans indice, il est traité comme un cours (l'étudiant peut changer).
+  const text = version && ready ? (await loadVersionPages(userId, version.id)).map((p) => p.text).join("\n") : "";
   return {
-    document: { id: doc.id, name: doc.name, subjectId: doc.subjectId, ready, pageCount: version?.pageCount ?? null },
+    document: { id: doc.id, name: doc.name, subjectId: doc.subjectId, ready, pageCount: version?.pageCount ?? null, kind: detectDocumentKind(doc.name, text) },
     aiConfigured: isAiConfigured(),
     maxQuestions: maxQuestions(),
     analysis: analysis ? { id: analysis.id } : null,

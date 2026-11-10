@@ -9,6 +9,7 @@ import { deleteDocuments } from "@/server/services/documents";
 import { gradeAnswer } from "./evaluation";
 import type { AttemptReview } from "./review";
 import { refreshProgress } from "@/server/services/progress/progress";
+import { track } from "@/server/analytics/track";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tentatives : copie FIGÉE de l'exercice (snapshot), réponses enregistrées au fil de l'eau (reprise),
@@ -83,6 +84,7 @@ export async function startAttempt(userId: string, exerciseId: string, opts: { f
   await db.learningActivity.create({
     data: { userId, subjectId: exercise.subjectId, type: "EXERCISE", refType: "attempt", refId: attempt.id, title: exercise.title, status: "IN_PROGRESS", lastPosition: { position: 1 } },
   });
+  track(userId, "exercise.start", { module: "exercises", sourceRef: attempt.id, props: { origin: exercise.origin } });
   return { id: attempt.id, resumed: false };
 }
 
@@ -257,6 +259,7 @@ async function finalize(userId: string, attemptId: string) {
     }),
     db.learningActivity.updateMany({ where: { userId, refType: "attempt", refId: attemptId }, data: { status: "DONE" } }),
   ]);
+  track(userId, "exercise.complete", { module: "exercises", sourceRef: attemptId, durationMs: (a.durationSec ?? 0) * 1000 || undefined, props: { score, max: a.maxScore ?? null } });
   await refreshProgress(userId); // maîtrise par notion + recommandations (n'échoue jamais la correction)
 }
 

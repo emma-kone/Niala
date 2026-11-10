@@ -79,7 +79,7 @@ export function googleProfileOf(user: SupabaseAuthUser): GoogleProfile | null {
 }
 
 export class GoogleSignInError extends Error {
-  constructor(readonly reason: "unverified" | "account_exists" | "account_conflict") {
+  constructor(readonly reason: "unverified" | "account_exists" | "account_conflict" | "suspended") {
     super(reason);
   }
 }
@@ -101,10 +101,14 @@ export async function signInWithGoogle(profile: GoogleProfile) {
     profile.name && u.name !== profile.name ? publicUser(await db.user.update({ where: { id: u.id }, data: { name: profile.name } })) : publicUser(u);
 
   const linked = await db.user.findUnique({ where: { googleSub: profile.sub } });
-  if (linked) return withLatestName(linked);
+  if (linked) {
+    if (linked.accountStatus !== "ACTIVE") throw new GoogleSignInError("suspended");
+    return withLatestName(linked);
+  }
 
   const existing = await db.user.findUnique({ where: { email } });
   if (existing) {
+    if (existing.accountStatus !== "ACTIVE") throw new GoogleSignInError("suspended");
     if (existing.passwordHash === marker) {
       return withLatestName(await db.user.update({ where: { id: existing.id }, data: { googleSub: profile.sub } }));
     }

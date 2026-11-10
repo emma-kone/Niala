@@ -5,6 +5,7 @@ import { ApiHttpError } from "@/lib/api-helpers";
 import { requireSubject } from "@/server/services/folders";
 import { layoutLayers, layoutTree } from "@/server/domain/map-layout";
 import { MAX_NODES, mapStateSchema, type MapEdgeInput, type MapNodeInput, type MapState } from "@/server/domain/map-validation";
+import { track } from "@/server/analytics/track";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Cartes = graphes ÉDITABLES (nœuds + relations), jamais une image. La provenance est gardée par le
@@ -98,6 +99,7 @@ export async function getMap(userId: string, id: string) {
 export async function createEmptyMap(userId: string, subjectId: string, title: string, kind: MapKind) {
   await requireSubject(userId, subjectId);
   const map = await db.mindMap.create({ data: { userId, subjectId, title: title.trim().slice(0, 160) || "Nouvelle carte", kind } });
+  track(userId, "map.create", { module: "maps", sourceRef: map.id, props: { kind, generated: false } });
   return { id: map.id };
 }
 
@@ -204,6 +206,7 @@ async function persistGenerated(userId: string, subjectId: string, analysisId: s
     });
     return m;
   }, { timeout: 30_000 });
+  track(userId, "map.create", { module: "maps", sourceRef: map.id, props: { kind, generated: true } });
   return { id: map.id };
 }
 
