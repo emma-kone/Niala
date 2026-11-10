@@ -2,17 +2,19 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
-const call = async (host: string | undefined, url: string, adminHost: string | undefined) => {
+const call = async (host: string | undefined, url: string, adminHost: string | undefined, extra: { cookie?: string } = {}) => {
   vi.resetModules();
   if (adminHost === undefined) delete process.env.ADMIN_HOST;
   else process.env.ADMIN_HOST = adminHost;
   const { proxy } = await import("./proxy");
   const path = new URL(url, "https://x.test");
-  return proxy(new NextRequest(path, { headers: host ? { host } : {}, method: "POST" }));
+  return proxy(new NextRequest(path, { headers: { ...(host ? { host } : {}), ...(extra.cookie ? { cookie: extra.cookie } : {}) }, method: "POST" }));
 };
 
 afterEach(() => {
   delete process.env.ADMIN_HOST;
+  delete process.env.ADMIN_PATH;
+  vi.unstubAllEnvs();
 });
 
 describe("domaine d'administration distinct", () => {
@@ -57,5 +59,50 @@ describe("mesure des requêtes d'API", () => {
     expect(api.headers.get("x-middleware-request-x-niala-method")).toBe("POST");
     const page = await call("niala.test", "/exercices", undefined);
     expect(page.headers.get("x-middleware-request-x-niala-path")).toBeNull();
+  });
+});
+
+describe("adresse secrète du back-office (ADMIN_PATH)", () => {
+  const SLUG = "k3J9xQ2mZp7LwR5tYb8NcV4hDs6FgA1e";
+  /** Refus = réécriture vers une page inexistante (404 ordinaire du site, sans indice). */
+  const denied = (r: Response) => r.headers.get("x-middleware-rewrite")?.includes("__niala_absent__") === true;
+
+  it("n'ouvre /admin et /api/admin qu'après passage par l'adresse secrète", async () => {
+    process.env.ADMIN_PATH = SLUG;
+    expect(denied(await call("niala.test", "/admin", undefined))).toBe(true);
+    expect(denied(await call("niala.test", "/admin/login", undefined))).toBe(true);
+    expect(denied(await call("niala.test", "/api/admin/auth/login", undefined))).toBe(true);
+    const entry = await call("niala.test", `/${SLUG}`, undefined);
+    expect(entry.status).toBe(307);
+    expect(new URL(entry.headers.get("location")!).pathname).toBe("/admin");
+    const cookie = entry.headers.get("set-cookie")!;
+    expect(cookie).toContain("niala_gate=");
+    expect(cookie.toLowerCase()).toContain("httponly");
+    const pass = cookie.split(";")[0];
+    expect((await call("niala.test", "/admin", undefined, { cookie: pass })).status).toBe(200);
+    expect((await call("niala.test", "/api/admin/users", undefined, { cookie: pass })).status).toBe(200);
+  });
+
+  it("redirige /<secret>/login vers /admin/login et refuse un faux cookie ou une variante de l'adresse", async () => {
+    process.env.ADMIN_PATH = SLUG;
+    const login = await call("niala.test", `/${SLUG}/login`, undefined);
+    expect(new URL(login.headers.get("location")!).pathname).toBe("/admin/login");
+    expect(denied(await call("niala.test", "/admin", undefined, { cookie: "niala_gate=nimporte-quoi" }))).toBe(true);
+    expect(denied(await call("niala.test", "/admin", undefined, { cookie: "niala_gate=" }))).toBe(true);
+    for (const guess of ["/administrator", "/admin-login", "/backoffice", `/${SLUG.slice(0, -1)}`, `/${SLUG}x`, "/dashboard", "/_admin"]) {
+      const r = await call("niala.test", guess, undefined);
+      expect(r.status).not.toBe(307);
+      expect(r.headers.get("set-cookie")).toBeNull();
+    }
+  });
+
+  it("refuse les adresses secrètes trop courtes et ferme le back-office en production sans ADMIN_PATH", async () => {
+    process.env.ADMIN_PATH = "admin";
+    expect((await call("niala.test", "/admin", undefined)).headers.get("x-middleware-rewrite")).toBeNull(); // hors production, valeur invalide ignorée
+    expect((await call("niala.test", "/admin", undefined)).headers.get("set-cookie")).toBeNull();
+    vi.stubEnv("NODE_ENV", "production");
+    expect(denied(await call("niala.test", "/admin", undefined))).toBe(true);
+    expect(denied(await call("niala.test", "/api/admin/users", undefined))).toBe(true);
+    expect((await call("niala.test", "/matieres", undefined)).status).toBe(200);
   });
 });

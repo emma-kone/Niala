@@ -42,7 +42,7 @@ export function verifyAdminToken(token: string, now = Date.now()): { userId: str
 export async function setAdminCookie(userId: string, version: number) {
   (await cookies()).set(ADMIN_COOKIE, createAdminToken(userId, version), {
     httpOnly: true,
-    sameSite: "strict",
+    sameSite: "lax", // « strict » priverait de cookie la redirection qui suit le retour de Google
     secure: process.env.NODE_ENV === "production",
     path: "/",
     maxAge: ADMIN_SESSION_TTL_MS / 1000,

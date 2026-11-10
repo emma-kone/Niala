@@ -8,15 +8,24 @@ l'application : aucun chiffre n'est fictif, et chaque indicateur dit s'il vient 
 
 | Élément | Valeur |
 |---|---|
-| Adresse | `/admin` (connexion : `/admin/login`) |
+| Adresse | **Secrète** : `https://<domaine>/<ADMIN_PATH>` (voir ci-dessous). `/admin` et `/api/admin` répondent par la 404 ordinaire du site à quiconque n'est pas passé par l'adresse secrète. |
 | Lien distinct | Variable `ADMIN_HOST` (ex. `admin.niala.app`). Une fois définie, le back-office n'est servi **que** sur ce domaine (le domaine de la plateforme répond 404 sur `/admin` et `/api/admin`) et l'espace étudiant n'est plus servi sur le domaine d'administration. Sans `ADMIN_HOST` (développement), tout reste sous `/admin`. |
 | Authentification | Les mêmes moyens que la plateforme : e-mail + mot de passe (scrypt) ou Google via Supabase. |
-| Session | **Distincte** de la session étudiante : cookie `niala_admin` (HttpOnly, SameSite=Strict), 8 h, jeton signé avec un autre domaine de séparation. Rôle, statut du compte et version de session sont relus en base à chaque requête. |
+| Session | **Distincte** de la session étudiante : cookie `niala_admin` (HttpOnly, SameSite=Lax), 8 h, jeton signé avec un autre domaine de séparation. Rôle, statut du compte et version de session sont relus en base à chaque requête. |
 | Premier super administrateur | `node scripts/grant-admin.mjs <email> SUPER_ADMIN` (compte déjà inscrit) ou `SF_PASSWORD=… node scripts/grant-admin.mjs <email> SUPER_ADMIN --create --name "Nom"`. Ensuite, les rôles se gèrent dans *Paramètres d'administration*. |
 
 Connexion Google : l'écran d'administration pose un cookie d'intention puis passe par `/auth/callback`. Ce chemin n'**ouvre que
 des comptes déjà existants, liés à cette identité Google et porteurs d'un rôle** ; il ne crée jamais de compte. Pensez à
 autoriser `https://<ADMIN_HOST>/auth/callback` dans Supabase (Authentication → URL Configuration).
+
+### Adresse secrète (`ADMIN_PATH`)
+
+Variable d'environnement : une valeur aléatoire de 24 caractères ou plus (lettres, chiffres, `-`, `_`), par exemple
+`node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))"`. À définir dans `.env` ET dans les variables de Vercel.
+Visiter `https://<domaine>/<ADMIN_PATH>` dépose un cookie de passage (`niala_gate`, httpOnly, 30 jours) puis redirige vers la page de
+connexion ; sans ce cookie, toute requête vers `/admin…` ou `/api/admin…` est réécrite vers une page inexistante (404 standard, aucun indice).
+Une valeur trop courte est ignorée ; **en production sans `ADMIN_PATH`, le back-office est fermé**. Changer la valeur invalide tous les cookies de passage.
+Ce n'est qu'une première barrière : mot de passe, rôles et audit restent vérifiés côté serveur. Ne partagez pas l'adresse et ne la placez pas dans un dépôt.
 
 ## 2. Rôles (RBAC) — `src/server/admin/rbac.ts`
 
@@ -76,7 +85,7 @@ npm run db:deploy                     # applique la migration
 node scripts/grant-admin.mjs vous@exemple.fr SUPER_ADMIN
 ```
 
-Variables : `ADMIN_HOST` (facultatif, voir §1), `AUTH_SECRET` (obligatoire en production : sert aussi au pseudonyme d'analyse — la changer
+Variables : `ADMIN_PATH` (obligatoire en production, voir §1), `ADMIN_HOST` (facultatif), `AUTH_SECRET` (obligatoire en production : sert aussi au pseudonyme d'analyse — la changer
 rend les anciens événements inattribuables à un compte existant).
 
 Développement local sans toucher à Supabase : `node scripts/dev-db.mjs` puis `node scripts/dev-admin.mjs 3200`.
