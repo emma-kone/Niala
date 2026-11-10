@@ -9,6 +9,8 @@ import { db } from "@/lib/db";
 export const AUDIT_ACTIONS: Record<string, string> = {
   "admin.login": "Connexion administrateur",
   "admin.login_failed": "Échec de connexion administrateur",
+  "admin.gate": "Code d'accès validé",
+  "admin.gate_failed": "Code d'accès refusé",
   "admin.logout": "Déconnexion administrateur",
   "access.denied": "Accès refusé",
   "user.view": "Consultation d'une fiche utilisateur",

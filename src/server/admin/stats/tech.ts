@@ -162,9 +162,9 @@ const RULES: Rule[] = [
     key: "security.admin-logins",
     async evaluate() {
       const since = new Date(Date.now() - 15 * 60_000);
-      const failed = await db.adminAuditLog.count({ where: { action: "admin.login_failed", createdAt: { gte: since } } });
+      const failed = await db.adminAuditLog.count({ where: { action: { in: ["admin.login_failed", "admin.gate_failed"] }, createdAt: { gte: since } } });
       if (failed < 5) return null;
-      return { severity: "WARNING", title: "Tentatives de connexion administrateur échouées", detail: `${failed} échecs de connexion à l'espace d'administration en 15 minutes.` };
+      return { severity: "WARNING", title: "Tentatives de connexion administrateur échouées", detail: `${failed} échecs de connexion ou de code d'accès à l'espace d'administration en 15 minutes.` };
     },
   },
 ];

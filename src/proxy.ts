@@ -1,5 +1,5 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
+import { GATE_COOKIE, GATE_MAX_AGE, GATE_ROUTE, codeRequired, cookieIsValid, gateSlug, gateToken } from "@/server/admin/gate";
 import type { NextRequest } from "next/server";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -19,21 +19,8 @@ import type { NextRequest } from "next/server";
 
 const ADMIN_HOST = (process.env.ADMIN_HOST ?? "").trim().toLowerCase();
 
-const GATE_COOKIE = "niala_gate";
-const GATE_MAX_AGE = 30 * 24 * 3600;
-// Adresse lisible acceptée (8 caractères minimum), sauf si elle recouvre une page existante de la plateforme.
-const SECRET_SLUG = /^[A-Za-z0-9_-]{8,}$/;
-const RESERVED = new Set(["admin", "api", "login", "auth", "matieres", "agenda", "exercices", "assistant", "reglages", "progression", "suggestions", "bibliotheque", "profil", "conditions", "confidentialite", "manifest"]);
-
-const gateSlug = () => {
-  const slug = (process.env.ADMIN_PATH ?? "").trim().replace(/^\/+|\/+$/g, "");
-  return SECRET_SLUG.test(slug) && !RESERVED.has(slug.toLowerCase()) ? slug : "";
-};
-const gateToken = (slug: string) => createHmac("sha256", process.env.AUTH_SECRET || slug).update(`admin-gate.${slug}`).digest("base64url");
 function hasGate(req: NextRequest, slug: string): boolean {
-  const given = req.cookies.get(GATE_COOKIE)?.value ?? "";
-  const expected = gateToken(slug);
-  return given.length === expected.length && timingSafeEqual(Buffer.from(given), Buffer.from(expected));
+  return cookieIsValid(req.cookies.get(GATE_COOKIE)?.value, slug);
 }
 const notFound = () => new NextResponse("Introuvable", { status: 404 });
 /** Refus de la porte secrète : la requête est réécrite vers une page inexistante, si bien que la réponse est la 404 habituelle du site (rien ne trahit un back-office). */
@@ -49,12 +36,16 @@ export function proxy(req: NextRequest) {
   // Porte secrète : /<ADMIN_PATH>[/suite] dépose le cookie de passage puis redirige vers /admin[/suite].
   const slug = gateSlug();
   if (slug && (pathname === `/${slug}` || pathname.startsWith(`/${slug}/`))) {
+    // Avec un code d'accès configuré, l'adresse secrète affiche d'abord la page du code (réécriture : l'adresse ne change pas).
+    if (codeRequired() && !hasGate(req, slug)) return NextResponse.rewrite(new URL(GATE_ROUTE, req.url));
     const rest = pathname.slice(slug.length + 1);
     const res = NextResponse.redirect(new URL(`/admin${rest === "/" ? "" : rest}${req.nextUrl.search}`, req.url));
     res.cookies.set(GATE_COOKIE, gateToken(slug), { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/", maxAge: GATE_MAX_AGE });
     res.headers.set("Cache-Control", "no-store");
     return res;
   }
+  // La page du code n'est jamais accessible directement (ni ses actions) : seule la réécriture ci-dessus y mène.
+  if (pathname === GATE_ROUTE || pathname.startsWith(`${GATE_ROUTE}/`)) return absent(req);
   if (isAdminPath(pathname)) {
     const open = slug ? hasGate(req, slug) : process.env.NODE_ENV !== "production";
     if (!open) return absent(req);

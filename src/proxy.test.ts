@@ -14,6 +14,7 @@ const call = async (host: string | undefined, url: string, adminHost: string | u
 afterEach(() => {
   delete process.env.ADMIN_HOST;
   delete process.env.ADMIN_PATH;
+  delete process.env.ADMIN_ACCESS_HASH;
   vi.unstubAllEnvs();
 });
 
@@ -113,5 +114,43 @@ describe("adresse secrète du back-office (ADMIN_PATH)", () => {
     expect(denied(await call("niala.test", "/admin", undefined))).toBe(true);
     expect(denied(await call("niala.test", "/api/admin/users", undefined))).toBe(true);
     expect((await call("niala.test", "/matieres", undefined)).status).toBe(200);
+  });
+});
+
+describe("code d'accès devant la connexion (ADMIN_ACCESS_HASH)", () => {
+  const SLUG = "nialaspace-admin";
+  const HASH = "a".repeat(32) + "." + "b".repeat(128);
+  const denied = (r: Response) => r.headers.get("x-middleware-rewrite")?.includes("__niala_absent__") === true;
+
+  it("affiche la page du code (sans changer d'adresse) tant que le cookie de passage manque", async () => {
+    process.env.ADMIN_PATH = SLUG;
+    process.env.ADMIN_ACCESS_HASH = HASH;
+    const entry = await call("niala.test", `/${SLUG}`, undefined);
+    expect(entry.status).toBe(200);
+    expect(entry.headers.get("x-middleware-rewrite")).toContain("/zz-gate");
+    expect(entry.headers.get("set-cookie")).toBeNull();
+    const sub = await call("niala.test", `/${SLUG}/login`, undefined);
+    expect(sub.headers.get("x-middleware-rewrite")).toContain("/zz-gate");
+    expect(denied(await call("niala.test", "/admin/login", undefined))).toBe(true);
+  });
+
+  it("n'expose jamais la page du code ni ses actions en accès direct", async () => {
+    process.env.ADMIN_PATH = SLUG;
+    process.env.ADMIN_ACCESS_HASH = HASH;
+    expect(denied(await call("niala.test", "/zz-gate", undefined))).toBe(true);
+    expect(denied(await call("niala.test", "/zz-gate/x", undefined))).toBe(true);
+  });
+
+  it("laisse passer un visiteur muni d'un cookie valide, et seulement celui-là", async () => {
+    process.env.ADMIN_PATH = SLUG;
+    process.env.ADMIN_ACCESS_HASH = HASH;
+    vi.resetModules();
+    const { gateToken } = await import("@/server/admin/gate");
+    const good = `niala_gate=${gateToken(SLUG)}`;
+    const entry = await call("niala.test", `/${SLUG}`, undefined, { cookie: good });
+    expect(entry.status).toBe(307);
+    expect(new URL(entry.headers.get("location")!).pathname).toBe("/admin");
+    expect((await call("niala.test", "/admin/login", undefined, { cookie: good })).headers.get("x-middleware-rewrite")).toBeNull();
+    expect(denied(await call("niala.test", "/admin/login", undefined, { cookie: "niala_gate=faux" }))).toBe(true);
   });
 });

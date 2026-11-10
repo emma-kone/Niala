@@ -27,6 +27,15 @@ connexion ; sans ce cookie, toute requête vers `/admin…` ou `/api/admin…` e
 Une valeur trop courte est ignorée ; **en production sans `ADMIN_PATH`, le back-office est fermé**. Changer la valeur invalide tous les cookies de passage.
 Ce n'est qu'une première barrière : mot de passe, rôles et audit restent vérifiés côté serveur. Ne partagez pas l'adresse et ne la placez pas dans un dépôt.
 
+### Code d'accès (`ADMIN_ACCESS_HASH`)
+
+`node scripts/admin-access-code.mjs` génère un code (3 mots + 4 chiffres, affiché une seule fois) et la ligne `ADMIN_ACCESS_HASH=…` à mettre dans `.env`
+et dans Vercel ; `SF_ACCESS_CODE="votre code" node scripts/admin-access-code.mjs` hache un code de votre choix (8 caractères minimum).
+Seul le hachage scrypt est stocké. Parcours : `/<ADMIN_PATH>` → page du code → `/admin/login` (e-mail + mot de passe) → dashboard.
+Le code est vérifié par une action serveur ; 5 échecs par IP (ou 20 au total) sur 15 minutes verrouillent la saisie (comptage en base, consigné dans le journal,
+alerte de supervision). Le cookie de passage est lié à l'adresse et au code : changer l'un ou l'autre déconnecte tous les appareils de la porte.
+Sans `ADMIN_ACCESS_HASH`, l'adresse secrète seule ouvre la connexion.
+
 ## 2. Rôles (RBAC) — `src/server/admin/rbac.ts`
 
 | Rôle | Peut |
