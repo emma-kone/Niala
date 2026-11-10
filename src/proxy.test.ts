@@ -83,6 +83,13 @@ describe("adresse secrète du back-office (ADMIN_PATH)", () => {
     expect((await call("niala.test", "/api/admin/users", undefined, { cookie: pass })).status).toBe(200);
   });
 
+  it("fonctionne avec une adresse lisible", async () => {
+    process.env.ADMIN_PATH = "nialaspace-admin";
+    const entry = await call("niala.test", "/nialaspace-admin", undefined);
+    expect(entry.status).toBe(307);
+    expect(denied(await call("niala.test", "/admin", undefined))).toBe(true);
+  });
+
   it("redirige /<secret>/login vers /admin/login et refuse un faux cookie ou une variante de l'adresse", async () => {
     process.env.ADMIN_PATH = SLUG;
     const login = await call("niala.test", `/${SLUG}/login`, undefined);
@@ -96,9 +103,11 @@ describe("adresse secrète du back-office (ADMIN_PATH)", () => {
     }
   });
 
-  it("refuse les adresses secrètes trop courtes et ferme le back-office en production sans ADMIN_PATH", async () => {
-    process.env.ADMIN_PATH = "admin";
-    expect((await call("niala.test", "/admin", undefined)).headers.get("x-middleware-rewrite")).toBeNull(); // hors production, valeur invalide ignorée
+  it("accepte une adresse lisible comme nialaspace-admin, refuse les valeurs trop courtes ou réservées et ferme le back-office en production sans ADMIN_PATH", async () => {
+    for (const bad of ["admin", "court", "reglages", "a b c d e f g h", "../admin-x"]) {
+      process.env.ADMIN_PATH = bad;
+      expect((await call("niala.test", "/admin", undefined)).headers.get("x-middleware-rewrite")).toBeNull(); // hors production, valeur invalide ignorée
+    }
     expect((await call("niala.test", "/admin", undefined)).headers.get("set-cookie")).toBeNull();
     vi.stubEnv("NODE_ENV", "production");
     expect(denied(await call("niala.test", "/admin", undefined))).toBe(true);

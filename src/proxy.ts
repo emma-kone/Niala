@@ -10,7 +10,7 @@ import type { NextRequest } from "next/server";
 //     sur ce domaine et le domaine de la plateforme ne l'expose plus ; l'inverse est vrai pour l'espace étudiant.
 //     Sans ADMIN_HOST (développement), le back-office reste accessible sous /admin.
 //  3. Porte d'entrée SECRÈTE : le back-office n'existe, pour quiconque, qu'après être passé par l'adresse secrète
-//     /<ADMIN_PATH> (valeur aléatoire de 24 caractères ou plus, définie dans l'environnement). Cette visite dépose un cookie
+//     /<ADMIN_PATH> (valeur définie dans l'environnement, 8 caractères minimum ; une valeur longue et aléatoire est bien plus sûre qu'un mot lisible). Cette visite dépose un cookie
 //     de passage (httpOnly) ; sans lui, /admin et /api/admin répondent 404 comme n'importe quelle page inexistante,
 //     de sorte qu'on ne peut ni deviner l'adresse, ni confirmer qu'un back-office existe. En production, sans ADMIN_PATH,
 //     le back-office est fermé. Ce n'est qu'une première barrière : la connexion et les droits restent vérifiés côté serveur.
@@ -21,11 +21,13 @@ const ADMIN_HOST = (process.env.ADMIN_HOST ?? "").trim().toLowerCase();
 
 const GATE_COOKIE = "niala_gate";
 const GATE_MAX_AGE = 30 * 24 * 3600;
-const SECRET_SLUG = /^[A-Za-z0-9_-]{24,}$/;
+// Adresse lisible acceptée (8 caractères minimum), sauf si elle recouvre une page existante de la plateforme.
+const SECRET_SLUG = /^[A-Za-z0-9_-]{8,}$/;
+const RESERVED = new Set(["admin", "api", "login", "auth", "matieres", "agenda", "exercices", "assistant", "reglages", "progression", "suggestions", "bibliotheque", "profil", "conditions", "confidentialite", "manifest"]);
 
 const gateSlug = () => {
   const slug = (process.env.ADMIN_PATH ?? "").trim().replace(/^\/+|\/+$/g, "");
-  return SECRET_SLUG.test(slug) ? slug : "";
+  return SECRET_SLUG.test(slug) && !RESERVED.has(slug.toLowerCase()) ? slug : "";
 };
 const gateToken = (slug: string) => createHmac("sha256", process.env.AUTH_SECRET || slug).update(`admin-gate.${slug}`).digest("base64url");
 function hasGate(req: NextRequest, slug: string): boolean {
