@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getCurrentUser, setSessionCookie, verifyPassword } from "@/lib/auth";
 import { handle, jsonError, limit, readJson } from "@/lib/api-helpers";
+import { track } from "@/server/analytics/track";
 
 const loginSchema = z.object({
   email: z.string().email("Adresse e-mail invalide"),
@@ -18,9 +19,13 @@ export async function POST(req: Request) {
     if (!user || !verifyPassword(password, user.passwordHash)) {
       return jsonError("E-mail ou mot de passe incorrect.", 401);
     }
+    if (user.accountStatus !== "ACTIVE") {
+      return jsonError(user.accountStatus === "SUSPENDED" ? "Ce compte est suspendu. Contactez l'équipe Niala pour en savoir plus." : "Ce compte a été désactivé. Contactez l'équipe Niala pour en savoir plus.", 403);
+    }
     // Les préférences existent dès la connexion (valeurs par défaut Niala : thème sombre…)
     await db.userSettings.upsert({ where: { userId: user.id }, create: { userId: user.id }, update: {} });
     await setSessionCookie(user.id);
+    track(user.id, "auth.login", { props: { method: "password" } });
     return NextResponse.json({ ok: true, user: { id: user.id, email: user.email, name: user.name } });
   });
 }

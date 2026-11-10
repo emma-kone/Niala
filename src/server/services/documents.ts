@@ -15,6 +15,7 @@ import {
 } from "@/server/domain/file-validation";
 import { pathTo } from "@/server/domain/folder-tree";
 import { loadFolders, requireSubject } from "@/server/services/folders";
+import { track } from "@/server/analytics/track";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Documents V2 : l'ORIGINAL est stocké tel quel (DocumentVersion.storageKey) ; le texte
@@ -211,6 +212,7 @@ export async function finalizeUpload(userId: string, versionId: string): Promise
     });
     // Aperçu PDF (meilleur effort : un échec n'invalide pas l'import, il sera retenté à l'ouverture)
     await ensurePdfPreview(userId, doc.id).catch((e) => console.error("[finalizeUpload] aperçu PDF", e));
+    track(userId, "document.import", { module: "documents", sourceRef: versionId, props: { kind, pages: extracted.pageCount ?? null, status } });
     return {
       ok: true,
       documentId: doc.id,
@@ -223,6 +225,7 @@ export async function finalizeUpload(userId: string, versionId: string): Promise
     const message = "Extraction du texte impossible. Le fichier original est conservé.";
     await db.documentVersion.update({ where: { id: versionId }, data: { extractStatus: "FAILED", extractError: message } });
     await db.document.update({ where: { id: doc.id }, data: { status: "ERROR", error: message } });
+    track(userId, "document.import", { module: "documents", ok: false, props: { kind } });
     return { ok: false, documentId: doc.id, status: "FAILED", warnings: [], error: message };
   }
 }

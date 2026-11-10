@@ -36,6 +36,8 @@ export const exerciseConfigSchema = z
     documentId: id,
     /** Tous les documents sources, document principal compris (facultatif quand il n'y en a qu'un). */
     documentIds: z.array(id).min(1).max(MAX_SOURCE_DOCUMENTS).optional(),
+    /** Précision de l'étudiant (notion, chapitre, angle) : les questions s'y concentrent, toujours dans les documents. */
+    focus: z.string().trim().max(300).optional(),
     title: z.string().trim().max(160).optional(),
     questionCount: z.number().int().min(1),
     /** Barème : note sur 10, 20, 100 ou personnalisée (maximum 100). */

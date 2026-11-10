@@ -5,6 +5,7 @@ import {
   FilePlus2,
   Home,
   MessageSquare,
+  MessageSquarePlus,
   NotebookPen,
   Settings,
   Terminal,
@@ -39,6 +40,7 @@ export const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
     items: [
       { href: routes.notes, label: "Notes", icon: NotebookPen, match: "prefix" },
       { href: routes.progress, label: "Progression", icon: TrendingUp, match: "prefix" },
+      { href: routes.suggestions, label: "Suggestions", icon: MessageSquarePlus, match: "prefix" },
       { href: routes.settings, label: "Paramètres", icon: Settings, match: "prefix" },
     ],
   },
@@ -46,7 +48,13 @@ export const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
 
 export const APP_NAV: NavItem[] = NAV_GROUPS.flatMap((g) => g.items);
 
+/** Un exercice rangé dans une matière (/matieres/<id>/exercices/…) appartient au module Exercices, pas à la liste des matières. */
+const SUBJECT_EXERCISE_PATH = /^\/matieres\/[^/]+\/exercices(\/|$)/;
+
 export function isNavActive(pathname: string, item: NavItem): boolean {
+  const inExercises = SUBJECT_EXERCISE_PATH.test(pathname);
+  if (inExercises && item.href === routes.exercises) return true;
+  if (inExercises && item.href === routes.subjects) return false;
   if (item.match === "exact") {
     if (pathname === item.href) return true;
   } else if (pathname === item.href || pathname.startsWith(`${item.href}/`)) {

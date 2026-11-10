@@ -95,18 +95,8 @@ export async function revokeSessions(userId: string) {
 
 export const deleteAccountSchema = z.object({ password: z.string().max(200).optional(), confirmEmail: z.string().trim().max(320).optional() });
 
-/**
- * Suppression définitive : un compte à mot de passe confirme ce mot de passe, un compte Google recopie son adresse.
- * Les fichiers originaux sont retirés du stockage après la suppression en base, qui reste l'opération décisive.
- */
-export async function deleteAccount(userId: string, input: z.infer<typeof deleteAccountSchema>) {
-  const user = await db.user.findUnique({ where: { id: userId } });
-  if (!user) throw new ApiHttpError("Compte introuvable.", 404);
-  if (hasPassword(user.passwordHash)) {
-    if (!input.password || !verifyPassword(input.password, user.passwordHash)) throw new ApiHttpError("Mot de passe incorrect.", 403);
-  } else if ((input.confirmEmail ?? "").toLowerCase() !== user.email.toLowerCase()) {
-    throw new ApiHttpError("L'adresse saisie ne correspond pas à celle du compte.", 403);
-  }
+/** Suppression en base puis dans le stockage : commune à la suppression par l'étudiant et à celle décidée par l'administration. */
+export async function purgeAccount(userId: string) {
   const [versions, imports] = await Promise.all([
     db.documentVersion.findMany({ where: { userId, storageKey: { not: null } }, select: { storageKey: true } }),
     db.scheduleImport.findMany({ where: { userId }, select: { storageKey: true } }),
@@ -120,6 +110,21 @@ export async function deleteAccount(userId: string, input: z.infer<typeof delete
   ]);
   const keys = [...withPreviewKeys(versions.map((v) => v.storageKey!)), ...imports.map((i) => i.storageKey)];
   await getStorage().remove(keys).catch((e) => console.error("[account] fichiers non retirés du stockage :", e instanceof Error ? e.message : e));
+}
+
+/**
+ * Suppression définitive : un compte à mot de passe confirme ce mot de passe, un compte Google recopie son adresse.
+ * Les fichiers originaux sont retirés du stockage après la suppression en base, qui reste l'opération décisive.
+ */
+export async function deleteAccount(userId: string, input: z.infer<typeof deleteAccountSchema>) {
+  const user = await db.user.findUnique({ where: { id: userId } });
+  if (!user) throw new ApiHttpError("Compte introuvable.", 404);
+  if (hasPassword(user.passwordHash)) {
+    if (!input.password || !verifyPassword(input.password, user.passwordHash)) throw new ApiHttpError("Mot de passe incorrect.", 403);
+  } else if ((input.confirmEmail ?? "").toLowerCase() !== user.email.toLowerCase()) {
+    throw new ApiHttpError("L'adresse saisie ne correspond pas à celle du compte.", 403);
+  }
+  await purgeAccount(userId);
   return { ok: true };
 }
 

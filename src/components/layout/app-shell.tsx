@@ -15,6 +15,9 @@ import { useCourseReminders } from "@/features/agenda/use-course-reminders";
 import { useRevisionReminder } from "@/features/settings/use-revision-reminder";
 import { SETTINGS_KEY, useSettings } from "@/features/settings/use-settings";
 import { ContextHintLayer } from "@/components/context-hint";
+import { StudentTracking } from "@/features/support/student-tracking";
+import { ProductTour } from "@/components/tour/product-tour";
+import { STUDENT_TOUR, STUDENT_TOUR_ID } from "@/features/tour/steps";
 import { applyTextSize, isThemeChoice, useTheme } from "@/components/theme/theme-provider";
 import type { SessionBootstrap } from "@/server/services/session";
 
@@ -67,6 +70,8 @@ function Shell({ children, initial }: { children: React.ReactNode; initial: Sess
     <AuthGuard>
       <div className="flex h-dvh overflow-hidden bg-[var(--shell)]">
         <ContextHintLayer />
+        <StudentTracking />
+        <ProductTour tourId={STUDENT_TOUR_ID} version={1} userKey={user?.id ?? "anonyme"} steps={STUDENT_TOUR} />
         <SidebarNav user={user} onLogout={logout} />
         <div className="flex min-h-0 min-w-0 flex-1 flex-col lg:py-3 lg:pr-3">
           <MobileNav user={user} onLogout={logout} />

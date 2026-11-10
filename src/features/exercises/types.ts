@@ -90,7 +90,7 @@ export interface AttemptDetail {
 }
 
 export interface ExerciseOptions {
-  document: { id: string; name: string; subjectId: string | null; ready: boolean; pageCount: number | null };
+  document: { id: string; name: string; subjectId: string | null; ready: boolean; pageCount: number | null; kind: "sheet" | "course" };
   aiConfigured: boolean;
   maxQuestions: number;
   analysis: { id: string } | null;

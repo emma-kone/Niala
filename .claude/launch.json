@@ -18,6 +18,15 @@
                                                    "dev"
                                                ],
                                "port":  3000
+                           },
+                           {
+                               "name":  "niala-admin-local",
+                               "runtimeExecutable":  "node",
+                               "runtimeArgs":  [
+                                                   "scripts/dev-admin.mjs",
+                                                   "3200"
+                                               ],
+                               "port":  3200
                            }
                        ]
 }

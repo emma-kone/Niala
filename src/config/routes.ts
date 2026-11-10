@@ -11,6 +11,7 @@ export const routes = {
   sql: "/sql",
   progress: "/progression",
   settings: "/reglages",
+  suggestions: "/suggestions",
   profile: "/profil",
   newExercise: "/exercices/nouveau",
   privacy: "/confidentialite",

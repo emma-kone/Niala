@@ -9,7 +9,7 @@
 import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, Bell, BookOpenCheck, Download, Loader2, LogOut, MonitorSmartphone, ShieldCheck, SlidersHorizontal, Trash2, UserRound, XCircle, type LucideIcon } from "lucide-react";
+import { ArrowRight, Bell, BookOpenCheck, Download, LifeBuoy, Loader2, LogOut, MonitorSmartphone, ShieldCheck, SlidersHorizontal, Trash2, UserRound, XCircle, type LucideIcon } from "lucide-react";
 import { api } from "@/lib/client-api";
 import { routes } from "@/config/routes";
 import { cn } from "@/lib/utils";
@@ -27,6 +27,9 @@ import { EXERCISE_MODES, MODE_META } from "@/server/domain/exercise-types";
 import { useAppStore } from "@/store/app-store";
 import { PROFILE_KEY, fetchProfile, profileSummary, type Profile } from "@/features/profile/types";
 import { UserAvatar } from "@/features/profile/user-avatar";
+import { HelpSection } from "@/features/support/help-section";
+import { startTour } from "@/components/tour/product-tour";
+import { STUDENT_TOUR_ID } from "@/features/tour/steps";
 import { useSettings, type UserSettings } from "./use-settings";
 
 const SECTIONS: { id: string; label: string; icon: LucideIcon }[] = [
@@ -34,6 +37,7 @@ const SECTIONS: { id: string; label: string; icon: LucideIcon }[] = [
   { id: "preferences", label: "Préférences générales", icon: SlidersHorizontal },
   { id: "apprentissage", label: "Apprentissage", icon: BookOpenCheck },
   { id: "notifications", label: "Notifications", icon: Bell },
+  { id: "aide", label: "Aide, suggestions et retours", icon: LifeBuoy },
   { id: "donnees", label: "Confidentialité et données", icon: ShieldCheck },
 ];
 
@@ -323,6 +327,9 @@ export default function SettingsView() {
             <>
               <Section id="preferences" title="Préférences générales" text="L'apparence et la langue de Niala.">
                 <Row title="Langue de l'interface" text="Niala est disponible en français. D'autres langues seront proposées ici lorsqu'elles existeront."><span className="text-sm font-medium">Français</span></Row>
+                <Row title="Visite guidée" text="Revoir la présentation des modules de Niala.">
+                  <Button type="button" variant="outline" size="sm" onClick={() => startTour(STUDENT_TOUR_ID)}>Revoir la visite</Button>
+                </Row>
                 <Row title="Langue des exercices" text="Langue des énoncés générés, des explications et du tuteur." htmlFor="setting-lang">
                   <Choice id="setting-lang" value={settings.exerciseLang} onChange={(v) => void update({ exerciseLang: v })} options={[{ value: "fr", label: "Français" }, { value: "en", label: "Anglais" }]} />
                 </Row>
@@ -363,6 +370,8 @@ export default function SettingsView() {
               </Section>
             </>
           )}
+
+          <HelpSection />
 
           <Section id="donnees" title="Confidentialité et données" text="Vos données vous appartiennent.">
             <Row title="Utilisation de vos données" text="Ce que Niala collecte, pourquoi, et qui y accède.">

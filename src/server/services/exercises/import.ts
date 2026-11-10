@@ -5,7 +5,7 @@ import { runPool } from "@/lib/concurrency";
 import { UNTRUSTED_RULES, quoteInText, wrapUntrusted } from "@/server/ai/guard";
 import { AiCallError, AiQuotaError, AiUnavailableError, isAiConfigured } from "@/server/ai/provider";
 import { generateStructured } from "@/server/ai/structured";
-import { CORRECTION_MODES, EXERCISE_MODES, POINT_STEP, QUESTION_TYPES, TYPE_LABEL } from "@/server/domain/exercise-types";
+import { CORRECTION_MODES, EXERCISE_MODES, MAX_SOURCE_DOCUMENTS, POINT_STEP, QUESTION_TYPES, TYPE_LABEL } from "@/server/domain/exercise-types";
 import { allocatePoints, buildQuestion, maxQuestions, rawQuestionSchema, semanticProblem, type BuiltQuestion } from "@/server/domain/exercise-model";
 import { loadVersionPages } from "@/server/services/analysis/analysis-service";
 import { getStorage } from "@/server/storage";
@@ -26,6 +26,8 @@ const MIN_TEXT_CHARS = 200;
 
 export const importConfigSchema = z.object({
   documentId: z.string().min(1).max(64),
+  /** Plusieurs sujets à reproduire dans un seul exercice (le document principal est toujours inclus). */
+  documentIds: z.array(z.string().min(1).max(64)).max(MAX_SOURCE_DOCUMENTS).optional(),
   title: z.string().trim().max(160).optional(),
   totalPoints: z.number().finite().min(POINT_STEP).max(100).default(20),
   correctionMode: z.enum(CORRECTION_MODES).default("final"),
@@ -77,49 +79,60 @@ export async function importExercises(userId: string, raw: unknown) {
   if (!isAiConfigured()) throw new ApiHttpError("L'import d'exercices nécessite le service d'IA, qui n'est pas configuré (GEMINI_API_KEY).", 503);
   await purgeOccasionalExercises(userId);
 
-  const doc = await db.document.findFirst({ where: { id: config.documentId, userId }, include: { currentVersion: true } });
-  if (!doc) throw new ApiHttpError("Document introuvable.", 404);
-  const version = doc.currentVersion;
-  if (!version) throw new ApiHttpError("Le contenu de ce document est indisponible.", 409);
+  const documentIds = [...new Set([config.documentId, ...(config.documentIds ?? [])])];
+  const found = await db.document.findMany({ where: { id: { in: documentIds }, userId }, include: { currentVersion: true } });
+  if (found.length !== documentIds.length) throw new ApiHttpError("Document introuvable.", 404);
+  const several = documentIds.length > 1;
   const settings = await db.userSettings.findUnique({ where: { userId }, select: { exerciseLang: true } });
+  const language = languageName(settings?.exerciseLang);
 
-  const pages = ["READY", "PARTIAL"].includes(version.extractStatus) ? await loadVersionPages(userId, version.id) : [];
-  const fullText = pages.map((p) => p.text).join("\n");
-  const compact = fullText.replace(/\s/g, "").length;
-  const scanned = doc.type === "pdf" && (compact < MIN_TEXT_CHARS || version.extractStatus === "PARTIAL");
-  if (compact < MIN_TEXT_CHARS && !scanned) throw new ApiHttpError("Ce document ne contient pas assez de texte lisible pour y retrouver des exercices.", 409);
+  // Chaque document est lu séparément (texte, ou PDF scanné lu directement par le modèle), puis les exercices sont réunis dans l'ordre des documents.
+  const sources = await Promise.all(
+    documentIds.map(async (id) => {
+      const doc = found.find((d) => d.id === id)!;
+      const version = doc.currentVersion;
+      const label = several ? `« ${doc.name} »` : "ce document";
+      if (!version) throw new ApiHttpError(`Le contenu de ${label} est indisponible.`, 409);
+      const pages = ["READY", "PARTIAL"].includes(version.extractStatus) ? await loadVersionPages(userId, version.id) : [];
+      const fullText = pages.map((p) => p.text).join("\n");
+      const compact = fullText.replace(/\s/g, "").length;
+      const scanned = doc.type === "pdf" && (compact < MIN_TEXT_CHARS || version.extractStatus === "PARTIAL");
+      if (compact < MIN_TEXT_CHARS && !scanned) throw new ApiHttpError(`${several ? label : "Ce document"} ne contient pas assez de texte lisible pour y retrouver des exercices.`, 409);
 
-  let attachment: { mime: string; data: string } | undefined;
-  if (scanned) {
-    if (!version.storageKey) throw new ApiHttpError("Le fichier d'origine est indisponible.", 409);
-    const file = await getStorage().read(version.storageKey);
-    if (file.length > MAX_ATTACHMENT_BYTES) throw new ApiHttpError("Ce PDF scanné est trop volumineux pour être lu (15 Mo maximum).", 413);
-    attachment = { mime: "application/pdf", data: file.toString("base64") };
-  }
-
-  // Les longs documents sont découpés par pages ; l'ordre d'origine est rétabli après les appels parallèles.
-  const windows: string[] = [];
-  if (attachment) windows.push(fullText.slice(0, WINDOW_CHARS));
-  else {
-    let current = "";
-    for (const p of pages) {
-      if (current && current.length + p.text.length > WINDOW_CHARS) {
-        windows.push(current);
-        current = "";
+      let attachment: { mime: string; data: string } | undefined;
+      if (scanned) {
+        if (!version.storageKey) throw new ApiHttpError("Le fichier d'origine est indisponible.", 409);
+        const file = await getStorage().read(version.storageKey);
+        if (file.length > MAX_ATTACHMENT_BYTES) throw new ApiHttpError(`${several ? label : "Ce PDF scanné"} est trop volumineux pour être lu (15 Mo maximum).`, 413);
+        attachment = { mime: "application/pdf", data: file.toString("base64") };
       }
-      current += `${p.page ? `\n[Page ${p.page}]\n` : "\n"}${p.text}`;
-    }
-    if (current.trim()) windows.push(current);
-  }
 
+      // Les longs documents sont découpés par pages ; l'ordre d'origine est rétabli après les appels parallèles.
+      const windows: string[] = [];
+      if (attachment) windows.push(fullText.slice(0, WINDOW_CHARS));
+      else {
+        let current = "";
+        for (const p of pages) {
+          if (current && current.length + p.text.length > WINDOW_CHARS) {
+            windows.push(current);
+            current = "";
+          }
+          current += `${p.page ? `\n[Page ${p.page}]\n` : "\n"}${p.text}`;
+        }
+        if (current.trim()) windows.push(current);
+      }
+      return { doc, version, pages, fullText, attachment, windows };
+    })
+  );
+
+  const jobs = sources.flatMap((source) => source.windows.map((text, i) => ({ source, text, i })));
   let failures = 0;
   let fatal = null as Error | null;
-  const language = languageName(settings?.exerciseLang);
-  const responses = await runPool(windows, 3, async (text, i) => {
+  const responses = await runPool(jobs, 3, async ({ source, text, i }) => {
     if (fatal) return null;
-    const user = `Langue des textes ajoutés par toi (corrigés, explications) : ${language}. Conserve la langue du document pour les énoncés.\nPartie ${i + 1} sur ${windows.length} du document.\n${text.trim() ? wrapUntrusted("document", text) : "Le document est joint à ce message : lis-le directement."}`;
+    const user = `Langue des textes ajoutés par toi (corrigés, explications) : ${language}. Conserve la langue du document pour les énoncés.\nPartie ${i + 1} sur ${source.windows.length} du document.\n${text.trim() ? wrapUntrusted("document", text) : "Le document est joint à ce message : lis-le directement."}`;
     try {
-      return (await generateStructured({ userId, op: "exercise.import", promptVersion: IMPORT_PROMPT_VERSION, system: SYSTEM, user, schema: responseSchema, maxTokens: 16_000, temperature: 0.1, timeoutMs: 180_000, attachment })).data;
+      return (await generateStructured({ userId, op: "exercise.import", promptVersion: IMPORT_PROMPT_VERSION, system: SYSTEM, user, schema: responseSchema, maxTokens: 16_000, temperature: 0.1, timeoutMs: 180_000, attachment: source.attachment })).data;
     } catch (e) {
       failures++;
       if (e instanceof AiQuotaError || e instanceof AiUnavailableError) fatal = e;
@@ -133,7 +146,8 @@ export async function importExercises(userId: string, raw: unknown) {
   let ungrounded = 0;
   let group = 0;
   const limit = maxQuestions();
-  for (const response of responses) {
+  jobs.forEach(({ source }, jobIndex) => {
+    const response = responses[jobIndex];
     for (const exercise of response?.exercises ?? []) {
       group++;
       for (const rawQ of exercise.questions) {
@@ -145,31 +159,31 @@ export async function importExercises(userId: string, raw: unknown) {
           continue;
         }
         // Texte disponible : l'énoncé doit provenir du document. Scan lu par le modèle : aucune vérification n'est possible.
-        if (!attachment && !quoteInText(p.data.source.quote, fullText)) {
+        if (!source.attachment && !quoteInText(p.data.source.quote, source.fullText)) {
           ungrounded++;
           continue;
         }
         const meta = questionMeta.parse(rawQ);
         const built = buildQuestion(p.data);
         Object.assign(built.payload, { rich: true, label: meta.label ?? null, group: { index: group, title: exercise.title ?? `Exercice ${group}`, instructions: exercise.instructions ?? null, context: exercise.context ?? null } });
-        const page = pages.find((pg) => quoteInText(p.data.source.quote, pg.text))?.page ?? null;
+        const page = source.pages.find((pg) => quoteInText(p.data.source.quote, pg.text))?.page ?? null;
         accepted.push({
           slot: { slot: slotNumber, type: p.data.type, difficulty: "moyenne" },
           built,
           explanation: p.data.explanation ?? null,
-          refs: [{ quote: p.data.source.quote, page, documentId: doc.id, documentName: doc.name, subjectId: doc.subjectId }],
+          refs: [{ quote: p.data.source.quote, page, documentId: source.doc.id, documentName: source.doc.name, subjectId: source.doc.subjectId }],
           concepts: p.data.concepts,
           weight: meta.points ?? 1,
           fromDocument: meta.fromDocument,
         });
       }
     }
-  }
+  });
 
   if (accepted.length === 0) {
     if (fatal) throw new ApiHttpError(fatal instanceof AiQuotaError ? fatal.message : "Le service d'IA n'est pas configuré.", fatal instanceof AiQuotaError ? 429 : 503);
-    if (failures === windows.length) throw new ApiHttpError("Le service d'IA est momentanément indisponible. Réessayez dans un instant.", 502);
-    throw new ApiHttpError("Aucun exercice exploitable n'a été trouvé dans ce document. Pour créer des exercices à partir d'un cours, choisissez « Depuis un cours ».", 422);
+    if (failures === jobs.length) throw new ApiHttpError("Le service d'IA est momentanément indisponible. Réessayez dans un instant.", 502);
+    throw new ApiHttpError(`Aucun exercice exploitable n'a été trouvé dans ${several ? "ces documents" : "ce document"}. Pour créer de nouvelles questions à partir d'un cours, choisissez « Créer de nouvelles questions ».`, 422);
   }
 
   const unverified = await verifyPractical(accepted);
@@ -178,7 +192,7 @@ export async function importExercises(userId: string, raw: unknown) {
 
   const proposed = accepted.filter((a) => !a.fromDocument).length;
   const notes: string[] = [];
-  if (attachment) notes.push("Ce document est en partie scanné : relisez les énoncés, leur fidélité n'a pas pu être contrôlée automatiquement.");
+  if (sources.some((s) => s.attachment)) notes.push(`${several ? "Un ou plusieurs documents sont" : "Ce document est"} en partie scanné${several ? "s" : ""} : relisez les énoncés, leur fidélité n'a pas pu être contrôlée automatiquement.`);
   if (proposed) notes.push(`Le corrigé de ${proposed} question(s) ne figure pas dans le document : il a été proposé par l'IA, à vérifier en cas de doute.`);
   if (invalid + ungrounded) notes.push(`${invalid + ungrounded} question(s) n'ont pas pu être reproduites de façon fiable et ont été écartées.`);
   if (failures) notes.push(`${failures} partie(s) du document n'ont pas pu être lues.`);
@@ -186,15 +200,16 @@ export async function importExercises(userId: string, raw: unknown) {
   if (unverified) notes.push(`${unverified} question(s) de programmation ou SQL seront corrigées par lecture, sans tests.`);
   const notice = notes.join(" ") || null;
 
+  const { doc, version } = sources[0];
   const id = await saveExercise(userId, {
     subjectId: doc.subjectId,
     documentId: doc.id,
     versionId: version.id,
     origin: "IMPORTED",
     saved: config.saved,
-    title: config.title?.trim() || doc.name.slice(0, 160),
+    title: config.title?.trim() || (several ? `${doc.name.slice(0, 120)} et ${documentIds.length - 1} autre${documentIds.length > 2 ? "s" : ""}` : doc.name).slice(0, 160),
     totalPoints: total,
-    config: { ...config, totalPoints: total, documentIds: [doc.id], sources: [{ id: doc.id, name: doc.name }], types: [...new Set(accepted.map((a) => a.built.type))], questionCount: accepted.length, difficulty: null, coverage: { mode: "all" }, generated: accepted.length, exercisesFound: group, notice, promptVersion: IMPORT_PROMPT_VERSION },
+    config: { ...config, totalPoints: total, documentIds, sources: sources.map((s) => ({ id: s.doc.id, name: s.doc.name })), types: [...new Set(accepted.map((a) => a.built.type))], questionCount: accepted.length, difficulty: null, coverage: { mode: "all" }, generated: accepted.length, exercisesFound: group, notice, promptVersion: IMPORT_PROMPT_VERSION },
     accepted,
     points,
   });
