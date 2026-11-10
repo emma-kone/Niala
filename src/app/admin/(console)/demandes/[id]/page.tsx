@@ -66,7 +66,7 @@ export default async function RequestPage({ params }: { params: Promise<{ id: st
           <Panel title="Étudiant">
             <p className="text-sm font-medium">{r.user.name ?? "—"}</p>
             <p className="break-all text-sm text-muted-foreground">{r.user.email}</p>
-            <p className="mt-2 text-xs text-muted-foreground">{categoryLabel(r.user.profile?.category)}{r.user.profile?.institution ? ` · ${r.user.profile.institution}` : ""}{r.user.profile?.level ? ` · ${r.user.profile.level}` : ""}</p>
+            <p className="mt-2 text-xs text-muted-foreground">{categoryLabel(r.user.profile?.category)}{r.user.profile?.institution ? ` · ${r.user.profile.institution}` : ""}{r.user.profile?.field ? ` · ${r.user.profile.field}` : ""}</p>
             {canSeeUser && <Link href={`/admin/utilisateurs/${r.user.id}`} className="mt-3 inline-block text-sm text-[var(--niala-accent)] underline">Ouvrir la fiche utilisateur</Link>}
           </Panel>
           <Panel title="Suivi">

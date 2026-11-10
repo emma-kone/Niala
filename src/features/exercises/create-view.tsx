@@ -200,8 +200,9 @@ export default function CreateExerciseView({ subjectId, documentId, presetConcep
   const [request, setRequest] = useState("");
   const [reproduceChoice, setReproduce] = useState<boolean | null>(null);
   // Niveau : celui du profil ; l'IA adapte la difficulté sans que l'étudiant ait à le ressaisir.
-  const level = isLevelChoice(profile?.level) ? profile.level : OTHER_LEVEL;
-  const levelOther = level === OTHER_LEVEL ? (profile?.levelOther?.trim() || "Non précisé") : undefined;
+  // Le profil ne porte plus qu'une classe/filière libre (ex. « DASI 3 ») : elle sert de niveau.
+  const level = OTHER_LEVEL;
+  const levelOther = profile?.field?.trim() || "Non précisé";
   const [modeChoice, setMode] = useState<ExerciseMode | null>(null);
   const mode = modeChoice ?? settings?.defaultMode ?? "personnalise";
   const [keep, setKeep] = useState(true);

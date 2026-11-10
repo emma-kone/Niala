@@ -19,12 +19,11 @@ export const listQuerySchema = z.object({
   category: z.enum(["ESATIC", "OTHER_SCHOOL", "TESTER", "NONE"]).optional(),
   institution: z.string().trim().max(120).optional(),
   field: z.string().trim().max(120).optional(),
-  level: z.string().trim().max(20).optional(),
   status: z.enum(["ACTIVE", "SUSPENDED", "DISABLED"]).optional(),
   activity: z.enum(["active7", "active30", "inactive30", "never"]).optional(),
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  sort: z.enum(["name", "email", "category", "institution", "field", "level", "createdAt", "lastActivity", "sessions", "exercises", "status"]).default("createdAt"),
+  sort: z.enum(["name", "email", "category", "institution", "field", "createdAt", "lastActivity", "sessions", "exercises", "status"]).default("createdAt"),
   dir: z.enum(["asc", "desc"]).default("desc"),
   page: z.coerce.number().int().min(1).max(10_000).default(1),
 });
@@ -38,7 +37,6 @@ export interface UserRow {
   categoryLabel: string;
   institution: string | null;
   field: string | null;
-  level: string | null;
   createdAt: Date;
   lastActivity: Date | null;
   sessions: number | null;
@@ -52,7 +50,6 @@ const SORTS: Record<string, string> = {
   category: "coalesce(p.category, 'ZZ')",
   institution: "lower(coalesce(p.institution, ''))",
   field: "lower(coalesce(p.field, ''))",
-  level: "coalesce(p.level, '')",
   createdAt: 'u."createdAt"',
   lastActivity: 'la.last',
   sessions: 'coalesce(st.sessions, 0)',
@@ -74,7 +71,6 @@ export async function listUsers(admin: AdminUser, raw: unknown) {
   if (q.category) where.push(q.category === "NONE" ? Prisma.sql`p.category IS NULL` : Prisma.sql`p.category = ${q.category}`);
   if (q.institution) where.push(Prisma.sql`p.institution = ${q.institution}`);
   if (q.field) where.push(Prisma.sql`p.field = ${q.field}`);
-  if (q.level) where.push(Prisma.sql`p.level = ${q.level}`);
   if (q.status) where.push(Prisma.sql`u."accountStatus" = ${q.status}`);
   if (q.from) where.push(Prisma.sql`u."createdAt" >= ${new Date(`${q.from}T00:00:00.000Z`)}`);
   if (q.to) where.push(Prisma.sql`u."createdAt" < ${new Date(new Date(`${q.to}T00:00:00.000Z`).getTime() + 86_400_000)}`);
@@ -92,7 +88,7 @@ export async function listUsers(admin: AdminUser, raw: unknown) {
     st AS (SELECT "actorKey", sum(starts) AS sessions FROM ev GROUP BY 1),
     la AS (SELECT "actorKey", max("createdAt") AS last FROM "AnalyticsEvent" WHERE type IN (${activeTypesSql}) GROUP BY 1),
     ex AS (SELECT "userId", count(*) AS done FROM "ExerciseAttempt" WHERE status IN ('GRADED','SUBMITTED') GROUP BY 1)
-    SELECT u.id, u.name, u.email, p.category, p.institution, p.field, p.level, u."createdAt", u."accountStatus" AS status,
+    SELECT u.id, u.name, u.email, p.category, p.institution, p.field, u."createdAt", u."accountStatus" AS status,
            la.last AS "lastActivity", st.sessions AS sessions, coalesce(ex.done, 0) AS exercises, count(*) OVER () AS total
     FROM "User" u LEFT JOIN "StudentProfile" p ON p."userId" = u.id
     LEFT JOIN st ON st."actorKey" = u."actorKey" LEFT JOIN la ON la."actorKey" = u."actorKey" LEFT JOIN ex ON ex."userId" = u.id
@@ -101,7 +97,7 @@ export async function listUsers(admin: AdminUser, raw: unknown) {
 
   const total = rows.length ? n(rows[0].total) : 0;
   const data: UserRow[] = rows.map((r) => ({
-    id: r.id, name: r.name, email: r.email, category: r.category, categoryLabel: categoryLabel(r.category), institution: r.institution, field: r.field, level: r.level,
+    id: r.id, name: r.name, email: r.email, category: r.category, categoryLabel: categoryLabel(r.category), institution: r.institution, field: r.field,
     createdAt: r.createdAt, status: r.status,
     lastActivity: full ? r.lastActivity : null,
     sessions: full ? n(r.sessions) : null,
@@ -112,19 +108,18 @@ export async function listUsers(admin: AdminUser, raw: unknown) {
 
 /** Valeurs proposées par les filtres (établissements, filières, niveaux réellement présents). */
 export async function userFilterOptions() {
-  const [institutions, fields, levels] = await Promise.all([
+  const [institutions, fields] = await Promise.all([
     db.studentProfile.findMany({ where: { institution: { not: null } }, select: { institution: true }, distinct: ["institution"], orderBy: { institution: "asc" }, take: 200 }),
     db.studentProfile.findMany({ where: { field: { not: null } }, select: { field: true }, distinct: ["field"], orderBy: { field: "asc" }, take: 200 }),
-    db.studentProfile.findMany({ where: { level: { not: null } }, select: { level: true }, distinct: ["level"], orderBy: { level: "asc" }, take: 50 }),
   ]);
-  return { institutions: institutions.map((i) => i.institution!), fields: fields.map((f) => f.field!), levels: levels.map((l) => l.level!) };
+  return { institutions: institutions.map((i) => i.institution!), fields: fields.map((f) => f.field!) };
 }
 
 // ── Fiche détaillée ──────────────────────────────────────────────────────────
 
 export async function getUserDetail(admin: AdminUser, id: string) {
   const full = can(admin.role, "users.view");
-  const user = await db.user.findUnique({ where: { id }, include: { profile: { select: { category: true, institution: true, field: true, className: true, level: true, levelOther: true, situation: true } } } });
+  const user = await db.user.findUnique({ where: { id }, include: { profile: { select: { category: true, institution: true, field: true, situation: true } } } });
   if (!user || user.adminRole) throw new ApiHttpError("Utilisateur introuvable.", 404);
   await ensureActorKeys();
   const actorKey = (await db.user.findUnique({ where: { id }, select: { actorKey: true } }))?.actorKey ?? "";
@@ -139,8 +134,6 @@ export async function getUserDetail(admin: AdminUser, id: string) {
     categoryLabel: categoryLabel(user.profile?.category),
     institution: user.profile?.institution ?? null,
     field: user.profile?.field ?? null,
-    className: user.profile?.className ?? null,
-    level: user.profile?.level ? (user.profile.levelOther ? `${user.profile.level} — ${user.profile.levelOther}` : user.profile.level) : null,
     status: user.accountStatus,
     statusReason: user.statusReason,
     statusChangedAt: user.statusChangedAt,
@@ -262,8 +255,6 @@ export const adminInfoSchema = z.object({
   name: z.string().trim().min(1).max(80).optional(),
   institution: z.string().trim().max(120).nullable().optional(),
   field: z.string().trim().max(120).nullable().optional(),
-  className: z.string().trim().max(60).nullable().optional(),
-  level: z.enum(["BTS1", "BTS2", "L1", "L2", "L3", "M1", "M2", "AUTRE"]).nullable().optional(),
   category: z.enum(["ESATIC", "OTHER_SCHOOL", "TESTER"]).optional(),
 });
 

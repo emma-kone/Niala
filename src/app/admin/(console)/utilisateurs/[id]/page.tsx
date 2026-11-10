@@ -41,14 +41,14 @@ export default async function UserPage({ params }: { params: Promise<{ id: strin
       <div className="mb-4 grid gap-4 lg:grid-cols-3">
         <Panel title="Informations générales" className="lg:col-span-2">
           <dl>
-            {row("Type de profil", i.categoryLabel)}{row("Établissement", i.institution ?? "—")}{row("Filière", i.field ?? "—")}{row("Classe", i.className ?? "—")}{row("Niveau d'études", i.level ?? "—")}
+            {row("Type de profil", i.categoryLabel)}{row("Établissement", i.institution ?? "—")}{row("Classe / filière", i.field ?? "—")}
             {row("Date d'inscription", fmtDate(i.createdAt))}{row("Connexion", i.signIn)}{row("Statut du compte", ACCOUNT_STATUSES[i.status as keyof typeof ACCOUNT_STATUSES])}
             {i.status !== "ACTIVE" && row("Motif interne", i.statusReason ?? "—")}
           </dl>
         </Panel>
         <Panel title="Actions administratives">
           {can(admin.role, "users.manage") || can(admin.role, "users.delete") ? (
-            <UserActions id={i.id} email={i.email} name={i.name} status={i.status} category={i.category} institution={i.institution} field={i.field} className={i.className} canManage={can(admin.role, "users.manage")} canDelete={can(admin.role, "users.delete")} />
+            <UserActions id={i.id} email={i.email} name={i.name} status={i.status} category={i.category} institution={i.institution} field={i.field} canManage={can(admin.role, "users.manage")} canDelete={can(admin.role, "users.delete")} />
           ) : <p className="text-sm text-muted-foreground">Votre rôle ne permet pas de modifier ce compte.</p>}
           <p className="mt-3 text-xs text-muted-foreground">Chaque action demande une confirmation et est enregistrée dans le journal d'audit.</p>
         </Panel>

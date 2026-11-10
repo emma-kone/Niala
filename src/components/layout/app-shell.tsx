@@ -17,6 +17,7 @@ import { SETTINGS_KEY, useSettings } from "@/features/settings/use-settings";
 import { ContextHintLayer } from "@/components/context-hint";
 import { StudentTracking } from "@/features/support/student-tracking";
 import { ProductTour } from "@/components/tour/product-tour";
+import { AgentLauncher } from "@/components/ai-agent/agent-launcher";
 import { STUDENT_TOUR, STUDENT_TOUR_ID } from "@/features/tour/steps";
 import { applyTextSize, isThemeChoice, useTheme } from "@/components/theme/theme-provider";
 import type { SessionBootstrap } from "@/server/services/session";
@@ -72,6 +73,7 @@ function Shell({ children, initial }: { children: React.ReactNode; initial: Sess
         <ContextHintLayer />
         <StudentTracking />
         <ProductTour tourId={STUDENT_TOUR_ID} version={1} userKey={user?.id ?? "anonyme"} steps={STUDENT_TOUR} />
+        <AgentLauncher />
         <SidebarNav user={user} onLogout={logout} />
         <div className="flex min-h-0 min-w-0 flex-1 flex-col lg:py-3 lg:pr-3">
           <MobileNav user={user} onLogout={logout} />

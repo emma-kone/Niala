@@ -14,7 +14,6 @@ const KIND_KEYS = Object.keys(ANNOUNCEMENT_KINDS) as [keyof typeof ANNOUNCEMENT_
 
 export const audienceSchema = z.object({
   categories: z.array(z.enum(["ESATIC", "OTHER_SCHOOL", "TESTER"])).max(3).optional(),
-  levels: z.array(z.string().trim().max(20)).max(10).optional(),
   institutions: z.array(z.string().trim().max(120)).max(20).optional(),
 });
 export type Audience = z.infer<typeof audienceSchema>;
@@ -29,7 +28,6 @@ export const announcementSchema = z.object({
 function audienceWhere(a: Audience): Prisma.UserWhereInput {
   const profile: Prisma.StudentProfileWhereInput = {
     ...(a.categories?.length ? { category: { in: a.categories } } : {}),
-    ...(a.levels?.length ? { level: { in: a.levels } } : {}),
     ...(a.institutions?.length ? { institution: { in: a.institutions } } : {}),
   };
   return { accountStatus: "ACTIVE", adminRole: null, ...(Object.keys(profile).length ? { profile: { is: profile } } : {}) };
@@ -73,9 +71,8 @@ export async function listAnnouncements(limit = 30) {
 }
 
 export async function audienceOptions() {
-  const [institutions, levels] = await Promise.all([
+  const [institutions] = await Promise.all([
     db.studentProfile.findMany({ where: { institution: { not: null } }, select: { institution: true }, distinct: ["institution"], orderBy: { institution: "asc" }, take: 100 }),
-    db.studentProfile.findMany({ where: { level: { not: null } }, select: { level: true }, distinct: ["level"], orderBy: { level: "asc" } }),
   ]);
-  return { institutions: institutions.map((i) => i.institution!), levels: levels.map((l) => l.level!) };
+  return { institutions: institutions.map((i) => i.institution!) };
 }

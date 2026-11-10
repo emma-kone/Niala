@@ -33,13 +33,8 @@ async function shrinkImage(file: File): Promise<string> {
 const draftOf = (p: Profile): AcademicDraft => ({
   ...EMPTY_ACADEMIC,
   category: p.category,
-  level: p.level ?? "",
-  levelOther: p.levelOther ?? "",
-  className: p.className ?? "",
   institution: p.category === "OTHER_SCHOOL" ? (p.institution ?? "") : "",
-  field: p.category === "OTHER_SCHOOL" ? (p.field ?? "") : "",
-  fieldCode: p.fieldCode ?? "",
-  fieldOther: p.fieldCode === "AUTRE" ? (p.field ?? "") : "",
+  field: p.category === "TESTER" ? "" : (p.field ?? ""),
   situation: p.situation ?? "",
   usageReason: p.usageReason ?? "",
 });
