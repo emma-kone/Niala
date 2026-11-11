@@ -50,7 +50,7 @@ export function UserActions(p: Props) {
 
   async function remove() {
     if (typed.trim().toLowerCase() !== p.email.toLowerCase()) return notify({ title: "Adresse incorrecte", description: "Saisissez l'adresse exacte du compte pour confirmer.", variant: "warning" });
-    if (!(await confirmAction(`Supprimer définitivement le compte ${p.email} et toutes ses données (cours, exercices, notes) ? Cette action est irréversible.`, { title: "Suppression définitive", confirmLabel: "Supprimer définitivement", danger: true }))) return;
+    if (!(await confirmAction(`Supprimer le compte ${p.email} ? Son identité et ses fichiers d'origine seront effacés et il ne pourra plus se connecter ; son activité restera dans les statistiques, sous forme anonyme. Cette action est irréversible.`, { title: "Suppression définitive", confirmLabel: "Supprimer définitivement", danger: true }))) return;
     setBusy(true);
     try {
       await api.request("DELETE", `/api/admin/users/${p.id}`, { confirmEmail: typed.trim() });
@@ -120,7 +120,7 @@ export function UserActions(p: Props) {
           <button disabled={busy} onClick={() => setMode(mode === "delete" ? null : "delete")} className={`${btn} border-destructive/40 text-destructive`}>Supprimer le compte…</button>
           {mode === "delete" && (
             <div className="space-y-2 rounded-xl border border-destructive/40 p-3">
-              <p className="text-xs text-muted-foreground">Suppression définitive du compte et de toutes ses données. Les statistiques agrégées sont conservées sous forme pseudonymisée. Saisissez l'adresse <strong>{p.email}</strong> pour confirmer.</p>
+              <p className="text-xs text-muted-foreground">Suppression du compte : nom, adresse, mot de passe, photo et fichiers d'origine sont effacés, la connexion devient impossible. Son activité (contenus, exercices, résultats) reste en base sous forme anonyme pour les statistiques. Saisissez l'adresse <strong>{p.email}</strong> pour confirmer.</p>
               <input className={input} value={typed} onChange={(e) => setTyped(e.target.value)} placeholder={p.email} aria-label="Adresse du compte à supprimer" autoComplete="off" />
               <button disabled={busy} onClick={() => void remove()} className="rounded-lg bg-destructive px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50">Supprimer définitivement</button>
             </div>

@@ -1,8 +1,11 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { ApiHttpError } from "@/lib/api-helpers";
+import { hmacFor } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { softDelete } from "@/lib/soft-delete";
+import { emailHtml, trySendEmail } from "@/server/email";
 import { audit } from "@/server/admin/audit";
 import type { AdminUser } from "@/server/admin/session";
 import { bucketSql, cached, fillSeries, n, periodKey, ratio, round1, type Period } from "@/server/admin/stats/common";
@@ -34,7 +37,8 @@ export const requestInputSchema = z.object({
   urgency: z.enum(["LOW", "NORMAL", "HIGH"]).optional(),
 });
 
-export interface Attachment { key: string; name: string; mime: string; size: number }
+/** `key` absente : fichier retiré du stockage avec le compte de son auteur (anonymisation). */
+export interface Attachment { key: string | null; name: string; mime: string; size: number; removed?: boolean }
 
 /** Vérifie un fichier joint : taille, type déclaré et signature réelle (un .exe renommé en .png est refusé). */
 export function checkAttachment(name: string, mime: string, data: Buffer): void {
@@ -96,7 +100,7 @@ export async function submitRequest(userId: string, raw: unknown, files: Uploade
       }
       await db.supportRequest.update({ where: { id: created.id }, data: { attachments: stored as unknown as Prisma.InputJsonValue } });
     } catch (e) {
-      await storage.remove(stored.map((s) => s.key)).catch(() => undefined);
+      await storage.remove(stored.map((s) => s.key).filter((k): k is string => !!k)).catch(() => undefined);
       await db.supportRequest.delete({ where: { id: created.id } }).catch(() => undefined);
       console.error("[support] pièces jointes non enregistrées :", e instanceof Error ? e.message : e);
       throw new ApiHttpError("Les pièces jointes n'ont pas pu être enregistrées. Réessayez ou envoyez la demande sans fichier.", 503);
@@ -171,6 +175,7 @@ export async function readAttachment(requestId: string, index: number, scope: { 
   const r = await db.supportRequest.findFirst({ where: { id: requestId, ...(scope.userId ? { userId: scope.userId } : {}) }, select: { attachments: true } });
   const att = ((r?.attachments as Attachment[] | null) ?? [])[index];
   if (!r || !att) throw new ApiHttpError("Pièce jointe introuvable.", 404);
+  if (!att.key) throw new ApiHttpError("Ce fichier a été supprimé avec le compte de son auteur.", 410);
   return { ...att, data: await getStorage().read(att.key) };
 }
 
@@ -219,10 +224,11 @@ export async function requestCounts() {
 
 export async function listRequests(raw: unknown) {
   const f = requestFilterSchema.parse(raw);
-  const where: Prisma.Sql[] = [Prisma.sql`TRUE`];
+  // Les demandes supprimées par l'équipe restent en base (statistiques) mais ne sont plus listées.
+  const where: Prisma.Sql[] = [Prisma.sql`r."deletedAt" IS NULL`];
   if (f.q) {
     const like = `%${f.q.toLowerCase().replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
-    where.push(Prisma.sql`(lower(r.reference) LIKE ${like} OR lower(r.subject) LIKE ${like} OR lower(u.email) LIKE ${like} OR lower(coalesce(u.name, '')) LIKE ${like})`);
+    where.push(Prisma.sql`(lower(r.reference) LIKE ${like} OR lower(r.subject) LIKE ${like} OR lower(r.description) LIKE ${like} OR lower(coalesce(u.email, r."guestEmail", '')) LIKE ${like} OR lower(coalesce(u.name, r."guestName", '')) LIKE ${like})`);
   }
   if (f.type) where.push(Prisma.sql`r.type = ${f.type}`);
   if (f.status) where.push(Prisma.sql`r.status = ${f.status}`);
@@ -232,9 +238,11 @@ export async function listRequests(raw: unknown) {
   if (f.open) where.push(Prisma.sql`r.status NOT IN ('RESOLVED','REJECTED')`);
   const sortSql = { createdAt: Prisma.sql`r."createdAt"`, priority: PRIORITY_ORDER, status: Prisma.sql`r.status`, type: Prisma.sql`r.type` }[f.sort];
   const dir = f.dir === "asc" ? Prisma.sql`ASC` : Prisma.sql`DESC`;
-  const rows = await db.$queryRaw<{ id: string; reference: string; type: string; subject: string; module: string | null; priority: string; status: string; createdAt: Date; userId: string; userName: string | null; userEmail: string; assigneeId: string | null; roadmapItemId: string | null; total: bigint }[]>`
-    SELECT r.id, r.reference, r.type, r.subject, r.module, r.priority, r.status, r."createdAt", r."userId", u.name AS "userName", u.email AS "userEmail", r."assigneeId", r."roadmapItemId", count(*) OVER () AS total
-    FROM "SupportRequest" r JOIN "User" u ON u.id = r."userId"
+  const rows = await db.$queryRaw<{ id: string; reference: string; type: string; subject: string; description: string; module: string | null; priority: string; status: string; createdAt: Date; userId: string | null; userName: string | null; userEmail: string; guest: boolean; assigneeId: string | null; roadmapItemId: string | null; total: bigint }[]>`
+    SELECT r.id, r.reference, r.type, r.subject, r.description, r.module, r.priority, r.status, r."createdAt", r."userId",
+           coalesce(u.name, r."guestName") AS "userName", coalesce(u.email, r."guestEmail", '') AS "userEmail", (r."userId" IS NULL) AS guest,
+           r."assigneeId", r."roadmapItemId", count(*) OVER () AS total
+    FROM "SupportRequest" r LEFT JOIN "User" u ON u.id = r."userId"
     WHERE ${Prisma.join(where, " AND ")} ORDER BY ${sortSql} ${dir}, r.id LIMIT ${REQUEST_PAGE_SIZE} OFFSET ${(f.page - 1) * REQUEST_PAGE_SIZE}`;
   const total = rows.length ? n(rows[0].total) : 0;
   return { rows: rows.map(({ total: _t, ...r }) => (void _t, r)), total, page: f.page, pages: Math.max(1, Math.ceil(total / REQUEST_PAGE_SIZE)), query: f };
@@ -280,9 +288,9 @@ export async function similarRequests(id: string) {
 
 export const updateRequestSchema = z.object({ status: z.enum(STATUS_KEYS).optional(), priority: z.enum(PRIORITY_KEYS).optional(), assigneeId: z.string().max(40).nullable().optional() });
 
-export async function updateRequest(admin: AdminUser, id: string, raw: unknown) {
+export async function updateRequest(admin: AdminUser, id: string, raw: unknown, origin = defaultOrigin()) {
   const input = updateRequestSchema.parse(raw);
-  const before = await db.supportRequest.findUnique({ where: { id }, select: { status: true, priority: true, assigneeId: true, userId: true, reference: true, subject: true } });
+  const before = await db.supportRequest.findUnique({ where: { id }, select: { status: true, priority: true, assigneeId: true, userId: true, reference: true, subject: true, guestEmail: true, guestName: true, guestNonce: true } });
   if (!before) throw new ApiHttpError("Demande introuvable.", 404);
   if (input.assigneeId) {
     const a = await db.user.findUnique({ where: { id: input.assigneeId }, select: { adminRole: true } });
@@ -298,7 +306,7 @@ export async function updateRequest(admin: AdminUser, id: string, raw: unknown) 
     },
   });
   if (statusChanged) {
-    await notifyUser(before.userId, { kind: "REQUEST_UPDATE", title: `Votre demande ${before.reference} : ${REQUEST_STATUSES[input.status!].toLowerCase()}`, body: before.subject, link: `/suggestions?demande=${id}`, refId: id });
+    await informRequester({ id, ...before }, { kind: "REQUEST_UPDATE", title: `Votre demande ${before.reference} : ${REQUEST_STATUSES[input.status!].toLowerCase()}`, origin });
   }
   await audit(admin, "request.update", { targetType: "request", targetId: id, detail: { reference: before.reference, ...(statusChanged ? { status: [before.status, input.status] } : {}), ...(input.priority && input.priority !== before.priority ? { priority: [before.priority, input.priority] } : {}), ...(input.assigneeId !== undefined && input.assigneeId !== before.assigneeId ? { assigneeId: input.assigneeId } : {}) } });
   return { ok: true };
@@ -307,18 +315,18 @@ export async function updateRequest(admin: AdminUser, id: string, raw: unknown) 
 export const replySchema = z.object({ body: z.string().trim().min(2, "Écrivez votre réponse.").max(4000, "Réponse trop longue."), status: z.enum(STATUS_KEYS).optional() });
 
 /** Réponse visible par l'étudiant (avec notification dans Niala). */
-export async function replyToRequest(admin: AdminUser, id: string, raw: unknown) {
+export async function replyToRequest(admin: AdminUser, id: string, raw: unknown, origin = defaultOrigin()) {
   const input = replySchema.parse(raw);
-  const r = await db.supportRequest.findUnique({ where: { id }, select: { userId: true, reference: true, subject: true, firstReplyAt: true, status: true } });
+  const r = await db.supportRequest.findUnique({ where: { id }, select: { userId: true, reference: true, subject: true, firstReplyAt: true, status: true, guestEmail: true, guestName: true, guestNonce: true } });
   if (!r) throw new ApiHttpError("Demande introuvable.", 404);
   const nextStatus = input.status ?? (r.status === "RECEIVED" || r.status === "PENDING_REVIEW" ? "IN_PROGRESS" : undefined);
   await db.$transaction([
     db.supportMessage.create({ data: { requestId: id, authorId: admin.id, authorRole: "ADMIN", authorName: "Équipe Niala", body: input.body } }),
     db.supportRequest.update({ where: { id }, data: { firstReplyAt: r.firstReplyAt ?? new Date(), ...(nextStatus ? { status: nextStatus, closedAt: CLOSED_STATUSES.includes(nextStatus) ? new Date() : null } : {}) } }),
   ]);
-  await notifyUser(r.userId, { kind: "REQUEST_REPLY", title: `Réponse à votre demande ${r.reference}`, body: r.subject, link: `/suggestions?demande=${id}`, refId: id });
+  const emailed = await informRequester({ id, ...r }, { kind: "REQUEST_REPLY", title: `Réponse à votre demande ${r.reference}`, message: input.body, origin });
   await audit(admin, "request.reply", { targetType: "request", targetId: id, detail: { reference: r.reference, ...(nextStatus && nextStatus !== r.status ? { status: [r.status, nextStatus] } : {}) } });
-  return { ok: true };
+  return { ok: true, guest: !r.userId, emailed };
 }
 
 export async function addInternalNote(admin: AdminUser, id: string, bodyRaw: unknown) {
@@ -328,6 +336,155 @@ export async function addInternalNote(admin: AdminUser, id: string, bodyRaw: unk
   await db.supportMessage.create({ data: { requestId: id, authorId: admin.id, authorRole: "ADMIN", authorName: admin.name ?? admin.email, internal: true, body } });
   await audit(admin, "request.note", { targetType: "request", targetId: id, detail: { reference: r.reference } });
   return { ok: true };
+}
+
+// ── Suppression et traitement groupé ─────────────────────────────────────────
+
+export const bulkSchema = z.object({ ids: z.array(z.string().min(1).max(40)).min(1, "Sélectionnez au moins une demande.").max(100) });
+
+/**
+ * Suppression par l'équipe (spam, doublon, test…) : la demande et ses échanges disparaissent du back-office et de l'espace
+ * de l'étudiant, mais restent en base pour les statistiques. Les pièces jointes restent dans le stockage privé.
+ */
+export async function deleteRequests(admin: AdminUser, raw: unknown) {
+  const { ids } = bulkSchema.parse(raw);
+  const rows = await db.supportRequest.findMany({ where: { id: { in: ids } }, select: { id: true, reference: true } });
+  if (!rows.length) throw new ApiHttpError("Demande introuvable.", 404);
+  await db.$transaction((tx) => softDelete(tx, "SupportRequest", { id: { in: rows.map((r) => r.id) } }));
+  for (const r of rows) await audit(admin, "request.delete", { targetType: "request", targetId: r.id, detail: { reference: r.reference } });
+  return { ok: true, deleted: rows.length };
+}
+
+export const bulkStatusSchema = bulkSchema.extend({ status: z.enum(STATUS_KEYS) });
+
+/** Change le statut de plusieurs demandes (ex. clôturer une sélection). Chaque demandeur est informé comme pour un changement unitaire. */
+export async function bulkUpdateStatus(admin: AdminUser, raw: unknown, origin = defaultOrigin()) {
+  const { ids, status } = bulkStatusSchema.parse(raw);
+  let updated = 0;
+  for (const id of ids) {
+    const current = await db.supportRequest.findUnique({ where: { id }, select: { status: true } });
+    if (!current || current.status === status) continue;
+    await updateRequest(admin, id, { status }, origin);
+    updated++;
+  }
+  return { ok: true, updated };
+}
+
+// ── Demandeur : étudiant (notification dans Niala) ou visiteur sans compte (e-mail + lien de suivi) ──
+
+const defaultOrigin = () => process.env.APP_URL?.trim().replace(/\/+$/, "") || "http://localhost:3000";
+
+/** Lien de suivi d'un visiteur : dérivé de l'identifiant et d'un sel secret ; changer le sel invalide les anciens liens. */
+export function guestToken(id: string, nonce: string): string {
+  return `${id}.${hmacFor("support-guest", `${id}.${nonce}`).slice(0, 40)}`;
+}
+/** Le jeton est placé après « # » : il n’est jamais envoyé au serveur dans l’adresse, donc jamais journalisé. */
+export const guestUrl = (origin: string, id: string, nonce: string) => `${origin}/assistance/suivi#${guestToken(id, nonce)}`;
+
+interface Requester { id: string; userId: string | null; reference: string; subject: string; guestEmail?: string | null; guestName?: string | null; guestNonce?: string | null }
+
+/** Informe le demandeur. Renvoie `true` si un e-mail est parti (visiteur sans compte). */
+async function informRequester(r: Requester, n: { kind: "REQUEST_UPDATE" | "REQUEST_REPLY"; title: string; message?: string; origin: string }): Promise<boolean> {
+  if (r.userId) {
+    await notifyUser(r.userId, { kind: n.kind, title: n.title, body: r.subject, link: `/suggestions?demande=${r.id}`, refId: r.id });
+    return false;
+  }
+  if (!r.guestEmail || !r.guestNonce) return false;
+  const url = guestUrl(n.origin, r.id, r.guestNonce);
+  const intro = n.message ? `L'équipe Niala a répondu à votre demande « ${r.subject} » :` : `Votre demande « ${r.subject} » a été mise à jour.`;
+  return trySendEmail(
+    {
+      to: r.guestEmail,
+      subject: `Niala — ${n.title}`,
+      text: `Bonjour${r.guestName ? ` ${r.guestName}` : ""},\n\n${intro}\n\n${n.message ?? ""}\n\nPour lire tout l'échange et répondre : ${url}\n\nRéférence : ${r.reference}`,
+      html: emailHtml({ title: n.title, paragraphs: [`Bonjour${r.guestName ? ` ${r.guestName}` : ""},`, intro, ...(n.message ? [n.message] : [])], button: { label: "Voir l'échange et répondre", url }, footer: `Référence ${r.reference}. Ce lien est personnel : ne le transmettez pas.` }),
+    },
+    `demande ${r.reference}`
+  );
+}
+
+export const guestRequestSchema = z.object({
+  email: z.string().trim().toLowerCase().email("Adresse e-mail invalide.").max(320),
+  name: z.string().trim().max(80).optional().transform((v) => v || undefined),
+  subject: requestInputSchema.shape.subject,
+  description: requestInputSchema.shape.description,
+  /** Champ piège invisible : rempli uniquement par les robots. */
+  website: z.string().max(200).optional(),
+});
+
+/** Demande d'assistance d'un visiteur sans compte (page de connexion). Le lien de suivi est envoyé par e-mail et affiché. */
+export async function submitGuestRequest(raw: unknown, origin: string) {
+  const input = guestRequestSchema.parse(raw);
+  if (input.website) throw new ApiHttpError("Demande refusée.", 422);
+  const recent = await db.supportRequest.count({ where: { guestEmail: input.email, createdAt: { gte: new Date(Date.now() - 24 * 3_600_000) } } });
+  if (recent >= 3) throw new ApiHttpError("Vous avez déjà envoyé plusieurs demandes aujourd'hui. Utilisez le lien de suivi reçu par e-mail pour compléter votre demande.", 429);
+  const nonce = randomBytes(16).toString("hex");
+  let created: { id: string; reference: string } | null = null;
+  for (let attempt = 0; attempt < 5 && !created; attempt++) {
+    try {
+      const reference = await nextReference();
+      created = await db.supportRequest.create({
+        data: { reference: attempt ? `${reference}-${randomBytes(2).toString("hex")}` : reference, userId: null, guestEmail: input.email, guestName: input.name ?? null, guestNonce: nonce, type: "ASSISTANCE", subject: input.subject, description: input.description, module: null, status: "RECEIVED", priority: "NORMAL" },
+        select: { id: true, reference: true },
+      });
+    } catch (e) {
+      if (!(e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002")) throw e;
+    }
+  }
+  if (!created) throw new ApiHttpError("Impossible d'enregistrer la demande pour le moment. Réessayez.", 503);
+  const url = guestUrl(origin, created.id, nonce);
+  const emailed = await trySendEmail(
+    {
+      to: input.email,
+      subject: `Niala — demande ${created.reference} reçue`,
+      text: `Bonjour${input.name ? ` ${input.name}` : ""},\n\nNous avons bien reçu votre demande « ${input.subject} ». L'équipe vous répondra par e-mail.\n\nSuivre ou compléter votre demande : ${url}\n\nRéférence : ${created.reference}`,
+      html: emailHtml({ title: "Demande reçue", paragraphs: [`Bonjour${input.name ? ` ${input.name}` : ""},`, `Nous avons bien reçu votre demande « ${input.subject} ». L'équipe vous répondra par e-mail.`], button: { label: "Suivre ma demande", url }, footer: `Référence ${created.reference}. Ce lien est personnel : ne le transmettez pas.` }),
+    },
+    `demande ${created.reference}`
+  );
+  return { reference: created.reference, url, emailed };
+}
+
+/** Retrouve la demande d'un visiteur à partir de son lien de suivi (comparaison à temps constant). */
+async function guestRequest(token: string) {
+  const id = token.split(".")[0] ?? "";
+  if (!/^[a-z0-9]{10,40}$/i.test(id)) throw new ApiHttpError("Lien de suivi invalide ou expiré.", 404);
+  const r = await db.supportRequest.findFirst({ where: { id, userId: null }, select: { id: true, reference: true, subject: true, description: true, status: true, createdAt: true, guestNonce: true, guestName: true } });
+  const expected = r?.guestNonce ? Buffer.from(guestToken(r.id, r.guestNonce)) : Buffer.alloc(0);
+  const given = Buffer.from(token);
+  if (!r || given.length !== expected.length || !timingSafeEqual(given, expected)) throw new ApiHttpError("Lien de suivi invalide ou expiré.", 404);
+  return r;
+}
+
+/** Échange visible par le visiteur (jamais les notes internes). */
+export async function getGuestThread(token: string) {
+  const r = await guestRequest(token);
+  const messages = await db.supportMessage.findMany({ ...messageForUser, where: { requestId: r.id, internal: false } });
+  return { reference: r.reference, subject: r.subject, description: r.description, status: r.status, statusLabel: REQUEST_STATUSES[r.status as RequestStatus] ?? r.status, createdAt: r.createdAt, closed: CLOSED_STATUSES.includes(r.status as RequestStatus), name: r.guestName, messages };
+}
+
+export async function replyAsGuest(token: string, bodyRaw: unknown) {
+  const r = await guestRequest(token);
+  const body = z.string().trim().min(2, "Écrivez votre message.").max(4000, "Message trop long.").parse(bodyRaw);
+  if (CLOSED_STATUSES.includes(r.status as RequestStatus)) throw new ApiHttpError("Cette demande est clôturée. Envoyez une nouvelle demande depuis la page de connexion si besoin.", 409);
+  await db.$transaction([
+    db.supportMessage.create({ data: { requestId: r.id, authorId: null, authorRole: "USER", authorName: r.guestName, body } }),
+    db.supportRequest.update({ where: { id: r.id }, data: r.status === "NEEDS_INFO" ? { status: "PENDING_REVIEW" } : { updatedAt: new Date() } }),
+  ]);
+  return { ok: true };
+}
+
+/** Nouveau lien de suivi pour un visiteur (l'ancien cesse de fonctionner) ; renvoyé à l'équipe et envoyé par e-mail si possible. */
+export async function renewGuestLink(admin: AdminUser, id: string, origin = defaultOrigin()) {
+  const r = await db.supportRequest.findUnique({ where: { id }, select: { userId: true, reference: true, subject: true, guestEmail: true, guestName: true } });
+  if (!r) throw new ApiHttpError("Demande introuvable.", 404);
+  if (r.userId || !r.guestEmail) throw new ApiHttpError("Cette demande provient d'un compte Niala : elle se suit depuis l'espace de l'étudiant.", 409);
+  const nonce = randomBytes(16).toString("hex");
+  await db.supportRequest.update({ where: { id }, data: { guestNonce: nonce } });
+  const url = guestUrl(origin, id, nonce);
+  const emailed = await trySendEmail({ to: r.guestEmail, subject: `Niala — votre lien de suivi (${r.reference})`, text: `Bonjour,\n\nVoici votre nouveau lien pour suivre la demande « ${r.subject} » : ${url}`, html: emailHtml({ title: "Votre lien de suivi", paragraphs: [`Voici votre nouveau lien pour suivre la demande « ${r.subject} ».`], button: { label: "Suivre ma demande", url }, footer: `Référence ${r.reference}.` }) }, `lien ${r.reference}`);
+  await audit(admin, "request.guest_link", { targetType: "request", targetId: id, detail: { reference: r.reference, emailed } });
+  return { url, emailed };
 }
 
 // ── Feuille de route ─────────────────────────────────────────────────────────
@@ -367,7 +524,7 @@ export async function updateRoadmapItem(admin: AdminUser, id: string, raw: unkno
   if (!before) throw new ApiHttpError("Élément de feuille de route introuvable.", 404);
   await db.roadmapItem.update({ where: { id }, data: input });
   if (input.status === "DEPLOYED" && before.status !== "DEPLOYED") {
-    const users = [...new Set(before.requests.map((r) => r.userId))];
+    const users = [...new Set(before.requests.map((r) => r.userId).filter((u): u is string => !!u))];
     for (const userId of users) await notifyUser(userId, { kind: "REQUEST_UPDATE", title: "Une amélioration que vous aviez suggérée est disponible", body: before.title, link: "/suggestions", refId: id });
   }
   await audit(admin, "roadmap.update", { targetType: "roadmap", targetId: id, detail: { title: before.title, ...(input.status && input.status !== before.status ? { status: [before.status, input.status] } : {}) } });

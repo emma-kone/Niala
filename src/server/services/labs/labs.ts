@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { ErrorCategory, LabKind, LabMode, Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
+import { softDelete } from "@/lib/soft-delete";
 import { ApiHttpError } from "@/lib/api-helpers";
 import { assertFound } from "@/lib/ownership";
 import { classify, languageOf, parseCodeTests, sqlErrorReason, sqlSpecSchema, type CodeTest, type Diagnosis, type SqlSpec, type TestOutcome, type TestSummary } from "@/server/domain/lab-tests";
@@ -260,7 +261,7 @@ export async function updateWorkspace(userId: string, id: string, raw: unknown) 
 
 export async function deleteWorkspace(userId: string, id: string) {
   await owned(userId, id);
-  await db.labWorkspace.delete({ where: { id } });
+  await softDelete(db, "LabWorkspace", { id, userId });
   await db.learningActivity.deleteMany({ where: { userId, refType: "lab", refId: id } });
   return { ok: true };
 }

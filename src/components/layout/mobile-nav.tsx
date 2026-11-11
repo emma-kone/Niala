@@ -42,6 +42,7 @@ export function MobileNav({ user, onLogout }: { user: AppUser | null; onLogout: 
                       <li key={item.href}>
                         <Link
                           href={item.href}
+                          prefetch
                           aria-current={active ? "page" : undefined}
                           onClick={() => setOpen(false)}
                           className={cn("flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm", active ? "bg-[var(--nav-active)] font-medium text-[var(--nav-active-foreground)]" : "text-sidebar-foreground/85 hover:bg-sidebar-accent")}

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { ApiHttpError } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
+import { softDelete } from "@/lib/soft-delete";
 import { normalizeSubjectName } from "@/lib/subjects";
 import { AiCallError, AiQuotaError, AiUnavailableError } from "@/server/ai/provider";
 import { addDays, breakOverlap, diffImport, sameSubjectName, expandEvents, findConflicts, formatMinutes, isDate, occurrenceDates, validateTimes, weekday, type ExistingCourse, type Recurrence, type ScheduleEventRecord, type ScheduleOverrideRecord, type WeekPattern } from "@/server/domain/schedule";
@@ -108,7 +109,7 @@ async function adoptLooseEntries(userId: string) {
 export async function listImports(userId: string) {
   await adoptLooseEntries(userId);
   const [rows, activeId] = await Promise.all([
-    db.scheduleImport.findMany({ where: { userId, status: "CONFIRMED" }, orderBy: { createdAt: "desc" }, take: 30, select: { id: true, label: true, fileName: true, source: true, createdAt: true, confirmedAt: true, _count: { select: { events: true, breaks: true } } } }),
+    db.scheduleImport.findMany({ where: { userId, status: "CONFIRMED" }, orderBy: { createdAt: "desc" }, take: 30, select: { id: true, label: true, fileName: true, source: true, createdAt: true, confirmedAt: true, _count: { select: { events: { where: { deletedAt: null } }, breaks: { where: { deletedAt: null } } } } } }),
     activeScheduleOf(userId),
   ]);
   // Un ancien import dont tous les cours ont été fusionnés ailleurs n'est plus proposé ; un emploi du temps créé à la main reste, même vide.
@@ -138,21 +139,22 @@ export async function deleteSchedule(userId: string, id: string) {
   const row = await ownedImport(userId, id);
   if (row.status !== "CONFIRMED") return cancelImport(userId, id);
   const settings = await db.userSettings.findUnique({ where: { userId }, select: { activeScheduleId: true } });
-  const [events] = await db.$transaction([
-    db.scheduleEvent.deleteMany({ where: { userId, importId: id } }),
-    db.scheduleBreak.deleteMany({ where: { userId, importId: id } }),
-    ...(settings?.activeScheduleId === id ? [db.userSettings.update({ where: { userId }, data: { activeScheduleId: null } })] : []),
-    db.scheduleImport.delete({ where: { id } }),
-  ]);
+  const events = await db.$transaction(async (tx) => {
+    const removed = await softDelete(tx, "ScheduleEvent", { userId, importId: id });
+    await softDelete(tx, "ScheduleBreak", { userId, importId: id });
+    if (settings?.activeScheduleId === id) await tx.userSettings.update({ where: { userId }, data: { activeScheduleId: null } });
+    await softDelete(tx, "ScheduleImport", { id });
+    return removed;
+  });
   if (row.storageKey) await getStorage().remove([row.storageKey]).catch(() => undefined);
-  return { ok: true, removedEvents: events.count };
+  return { ok: true, removedEvents: events.length };
 }
 
 /** Abandon d'un import non validé : le fichier et le brouillon sont supprimés. */
 export async function cancelImport(userId: string, id: string) {
   const row = await ownedImport(userId, id);
   if (row.status === "CONFIRMED") throw new ApiHttpError("Cet import a déjà été validé.", 409);
-  await db.scheduleImport.delete({ where: { id: row.id } });
+  await softDelete(db, "ScheduleImport", { id: row.id });
   await getStorage().remove([row.storageKey]).catch(() => undefined);
   return { ok: true };
 }
@@ -305,16 +307,20 @@ export async function confirmImport(userId: string, id: string, input: z.infer<t
   const hasSpecial = (s: (typeof input.specials)[number]) => allEvents.some((e) => e.allDay && !(replace && e.importId) && e.date === s.startDate && sameSubjectName(e.title, s.label));
   const specials = input.specials.filter((s) => !hasSpecial(s)).map((s) => ({ id: randomUUID().replace(/-/g, ""), userId, importId: target, title: s.label, kind: s.kind, date: s.startDate, endDate: s.endDate, allDay: true, startMinutes: s.startMinutes ?? 0, endMinutes: s.endMinutes ?? 1440 }));
 
-  await db.$transaction([
-    db.subject.createMany({ data: newSubjects }),
-    ...(replace ? [db.scheduleBreak.deleteMany({ where: { userId, importId: active ?? { not: null } } }), db.scheduleEvent.deleteMany({ where: { userId, allDay: true, importId: active ?? { not: null } } })] : []),
-    db.scheduleBreak.createMany({ data: newBreaks }),
-    db.scheduleEvent.createMany({ data: specials }),
-    db.scheduleEvent.deleteMany({ where: { userId, id: { in: toRemove } } }),
-    db.scheduleEvent.createMany({ data: creations }),
-    ...updates.map((u) => db.scheduleEvent.update({ where: { id: u.id }, data: u.data })),
-    db.scheduleImport.update({ where: { id: row.id }, data: { status: "CONFIRMED", confirmedAt: new Date(), label: input.label?.trim() || null } }),
-    ...(separate && input.activate !== false ? [db.userSettings.upsert({ where: { userId }, create: { userId, activeScheduleId: row.id }, update: { activeScheduleId: row.id } })] : []),
-  ]);
+  // Les éléments remplacés sont marqués supprimés (conservés pour les statistiques), dans le même ordre qu'avant.
+  await db.$transaction(async (tx) => {
+    await tx.subject.createMany({ data: newSubjects });
+    if (replace) {
+      await softDelete(tx, "ScheduleBreak", { userId, importId: active ?? { not: null } });
+      await softDelete(tx, "ScheduleEvent", { userId, allDay: true, importId: active ?? { not: null } });
+    }
+    await tx.scheduleBreak.createMany({ data: newBreaks });
+    await tx.scheduleEvent.createMany({ data: specials });
+    await softDelete(tx, "ScheduleEvent", { userId, id: { in: toRemove } });
+    await tx.scheduleEvent.createMany({ data: creations });
+    for (const u of updates) await tx.scheduleEvent.update({ where: { id: u.id }, data: u.data });
+    await tx.scheduleImport.update({ where: { id: row.id }, data: { status: "CONFIRMED", confirmedAt: new Date(), label: input.label?.trim() || null } });
+    if (separate && input.activate !== false) await tx.userSettings.upsert({ where: { userId }, create: { userId, activeScheduleId: row.id }, update: { activeScheduleId: row.id } });
+  });
   return { scheduleId: target, created: creations.length, updated: updates.length, removed: toRemove.length, skipped: diff.items.filter((i) => i.status === "identique").length, subjectsCreated: newSubjects.length };
 }

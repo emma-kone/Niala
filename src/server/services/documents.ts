@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { db } from "@/lib/db";
+import { softDelete } from "@/lib/soft-delete";
 import { ApiHttpError } from "@/lib/api-helpers";
 import { chunkText, extractContent } from "@/lib/extraction";
 import { getStorage, newStorageKey, previewKey, withPreviewKeys } from "@/server/storage";
@@ -117,7 +118,8 @@ export async function receiveLocalUpload(userId: string, versionId: string, data
 }
 
 async function discard(versionId: string, documentId: string, key: string | null) {
-  await db.document.delete({ where: { id: documentId } }).catch(() => undefined);
+  // Dépôt avorté : le document est marqué supprimé (jamais visible), comme toute suppression.
+  await softDelete(db, "Document", { id: documentId }).catch(() => undefined);
   if (key) await getStorage().remove([key]).catch(() => undefined);
   void versionId;
 }
@@ -415,10 +417,11 @@ export async function deleteDocuments(userId: string, ids: string[]) {
     select: { id: true, versions: { select: { storageKey: true } } },
   });
   if (docs.length !== new Set(ids).size) throw new ApiHttpError("Document introuvable.", 404);
-  await db.$transaction([
-    db.learningActivity.deleteMany({ where: { userId, refType: "document", refId: { in: docs.map((d) => d.id) } } }),
-    db.document.deleteMany({ where: { id: { in: docs.map((d) => d.id) }, userId } }),
-  ]);
+  // Suppression douce : le document reste en base pour les statistiques ; seul le fichier d'origine est retiré du stockage.
+  await db.$transaction(async (tx) => {
+    await tx.learningActivity.deleteMany({ where: { userId, refType: "document", refId: { in: docs.map((d) => d.id) } } });
+    await softDelete(tx, "Document", { id: { in: docs.map((d) => d.id) }, userId });
+  });
   const keys = docs.flatMap((d) => d.versions.map((v) => v.storageKey).filter((k): k is string => !!k));
   await getStorage().remove(withPreviewKeys(keys)).catch((e) => console.error("[storage] suppression partielle", e));
   return { deleted: docs.length };

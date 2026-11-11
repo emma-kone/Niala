@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
-import { Activity, Bell, Bot, ChevronDown, Compass, FileBarChart, Gauge, GraduationCap, Inbox, LayoutDashboard, Layers, LogOut, Megaphone, Menu, ScrollText, Settings, ShieldCheck, Users, X, Zap, type LucideIcon } from "lucide-react";
+import { Activity, Bell, Bot, ChevronDown, Compass, FileBarChart, Gauge, GraduationCap, Inbox, LayoutDashboard, Layers, LogOut, Megaphone, Menu, ListChecks, ScrollText, Settings, ShieldCheck, Sparkles, Users, X, Zap, type LucideIcon } from "lucide-react";
 import { NialaMark, NialaWordmark } from "@/components/brand/niala-logo";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/client-api";
@@ -11,8 +11,11 @@ import { notify } from "@/components/notifications";
 import { PERIOD_KEYS, PERIOD_LABELS } from "@/components/admin/period";
 import { ProductTour, startTour } from "@/components/tour/product-tour";
 import { ADMIN_TOUR, ADMIN_TOUR_ID } from "@/features/tour/steps";
+import { AdminAssistant } from "@/features/admin/admin-assistant";
+import { AutoRefresh } from "@/components/admin/auto-refresh";
+import { resetDismissedNotices } from "@/components/admin/dismissible";
 
-const ICONS: Record<string, LucideIcon> = { overview: LayoutDashboard, users: Users, usage: Activity, features: Layers, pedagogy: GraduationCap, requests: Inbox, reports: FileBarChart, tech: Gauge, ai: Bot, comms: Megaphone, settings: Settings, audit: ScrollText };
+const ICONS: Record<string, LucideIcon> = { overview: LayoutDashboard, users: Users, usage: Activity, features: Layers, pedagogy: GraduationCap, requests: Inbox, reports: FileBarChart, tech: Gauge, ai: Bot, comms: Megaphone, settings: Settings, audit: ScrollText, anomalies: ListChecks, assistant: Sparkles };
 
 export interface ShellProps {
   admin: { id: string; name: string | null; email: string; roleLabel: string };
@@ -39,12 +42,17 @@ export function AdminShell({ admin, sections, bell, quick, children }: ShellProp
         const Icon = ICONS[s.key] ?? LayoutDashboard;
         const active = s.href === "/admin" ? pathname === "/admin" : pathname === s.href || pathname.startsWith(`${s.href}/`);
         return (
-          <Link key={s.key} href={s.href} aria-current={active ? "page" : undefined} className={cn("flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium transition-colors", active ? "bg-white/14 text-white" : "text-white/65 hover:bg-white/8 hover:text-white")}>
+          <Link key={s.key} href={s.href} prefetch aria-current={active ? "page" : undefined} className={cn("flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium transition-colors", active ? "bg-white/14 text-white" : "text-white/65 hover:bg-white/8 hover:text-white")}>
             <Icon className="h-4 w-4 shrink-0" aria-hidden />
             <span className="truncate">{s.label}</span>
           </Link>
         );
       })}
+      {/* Onglet ouvert à tous les administrateurs : les outils de l'assistant restent filtrés par rôle côté serveur. */}
+      <Link href="/admin/assistant" prefetch aria-current={pathname === "/admin/assistant" ? "page" : undefined} className={cn("flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium transition-colors", pathname === "/admin/assistant" ? "bg-white/14 text-white" : "text-white/65 hover:bg-white/8 hover:text-white")}>
+        <Sparkles className="h-4 w-4 shrink-0" aria-hidden />
+        <span className="truncate">Assistant IA</span>
+      </Link>
     </nav>
   );
 
@@ -87,6 +95,7 @@ export function AdminShell({ admin, sections, bell, quick, children }: ShellProp
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-2">
             {showPeriod && <PeriodSelector />}
+            <AutoRefresh />
             <QuickMenu items={quick} />
             <BellMenu bell={bell} />
             <ProfileMenu admin={admin} />
@@ -94,6 +103,7 @@ export function AdminShell({ admin, sections, bell, quick, children }: ShellProp
         </header>
         <main id="contenu" className="mx-auto w-full max-w-[1400px] flex-1 px-4 py-6 sm:px-6">{children}</main>
         <ProductTour tourId={ADMIN_TOUR_ID} version={1} userKey={admin.id} steps={ADMIN_TOUR} />
+        <AdminAssistant adminId={admin.id} />
       </div>
     </div>
   );
@@ -219,6 +229,7 @@ function ProfileMenu({ admin }: { admin: ShellProps["admin"] }) {
         <p className="mt-1.5 inline-flex rounded-full bg-[var(--niala-accent)]/15 px-2 py-0.5 text-[11px] font-medium text-[var(--niala-accent)]">{admin.roleLabel}</p>
       </div>
       <button role="menuitem" onClick={() => startTour(ADMIN_TOUR_ID)} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-muted"><Compass className="h-4 w-4" aria-hidden />Revoir la visite guidée</button>
+      <button role="menuitem" onClick={() => { resetDismissedNotices(); notify({ title: "Messages réaffichés", variant: "success" }); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-muted"><Bell className="h-4 w-4" aria-hidden />Réafficher les messages effacés</button>
       <button role="menuitem" onClick={() => void logout()} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-muted"><LogOut className="h-4 w-4" aria-hidden />Se déconnecter</button>
     </MenuBox>
   );

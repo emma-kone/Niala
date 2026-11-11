@@ -60,7 +60,7 @@ async function collectEvidence(userId: string): Promise<EvidenceRow[]> {
     const last = runs.find((r) => (r.tests as { summary?: unknown } | null)?.summary);
     if (!last) continue;
     const ratio = (last.tests as { summary: { ratio: number; passed: number; total: number } }).summary;
-    const q = await db.question.findFirst({ where: { exerciseId: w.exerciseId!, position: brief.source.position, userId }, select: { difficulty: true, concepts: { select: { conceptId: true } } } });
+    const q = await db.question.findFirst({ where: { exerciseId: w.exerciseId!, position: brief.source.position, userId }, select: { difficulty: true, concepts: { where: { concept: { deletedAt: null } }, select: { conceptId: true } } } });
     if (!q) continue;
     for (const c of q.concepts) {
       out.push({ conceptId: c.conceptId, score: ratio.ratio, weight: DIFFICULTY_EVIDENCE_WEIGHT[q.difficulty] ?? 1, at: last.createdAt, source: `lab:${w.id}`, kind: "lab", label: w.title, detail: { workspaceId: w.id, passed: ratio.passed, total: ratio.total } });
@@ -205,8 +205,9 @@ async function activityHref(userId: string, a: { type: string; refType: string |
     return `${subjectHref(a.subjectId)}/documents/${a.refId}${page ? `?page=${page}` : ""}`;
   }
   if (a.refType === "attempt") {
-    const att = await db.exerciseAttempt.findFirst({ where: { id: a.refId, userId }, select: { exerciseId: true, exercise: { select: { subjectId: true } } } });
-    return att?.exerciseId && att.exercise ? `${exerciseHref(att.exercise.subjectId, att.exerciseId)}/tentatives/${a.refId}` : null;
+    const att = await db.exerciseAttempt.findFirst({ where: { id: a.refId, userId }, select: { exerciseId: true, exercise: { select: { subjectId: true, deletedAt: true } } } });
+    // Un exercice supprimé garde ses tentatives (statistiques) mais n'est plus proposé à l'étudiant.
+    return att?.exerciseId && att.exercise && !att.exercise.deletedAt ? `${exerciseHref(att.exercise.subjectId, att.exerciseId)}/tentatives/${a.refId}` : null;
   }
   if (a.refType === "lab") return `${a.type === "LAB_SQL" ? "/sql" : "/code"}/${a.refId}`;
   return null;
@@ -256,12 +257,12 @@ export async function dashboard(userId: string, clock: { date: string; minutes: 
     // Classement sur la dernière consultation réelle ; un document n'y figure qu'une fois, même ouvert plusieurs fois.
     db.document.findMany({ where: { userId, lastOpenedAt: { not: null }, subjectId: { not: null } }, orderBy: [{ lastOpenedAt: "desc" }, { id: "asc" }], take: 3, select: { id: true, name: true, type: true, subjectId: true, lastOpenedAt: true, lastPage: true, pageCount: true, currentVersion: { select: { pageCount: true } }, subject: { select: { name: true, color: true, icon: true } } } }),
     db.document.findMany({ where: { userId, lastOpenedAt: null, subjectId: { not: null } }, orderBy: { createdAt: "desc" }, take: 2, select: { id: true, name: true, subjectId: true, subject: { select: { name: true } } } }),
-    db.subject.findMany({ where: { userId }, orderBy: { createdAt: "asc" }, select: { id: true, name: true, color: true, icon: true, _count: { select: { documents: true, studyExercises: true, notes: true } } } }),
+    db.subject.findMany({ where: { userId }, orderBy: { createdAt: "asc" }, select: { id: true, name: true, color: true, icon: true, _count: { select: { documents: { where: { deletedAt: null } }, studyExercises: { where: { deletedAt: null } }, notes: { where: { deletedAt: null } } } } } }),
     loadConceptViews(userId, undefined, true),
     db.learningActivity.findMany({ where: { userId, status: "IN_PROGRESS" }, orderBy: { updatedAt: "desc" }, take: 5 }),
     listRecommendations(userId),
     db.document.findMany({ where: { userId, versions: { some: { extractStatus: "FAILED" } } }, select: { id: true, name: true, subjectId: true }, take: 5 }),
-    db.exerciseAttempt.findMany({ where: { userId, status: "GRADED", exerciseId: { not: null } }, orderBy: { finishedAt: "desc" }, take: 5, select: { id: true, score: true, maxScore: true, finishedAt: true, exerciseId: true, exercise: { select: { title: true, subjectId: true } } } }),
+    db.exerciseAttempt.findMany({ where: { userId, status: "GRADED", exerciseId: { not: null }, exercise: { is: { deletedAt: null } } }, orderBy: { finishedAt: "desc" }, take: 5, select: { id: true, score: true, maxScore: true, finishedAt: true, exerciseId: true, exercise: { select: { title: true, subjectId: true } } } }),
     db.labRun.findMany({ where: { userId }, orderBy: { createdAt: "desc" }, take: 5, select: { id: true, createdAt: true, tests: true, workspace: { select: { id: true, title: true, kind: true } } } }),
     agendaOverview(userId, clock),
     loadBreaks(userId).then((rows) => rows.map(({ label, startMinutes, endMinutes, weekday }) => ({ label, startMinutes, endMinutes, weekday }))).catch(() => []),

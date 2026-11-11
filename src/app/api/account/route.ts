@@ -2,7 +2,7 @@ import { clearSessionCookie, requireUser } from "@/lib/auth";
 import { handle, limit, readJson } from "@/lib/api-helpers";
 import { deleteAccount, deleteAccountSchema } from "@/server/services/profile";
 
-/** Suppression définitive du compte, confirmée par le mot de passe (ou l'adresse pour un compte Google). */
+/** Suppression du compte (anonymisation : identité effacée, activité conservée), confirmée par le mot de passe (ou l'adresse pour un compte Google). */
 export async function DELETE(req: Request) {
   return handle(async () => {
     const user = await requireUser();

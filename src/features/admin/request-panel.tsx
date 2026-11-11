@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { confirmAction, notify } from "@/components/notifications";
 import { api } from "@/lib/client-api";
-import { PRIORITIES, REQUEST_STATUSES, ROADMAP_STATUSES } from "@/server/analytics/definitions";
+import { PRIORITIES, REQUEST_STATUS_HELP, REQUEST_STATUSES, ROADMAP_STATUSES, type RequestStatus } from "@/server/analytics/definitions";
 
 const sel = "h-9 w-full rounded-lg border bg-background px-2 text-sm";
 const area = "w-full rounded-lg border bg-background p-2.5 text-sm";
@@ -21,6 +21,8 @@ interface Props {
   currentRoadmap: string | null;
   similar: { id: string; reference: string; subject: string; score: number; grouped: boolean }[];
   defaultTitle: string;
+  /** Visiteur sans compte : les réponses lui partent par e-mail, avec un lien de suivi. */
+  guestEmail?: string | null;
 }
 
 /** Traitement d'une demande : statut, priorité, responsable, réponse à l'étudiant, note interne, feuille de route. */
@@ -51,14 +53,41 @@ export function RequestPanel(p: Props) {
     }
   }
 
+  const closed = p.status === "RESOLVED" || p.status === "REJECTED";
+  const who = p.guestEmail ? `Le visiteur en sera informé par e-mail (${p.guestEmail}).` : "L'étudiant en sera informé dans Niala.";
+
+  const close = async (next: "RESOLVED" | "REJECTED") => {
+    if (!(await confirmAction(`Clôturer la demande comme « ${REQUEST_STATUSES[next]} » ? ${who}`, { title: "Clôturer la demande", confirmLabel: "Clôturer" }))) return;
+    await run(() => api.patch(`/api/admin/requests/${p.id}`, { status: next }), "Demande clôturée");
+  };
+
+  const remove = async () => {
+    if (!(await confirmAction("Supprimer cette demande ? Elle disparaîtra du back-office et de l'espace du demandeur, mais restera comptée dans les statistiques.", { title: "Supprimer la demande", confirmLabel: "Supprimer", danger: true }))) return;
+    await run(() => api.del(`/api/admin/requests/${p.id}`), "Demande supprimée", () => router.push("/admin/demandes"));
+  };
+
+  const renewLink = async () => {
+    if (!(await confirmAction("Créer un nouveau lien de suivi ? L'ancien lien cessera de fonctionner ; le nouveau est envoyé au visiteur si l'e-mail est configuré.", { title: "Nouveau lien de suivi", confirmLabel: "Créer" }))) return;
+    setBusy(true);
+    try {
+      const r = await api.post<{ url: string; emailed: boolean }>(`/api/admin/requests/${p.id}/guest-link`);
+      await navigator.clipboard?.writeText(r.url).catch(() => undefined);
+      notify({ title: r.emailed ? "Lien envoyé par e-mail et copié" : "Lien copié (e-mail non configuré)", description: r.url, variant: "success" });
+    } catch (e) {
+      notify({ title: "Action impossible", description: e instanceof Error ? e.message : "Réessayez.", variant: "error" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const saveFields = async () => {
     const changed = status !== p.status;
-    if (changed && !(await confirmAction(`Passer la demande à « ${REQUEST_STATUSES[status as keyof typeof REQUEST_STATUSES]} » ? L'étudiant en sera informé dans Niala.`, { title: "Changer le statut", confirmLabel: "Confirmer" }))) return;
+    if (changed && !(await confirmAction(`Passer la demande à « ${REQUEST_STATUSES[status as keyof typeof REQUEST_STATUSES]} » ? ${who}`, { title: "Changer le statut", confirmLabel: "Confirmer" }))) return;
     await run(() => api.patch(`/api/admin/requests/${p.id}`, { status, priority, assigneeId: assignee || null }), "Demande mise à jour");
   };
 
   const sendReply = async () => {
-    if (!(await confirmAction("Envoyer cette réponse à l'étudiant ? Il la verra dans Niala et sera notifié.", { title: "Répondre à l'étudiant", confirmLabel: "Envoyer" }))) return;
+    if (!(await confirmAction(p.guestEmail ? `Envoyer cette réponse par e-mail à ${p.guestEmail} ? Le message contiendra son lien de suivi pour répondre.` : "Envoyer cette réponse à l'étudiant ? Il la verra dans Niala et sera notifié.", { title: "Répondre", confirmLabel: "Envoyer" }))) return;
     await run(() => api.post(`/api/admin/requests/${p.id}/reply`, { body: reply, status: replyStatus || undefined }), "Réponse envoyée", () => { setReply(""); setReplyStatus(""); });
   };
 
@@ -78,14 +107,26 @@ export function RequestPanel(p: Props) {
           <label className="text-xs text-muted-foreground">Priorité<select className={`${sel} mt-1`} value={priority} onChange={(e) => setPriority(e.target.value)}>{Object.entries(PRIORITIES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></label>
           <label className="text-xs text-muted-foreground">Responsable<select className={`${sel} mt-1`} value={assignee} onChange={(e) => setAssignee(e.target.value)}><option value="">Non assignée</option>{p.admins.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}</select></label>
         </div>
-        <button disabled={busy} onClick={() => void saveFields()} className={`${primary} mt-3`}>Enregistrer</button>
+        <p className="mt-2 text-xs text-muted-foreground"><strong>{REQUEST_STATUSES[status as RequestStatus]} :</strong> {REQUEST_STATUS_HELP[status as RequestStatus]}</p>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button disabled={busy} onClick={() => void saveFields()} className={primary}>Enregistrer</button>
+          {!closed && <button disabled={busy} onClick={() => void close("RESOLVED")} className={ghost}>Clôturer : résolue</button>}
+          {!closed && <button disabled={busy} onClick={() => void close("REJECTED")} className={ghost}>Clôturer : refusée</button>}
+          {p.guestEmail && <button disabled={busy} onClick={() => void renewLink()} className={ghost}>Renvoyer un lien de suivi</button>}
+          <button disabled={busy} onClick={() => void remove()} className={`${ghost} ml-auto border-destructive/40 text-destructive`}>Supprimer la demande</button>
+        </div>
+        <details className="mt-3 text-xs text-muted-foreground">
+          <summary className="cursor-pointer select-none">À quoi servent les statuts ?</summary>
+          <ul className="mt-2 space-y-1">{(Object.keys(REQUEST_STATUSES) as RequestStatus[]).map((k) => <li key={k}><strong className="text-foreground">{REQUEST_STATUSES[k]}</strong> — {REQUEST_STATUS_HELP[k]}</li>)}</ul>
+        </details>
       </section>
 
       <section className="rounded-2xl border bg-card p-5 shadow-sm" aria-labelledby="rp-reply">
-        <h2 id="rp-reply" className="mb-3 text-base font-semibold">Répondre à l'étudiant</h2>
-        <textarea className={area} rows={4} maxLength={4000} value={reply} onChange={(e) => setReply(e.target.value)} placeholder="Votre réponse (visible par l'étudiant)" aria-label="Réponse à l'étudiant" />
+        <h2 id="rp-reply" className="mb-1 text-base font-semibold">{p.guestEmail ? "Répondre au visiteur" : "Répondre à l'étudiant"}</h2>
+        <p className="mb-3 text-xs text-muted-foreground">{p.guestEmail ? `Envoyée par e-mail à ${p.guestEmail}, avec son lien de suivi pour répondre.` : "Visible par l'étudiant dans Niala, avec une notification."} Pour clôturer sans répondre, utilisez les boutons « Clôturer » ci-dessus.</p>
+        <textarea className={area} rows={4} maxLength={4000} value={reply} onChange={(e) => setReply(e.target.value)} placeholder="Votre réponse" aria-label="Réponse au demandeur" />
         <div className="mt-2 flex flex-wrap items-center gap-2">
-          <select className={`${sel} !w-auto`} value={replyStatus} onChange={(e) => setReplyStatus(e.target.value)} aria-label="Statut après envoi"><option value="">Statut : automatique</option>{Object.entries(REQUEST_STATUSES).map(([k, v]) => <option key={k} value={k}>Marquer : {v}</option>)}</select>
+          <select className={`${sel} !w-auto`} value={replyStatus} onChange={(e) => setReplyStatus(e.target.value)} aria-label="Statut après envoi"><option value="">Statut : automatique (en cours de traitement)</option>{Object.entries(REQUEST_STATUSES).map(([k, v]) => <option key={k} value={k}>Marquer : {v}</option>)}</select>
           <button disabled={busy || reply.trim().length < 2} onClick={() => void sendReply()} className={primary}>Envoyer la réponse</button>
         </div>
       </section>

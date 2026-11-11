@@ -17,7 +17,7 @@ export type SettingKey = keyof typeof SETTING_DEFS;
 type ValueOf<K extends SettingKey> = (typeof SETTING_DEFS)[K]["default"] extends number ? number : boolean;
 
 export async function getSetting<K extends SettingKey>(key: K): Promise<ValueOf<K>> {
-  const row = await db.adminSetting.findUnique({ where: { key } });
+  const row = await db.adminSetting.findUnique({ where: { key: key as string } });
   const parsed = SETTING_DEFS[key].schema.safeParse(row?.value);
   return (parsed.success ? parsed.data : SETTING_DEFS[key].default) as ValueOf<K>;
 }

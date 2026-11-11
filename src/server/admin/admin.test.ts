@@ -82,9 +82,9 @@ describe("rôles et permissions (RBAC)", () => {
   });
 
   it("n'affiche à chaque rôle que les rubriques autorisées et choisit une page d'arrivée accessible", () => {
-    expect(rbac.sectionsFor("SUPER_ADMIN")).toHaveLength(12);
+    expect(rbac.sectionsFor("SUPER_ADMIN")).toHaveLength(13);
     expect(rbac.sectionsFor("SUPPORT").map((s) => s.key)).toEqual(["users", "requests"]);
-    expect(rbac.sectionsFor("ANALYST").map((s) => s.key)).toEqual(["overview", "usage", "features", "pedagogy", "reports", "tech", "ai"]);
+    expect(rbac.sectionsFor("ANALYST").map((s) => s.key)).toEqual(["overview", "usage", "features", "pedagogy", "reports", "tech", "ai", "anomalies"]);
     expect(rbac.landingFor("SUPPORT")).toBe("/admin/utilisateurs");
     expect(rbac.landingFor("ANALYST")).toBe("/admin");
   });
@@ -233,17 +233,26 @@ describe("gestion des utilisateurs", () => {
     expect(JSON.stringify(log.detail)).not.toContain("pirate");
   });
 
-  it("supprime un compte seulement après saisie de son adresse, et conserve les statistiques pseudonymisées", async () => {
+  it("supprime un compte seulement après saisie de son adresse : il est anonymisé et ses statistiques restent", async () => {
     const u = await mk("supprime@niala.test", { category: "ESATIC" });
     await track.recordEvent(u.id, "module.open", { module: "exercises" });
-    await ctx.db.supportRequest.create({ data: { reference: "NL-TEST-DEL", userId: u.id, type: "BUG", subject: "x", description: "description suffisante" } });
+    await ctx.db.supportRequest.create({ data: { reference: "NL-TEST-DEL", userId: u.id, type: "BUG", subject: "x", description: "description suffisante", attachments: [{ key: `${u.id}/req/support/abc`, name: "capture.png", mime: "image/png", size: 10 }] } });
     await expect(users.deleteUserAccount(superAdmin, u.id, { confirmEmail: "autre@niala.test" })).rejects.toMatchObject({ status: 422 });
-    expect(await ctx.db.user.count({ where: { id: u.id } })).toBe(1);
+    expect((await ctx.db.user.findUniqueOrThrow({ where: { id: u.id } })).accountStatus).toBe("ACTIVE");
     await users.deleteUserAccount(superAdmin, u.id, { confirmEmail: "SUPPRIME@niala.test" });
-    expect(await ctx.db.user.count({ where: { id: u.id } })).toBe(0);
-    expect(await ctx.db.supportRequest.count({ where: { userId: u.id } })).toBe(0);
+    const row = await ctx.db.user.findUniqueOrThrow({ where: { id: u.id } });
+    expect(row.accountStatus).toBe("DELETED");
+    expect(row.email).not.toContain("supprime@niala.test");
+    // La demande reste (statistiques) ; sa pièce jointe garde sa description mais plus de fichier.
+    const req = await ctx.db.supportRequest.findFirstOrThrow({ where: { userId: u.id } });
+    expect(req.attachments).toEqual([{ name: "capture.png", mime: "image/png", size: 10, removed: true }]);
+    await expect(support.readAttachment(req.id, 0, {})).rejects.toMatchObject({ status: 410 });
     expect(await ctx.db.analyticsEvent.count({ where: { actorKey: track.actorKeyOf(u.id) } })).toBe(1);
     expect(await ctx.db.adminAuditLog.count({ where: { action: "user.delete", targetId: u.id } })).toBe(1);
+    // Un compte anonymisé n'apparaît plus dans la liste (sauf filtre « supprimés ») et n'accepte plus aucune action.
+    expect((await users.listUsers(superAdmin, {})).rows.some((r) => r.id === u.id)).toBe(false);
+    expect((await users.listUsers(superAdmin, { status: "DELETED" })).rows.some((r) => r.id === u.id)).toBe(true);
+    await expect(users.setAccountStatus(superAdmin, u.id, { status: "ACTIVE" })).rejects.toMatchObject({ status: 409 });
   });
 });
 

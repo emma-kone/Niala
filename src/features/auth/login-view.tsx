@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, ShieldCheck, UserPlus } from "lucide-react";
+import { LifeBuoy, Loader2, ShieldCheck, UserPlus } from "lucide-react";
 import { NialaLogo } from "@/components/brand/niala-logo";
 import { AcademicFields, EMPTY_ACADEMIC, Required, checkAcademic, type AcademicDraft } from "@/features/profile/academic-fields";
 import { api } from "@/lib/client-api";
@@ -42,7 +42,8 @@ function GoogleMark() {
 export default function LoginView() {
   const router = useRouter();
   const { authenticated, setAuthenticated } = useAuth();
-  const [mode, setMode] = useState<Mode>("login");
+  // « ?mode=inscription » (lien « Créer un compte » de la page d'accueil) ouvre directement l'inscription.
+  const [mode, setMode] = useState<Mode>(() => (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("mode") === "inscription" ? "register" : "login"));
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -164,6 +165,10 @@ export default function LoginView() {
               </button>
             </p>
           </form>
+
+          <Link href={routes.assistance} className="mt-4 flex items-center justify-center gap-2 rounded-2xl border bg-card px-4 py-3 text-sm font-medium transition-colors hover:bg-muted">
+            <LifeBuoy className="h-4 w-4 text-primary" aria-hidden /> Un problème ? Contacter l&apos;assistance <span className="font-normal text-muted-foreground">(sans compte)</span>
+          </Link>
 
           <p className="mt-4 text-center text-xs text-muted-foreground">
             {registering ? "En créant un compte" : "En vous connectant"}, vous acceptez les{" "}

@@ -83,6 +83,7 @@ export const ADMIN_SECTIONS: AdminSection[] = [
   { key: "reports", href: `${ADMIN_BASE}/rapports`, label: "Rapports et statistiques", permission: "reports.view" },
   { key: "tech", href: `${ADMIN_BASE}/performance`, label: "Performance technique", permission: "tech.view" },
   { key: "ai", href: `${ADMIN_BASE}/ia`, label: "Intelligence artificielle", permission: "tech.view" },
+  { key: "anomalies", href: `${ADMIN_BASE}/anomalies`, label: "Anomalies à résoudre", permission: "tech.view" },
   { key: "comms", href: `${ADMIN_BASE}/communications`, label: "Notifications et communications", permission: "comms.view" },
   { key: "settings", href: `${ADMIN_BASE}/parametres`, label: "Paramètres d'administration", permission: "settings.view" },
   { key: "audit", href: `${ADMIN_BASE}/journal`, label: "Journal d'activité", permission: "audit.view" },

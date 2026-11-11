@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
-import { db } from "@/lib/db";
+// Statistiques : client non filtré, les contenus supprimés par les étudiants restent comptés.
+import { dbAll as db } from "@/lib/db";
 import { LAB_LABELS, SUCCESS_RATIO } from "@/server/analytics/definitions";
 import { attemptOutcomes } from "@/server/admin/stats/features";
 import { bucketSql, cached, fillSeries, metric, n, periodKey, ratio, round1, type Metric, type Period } from "@/server/admin/stats/common";

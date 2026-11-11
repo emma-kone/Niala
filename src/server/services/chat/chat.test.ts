@@ -74,7 +74,7 @@ async function importText(user: string, name: string, content: string) {
 
 beforeAll(async () => {
   pg = await PGlite.create();
-  for (const name of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261110000000_niala_agenda", "20261111000000_niala_academic", "20261112000000_niala_subject_icon", "20261113000000_niala_google_link", "20261109000000_niala_reliability", "20261116000000_niala_profile_exercises", "20261117000000_niala_class_level_other", "20261118000000_niala_admin", "20261119000000_niala_langues_edt_reset", "20261120000000_niala_agenda_sections"]) {
+  for (const name of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261110000000_niala_agenda", "20261111000000_niala_academic", "20261112000000_niala_subject_icon", "20261113000000_niala_google_link", "20261109000000_niala_reliability", "20261116000000_niala_profile_exercises", "20261117000000_niala_class_level_other", "20261118000000_niala_admin", "20261119000000_niala_langues_edt_reset", "20261120000000_niala_agenda_sections", "20261121000000_niala_soft_delete", "20261122000000_niala_assistance_push"]) {
     await pg.exec(readFileSync(path.join(migrations, name, "migration.sql"), "utf8"));
   }
   const port = 30000 + Math.floor(Math.random() * 10000);
@@ -388,7 +388,12 @@ describe("recherche web", () => {
     expect(run.sources[0].retrievedAt).toBeInstanceOf(Date);
     // Supprimer la conversation supprime aussi ses vérifications.
     await chat.deleteConversation(A, c.id);
-    expect(await db.verificationRun.count({ where: { entityId: r.message.id } })).toBe(0);
+    // Suppression douce : la conversation disparaît pour l'étudiant, ses vérifications restent en base pour les statistiques.
+    await expect(chat.getConversation(A, c.id)).rejects.toMatchObject({ status: 404 });
+    expect(await db.conversationMessage.count({ where: { id: r.message.id } })).toBe(0);
+    const { dbAll } = await import("@/lib/db");
+    expect(await dbAll.verificationRun.count({ where: { entityId: r.message.id } })).toBe(1);
+    expect((await dbAll.conversation.findUniqueOrThrow({ where: { id: c.id } })).deletedAt).toBeInstanceOf(Date);
     __setWebSearcherForTests(undefined);
   });
 

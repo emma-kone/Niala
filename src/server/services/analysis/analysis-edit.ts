@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
-import { db } from "@/lib/db";
+import { db, type DbTx } from "@/lib/db";
+import { softDelete } from "@/lib/soft-delete";
 import { ApiHttpError } from "@/lib/api-helpers";
 import { foldText } from "@/server/ai/guard";
 import { isAiConfigured } from "@/server/ai/provider";
@@ -13,7 +14,7 @@ import { loadVersionPages, pagesBetween, saveExtraction } from "./analysis-servi
 // par une relance d'analyse partielle.
 // ─────────────────────────────────────────────────────────────────────────────
 
-type Tx = Prisma.TransactionClient;
+type Tx = DbTx;
 
 async function ownedSection(tx: Tx | typeof db, userId: string, id: string) {
   const s = await tx.courseSection.findFirst({ where: { id, userId } });
@@ -39,9 +40,7 @@ async function subtreeIds(tx: Tx, analysisId: string, rootId: string): Promise<s
 
 /** Supprime les notions sans aucune source, question ni maîtrise (évite les notions fantômes). */
 async function pruneOrphanConcepts(tx: Tx, userId: string, subjectId: string) {
-  await tx.concept.deleteMany({
-    where: { userId, subjectId, sources: { none: {} }, questions: { none: {} }, mastery: null, nodes: { none: {} } },
-  });
+  await softDelete(tx, "Concept", { userId, subjectId, sources: { none: {} }, questions: { none: {} }, mastery: null, nodes: { none: {} } });
 }
 
 async function subjectOfAnalysis(tx: Tx | typeof db, userId: string, analysisId: string) {
@@ -91,7 +90,7 @@ export async function deleteSection(userId: string, id: string) {
   await db.$transaction(async (tx) => {
     const ids = await subtreeIds(tx, section.analysisId, id);
     await tx.conceptSource.deleteMany({ where: { analysisId: section.analysisId, sectionId: { in: ids } } });
-    await tx.courseSection.delete({ where: { id } }); // les sous-sections sont supprimées en cascade
+    await softDelete(tx, "CourseSection", { id }); // les sous-sections sont marquées en cascade
     await renumber(tx, section.analysisId, section.parentId);
     await pruneOrphanConcepts(tx, userId, subjectId);
   });

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { db } from "@/lib/db";
+import { softDelete } from "@/lib/soft-delete";
 import { requireUser } from "@/lib/auth";
 import { handle, readJson, ApiHttpError } from "@/lib/api-helpers";
 import { normalizeSubjectName } from "@/lib/subjects";
@@ -92,11 +93,12 @@ export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string 
       where: { subjectId: id, userId: user.id },
       select: { id: true, versions: { select: { storageKey: true } } },
     });
-    await db.$transaction([
-      db.learningActivity.deleteMany({ where: { userId: user.id, refType: "document", refId: { in: docs.map((d) => d.id) } } }),
-      db.document.deleteMany({ where: { id: { in: docs.map((d) => d.id) }, userId: user.id } }),
-      db.subject.delete({ where: { id } }),
-    ]);
+    // Suppression douce : la matière et ses contenus disparaissent pour l'étudiant mais restent en base pour les statistiques.
+    await db.$transaction(async (tx) => {
+      await tx.learningActivity.deleteMany({ where: { userId: user.id, refType: "document", refId: { in: docs.map((d) => d.id) } } });
+      await softDelete(tx, "Document", { id: { in: docs.map((d) => d.id) }, userId: user.id });
+      await softDelete(tx, "Subject", { id, userId: user.id });
+    });
     const keys = docs.flatMap((d) => d.versions.map((v) => v.storageKey).filter((k): k is string => !!k));
     await getStorage().remove(withPreviewKeys(keys)).catch((e) => console.error("[storage] suppression partielle", e));
     return { ok: true, deleted: subject.name };

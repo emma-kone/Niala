@@ -2,6 +2,7 @@ import Link from "next/link";
 import { AlertTriangle, ArrowDownRight, ArrowUpRight, Info, Minus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { fmtNumber } from "@/components/admin/format";
+import { DismissibleNotice } from "@/components/admin/dismissible";
 import type { Kpi } from "@/server/admin/stats/overview";
 
 // Briques d'affichage communes aux rubriques du back-office (composants serveur, sans état).
@@ -35,14 +36,18 @@ export function Panel({ title, description, action, children, className }: { tit
   );
 }
 
-export function Notice({ tone = "info", children, className }: { tone?: "info" | "warn"; children: React.ReactNode; className?: string }) {
+/** Message d'information : l'administrateur peut l'effacer (croix), le choix est mémorisé dans son navigateur. `persistent` désactive la croix. */
+export function Notice({ tone = "info", children, className, persistent }: { tone?: "info" | "warn"; children: React.ReactNode; className?: string; persistent?: boolean }) {
   const Icon = tone === "warn" ? AlertTriangle : Info;
-  return (
-    <div role="note" className={cn("flex gap-2.5 rounded-xl border px-3.5 py-2.5 text-sm", tone === "warn" ? "border-amber-500/40 bg-amber-500/10" : "border-[var(--niala-accent)]/30 bg-[var(--niala-accent)]/8", className)}>
+  const box = cn("flex gap-2.5 rounded-xl border py-2.5 pl-3.5 text-sm", persistent ? "pr-3.5" : "pr-9", tone === "warn" ? "border-amber-500/40 bg-amber-500/10" : "border-[var(--niala-accent)]/30 bg-[var(--niala-accent)]/8", className);
+  const body = (
+    <>
       <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
       <div className="min-w-0 space-y-1">{children}</div>
-    </div>
+    </>
   );
+  if (persistent) return <div role="note" className={box}>{body}</div>;
+  return <DismissibleNotice className={box}>{body}</DismissibleNotice>;
 }
 
 export function EmptyState({ title, children }: { title: string; children?: React.ReactNode }) {
@@ -106,7 +111,7 @@ export function Pill({ children, tone = "neutral" }: { children: React.ReactNode
   return <span className={cn("inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium", TONES[tone])}>{children}</span>;
 }
 
-export const statusTone = (s: string) => ({ RECEIVED: "info", PENDING_REVIEW: "warn", IN_PROGRESS: "accent", NEEDS_INFO: "warn", RESOLVED: "good", REJECTED: "neutral", ACTIVE: "good", SUSPENDED: "warn", DISABLED: "bad", OPEN: "bad", TO_STUDY: "neutral", PLANNED: "info", IN_DEV: "accent", DEPLOYED: "good", SUCCESS: "good", FAILED: "bad", DENIED: "bad", WARNING: "warn", CRITICAL: "bad" })[s] ?? "neutral";
+export const statusTone = (s: string) => ({ RECEIVED: "info", PENDING_REVIEW: "warn", IN_PROGRESS: "accent", NEEDS_INFO: "warn", RESOLVED: "good", REJECTED: "neutral", ACTIVE: "good", SUSPENDED: "warn", DISABLED: "bad", DELETED: "neutral", OPEN: "bad", TO_STUDY: "neutral", PLANNED: "info", IN_DEV: "accent", DEPLOYED: "good", SUCCESS: "good", FAILED: "bad", DENIED: "bad", WARNING: "warn", CRITICAL: "bad" })[s] ?? "neutral";
 export const priorityTone = (p: string) => ({ LOW: "neutral", NORMAL: "info", HIGH: "warn", URGENT: "bad" })[p] ?? "neutral";
 
 /** Tableau de données simple : l'en-tête peut être un lien de tri. */

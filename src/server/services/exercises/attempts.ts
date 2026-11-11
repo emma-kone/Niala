@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { ErrorCategory, Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
+import { softDelete } from "@/lib/soft-delete";
 import { ApiHttpError } from "@/lib/api-helpers";
 import type { QuestionType } from "@/server/domain/exercise-model";
 import { assistanceOf, type Assistance, type CorrectionMode, type ExerciseMode } from "@/server/domain/exercise-types";
@@ -40,7 +41,7 @@ export async function startAttempt(userId: string, exerciseId: string, opts: { f
   const exercise = await db.exercise.findFirst({
     where: { id: exerciseId, userId },
     include: {
-      questions: { orderBy: { position: "asc" }, include: { concepts: { include: { concept: { select: { id: true, name: true } } } } } },
+      questions: { orderBy: { position: "asc" }, include: { concepts: { where: { concept: { deletedAt: null } }, include: { concept: { select: { id: true, name: true } } } } } },
       document: { select: { id: true, name: true } },
       version: { select: { id: true, number: true } },
     },
@@ -320,9 +321,9 @@ export async function purgeOccasionalExercises(userId: string) {
   });
   if (stale.length === 0) return;
   const ids = stale.map((e) => e.id);
-  await db.exerciseAttempt.deleteMany({ where: { userId, exerciseId: { in: ids } } });
+  // Suppression douce : exercices et tentatives restent en base pour les statistiques ; les tentatives deviennent invisibles avec leur exercice.
+  await softDelete(db, "Exercise", { userId, id: { in: ids } });
   await db.learningActivity.deleteMany({ where: { userId, refType: "attempt", refId: { notIn: (await db.exerciseAttempt.findMany({ where: { userId }, select: { id: true } })).map((a) => a.id) } } });
-  await db.exercise.deleteMany({ where: { userId, id: { in: ids } } });
   await removeOrphanImports(userId, stale.map((e) => (e.document && !e.document.subjectId ? e.documentId! : null)));
 }
 
@@ -409,8 +410,8 @@ export async function getExercise(userId: string, id: string) {
 
 export async function deleteExercise(userId: string, id: string) {
   const exercise = await db.exercise.findFirst({ where: { id, userId }, select: { documentId: true, document: { select: { subjectId: true } } } });
-  const res = await db.exercise.deleteMany({ where: { id, userId } });
-  if (res.count === 0) throw new ApiHttpError("Exercice introuvable.", 404);
+  const removed = await softDelete(db, "Exercise", { id, userId });
+  if (!removed.length) throw new ApiHttpError("Exercice introuvable.", 404);
   if (exercise?.document && !exercise.document.subjectId) await removeOrphanImports(userId, [exercise.documentId]);
   return { ok: true };
 }

@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { softDelete } from "@/lib/soft-delete";
 import { ApiHttpError } from "@/lib/api-helpers";
 import {
   canMoveFolder,
@@ -117,10 +118,9 @@ export async function deleteFolder(userId: string, id: string) {
       select: { id: true, versions: { select: { storageKey: true } } },
     });
     await tx.learningActivity.deleteMany({ where: { userId, refType: "document", refId: { in: docs.map((d) => d.id) } } });
-    await tx.document.deleteMany({ where: { id: { in: docs.map((d) => d.id) }, userId } });
-    // Plus profond d'abord : la relation parent est en Restrict
-    const order = [...ids].reverse();
-    for (const fid of order) await tx.folder.delete({ where: { id: fid } });
+    // Suppression douce : documents et dossiers restent en base pour les statistiques (noms de dossiers suffixés).
+    await softDelete(tx, "Document", { id: { in: docs.map((d) => d.id) }, userId });
+    await softDelete(tx, "Folder", { id: { in: ids }, userId });
     return {
       keys: docs.flatMap((d) => d.versions.map((v) => v.storageKey).filter((k): k is string => !!k)),
       documents: docs.length,

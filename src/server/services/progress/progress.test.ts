@@ -25,7 +25,7 @@ async function attempt(answers: boolean[]) {
 
 beforeAll(async () => {
   pg = await PGlite.create();
-  for (const n of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261110000000_niala_agenda", "20261111000000_niala_academic", "20261112000000_niala_subject_icon", "20261113000000_niala_google_link", "20261116000000_niala_profile_exercises", "20261117000000_niala_class_level_other", "20261118000000_niala_admin", "20261119000000_niala_langues_edt_reset", "20261120000000_niala_agenda_sections"]) {
+  for (const n of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261110000000_niala_agenda", "20261111000000_niala_academic", "20261112000000_niala_subject_icon", "20261113000000_niala_google_link", "20261116000000_niala_profile_exercises", "20261117000000_niala_class_level_other", "20261118000000_niala_admin", "20261119000000_niala_langues_edt_reset", "20261120000000_niala_agenda_sections", "20261121000000_niala_soft_delete", "20261122000000_niala_assistance_push"]) {
     await pg.exec(readFileSync(path.join(process.cwd(), "prisma", "migrations", n, "migration.sql"), "utf8"));
   }
   const port = 50000 + Math.floor(Math.random() * 4000);
@@ -205,8 +205,10 @@ describe("cours présentés par le tableau de bord", () => {
     const afternoon = buildDayView({ date: "2026-11-09", nowMinutes: 18 * 60 + 59, courses: d.today, schedule: d.schedule });
     expect(afternoon.state).toBe("none");
     expect(afternoon.next?.date).toBe("2026-11-10");
-    await db.scheduleEvent.deleteMany({ where: { userId: B } });
-    await db.subject.delete({ where: { id: s.id } });
+    // Remise à zéro pour les tests suivants : vraie purge par le client non filtré.
+    const { dbAll } = await import("@/lib/db");
+    await dbAll.scheduleEvent.deleteMany({ where: { userId: B } });
+    await dbAll.subject.delete({ where: { id: s.id } });
   });
 });
 

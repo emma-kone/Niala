@@ -62,6 +62,9 @@ export function proxy(req: NextRequest) {
     }
   }
 
+  // Visiteur sans session : « / » présente Niala (page d'accueil) au lieu de renvoyer vers la connexion.
+  if (pathname === "/" && !req.cookies.get("sfs_session")?.value) return NextResponse.rewrite(new URL("/accueil", req.url));
+
   if (pathname.startsWith("/api/")) {
     const headers = new Headers(req.headers);
     headers.set("x-niala-path", pathname);

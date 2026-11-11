@@ -3,6 +3,8 @@ export const routes = {
   login: "/login",
   forgotPassword: "/mot-de-passe-oublie",
   resetPassword: "/reinitialiser-mot-de-passe",
+  assistance: "/assistance",
+  welcome: "/accueil",
   subjects: "/matieres",
   subject: (id: string) => `/matieres/${id}` as const,
   agenda: "/agenda",

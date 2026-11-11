@@ -68,7 +68,8 @@ export default function PrivacyPage() {
       <LegalSection id="duree" title="7. Combien de temps nous les gardons">
         <ul>
           <li>Vos données de compte et vos contenus sont conservés tant que votre compte existe.</li>
-          <li>Vous pouvez télécharger une copie de vos données et supprimer votre compte depuis Paramètres. La suppression efface vos données. Des copies peuvent subsister quelque temps dans les sauvegardes de nos prestataires, jusqu&apos;à leur renouvellement.</li>
+          <li>Un contenu que vous supprimez (document, matière, exercice, note, carte, conversation, élément d&apos;agenda…) disparaît immédiatement de votre espace et ne peut plus être récupéré ; ses fichiers d&apos;origine sont effacés. Ses informations restent conservées dans nos bases pour établir des statistiques internes sur l&apos;utilisation de Niala et améliorer le service.</li>
+          <li>Vous pouvez télécharger une copie de vos données et supprimer votre compte depuis Paramètres. La suppression de votre compte efface votre identité (nom, adresse e-mail, mot de passe, liaison Google, photo de profil), vos notifications et vos fichiers d&apos;origine, et ferme toutes vos sessions. Les données d&apos;activité restantes (contenus, exercices, résultats, usage) sont conservées sous une forme anonyme, sans plus aucun lien avec vous, à des fins statistiques. Des copies peuvent subsister quelque temps dans les sauvegardes de nos prestataires, jusqu&apos;à leur renouvellement.</li>
           <li>Les journaux techniques sont conservés pour une durée limitée, selon les règles de nos hébergeurs.</li>
         </ul>
       </LegalSection>

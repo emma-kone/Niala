@@ -76,6 +76,7 @@ export function SidebarNav({ user, onLogout }: SidebarNavProps) {
                   <li key={item.href}>
                     <Link
                       href={item.href}
+                      prefetch
                       aria-current={active ? "page" : undefined}
                       aria-label={collapsed ? item.label : undefined}
                       title={collapsed ? item.label : undefined}

@@ -1,10 +1,15 @@
 import { PrismaClient } from '@prisma/client'
+import { softDeleteExtension } from '@/lib/soft-delete'
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined
 }
 
-export const db =
+/**
+ * Client brut : voit TOUT, y compris les contenus supprimés par les étudiants (suppression douce).
+ * Réservé aux statistiques et analyses de l'administration.
+ */
+export const dbAll =
   globalForPrisma.prisma ??
   new PrismaClient(
     process.env.PRISMA_LOG_QUERIES ? { log: ['query'] } : undefined,
@@ -14,4 +19,13 @@ export const db =
 // hot-reloads in dev AND across Vercel/Edge cold-start module re-evaluations
 // in production. Without this, a second PrismaClient instance can be created
 // before the first one has connected, causing "table does not exist" 500 errors.
-globalForPrisma.prisma = db
+globalForPrisma.prisma = dbAll
+
+/**
+ * Client de l'application : les contenus supprimés par les étudiants y sont invisibles, et leur suppression
+ * définitive est refusée (voir src/lib/soft-delete.ts). Même connexion que `dbAll`.
+ */
+export const db = dbAll.$extends(softDeleteExtension)
+
+/** Transaction du client de l'application (`db.$transaction(async (tx) => …)`). */
+export type DbTx = Parameters<Parameters<typeof db.$transaction>[0]>[0]

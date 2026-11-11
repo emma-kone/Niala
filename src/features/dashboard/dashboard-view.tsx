@@ -117,14 +117,15 @@ function daySummary(v: DayView) {
 function DayPanel({ data, view }: { data: DashboardData; view: DayView }) {
   const day = new Date(`${view.date}T12:00:00`);
   return (
-    <section aria-label="La journée en bref" className="relative z-[1] flex flex-col justify-between gap-6 rounded-[32px] bg-dash-panel p-6 text-dash-panel-foreground sm:p-8 lg:rounded-none lg:bg-transparent lg:p-10 lg:pt-16 xl:p-12 xl:pt-20">
-      <div>
-        <p className="tnum text-6xl font-bold leading-none tracking-tight xl:text-8xl">{day.getDate()}</p>
-        <p className="mt-2 text-lg font-medium capitalize">{day.toLocaleDateString("fr-FR", { weekday: "long" })}</p>
-        <p className="text-sm capitalize text-dash-panel-foreground/60">{day.toLocaleDateString("fr-FR", { month: "long", year: "numeric" })}</p>
+    // Sur grand écran, la rangée a une hauteur imposée par la grille : marges et chiffre suivent la hauteur de l'écran pour ne jamais déborder.
+    <section aria-label="La journée en bref" className="relative z-[1] flex min-h-0 min-w-0 flex-col justify-between gap-6 rounded-[32px] bg-dash-panel p-6 text-dash-panel-foreground sm:p-8 lg:gap-3 lg:rounded-none lg:bg-transparent lg:px-8 lg:pb-[clamp(1rem,3vh,2.5rem)] lg:pt-[clamp(1.25rem,4vh,4rem)] xl:px-10">
+      <div className="min-w-0">
+        <p className="tnum text-6xl font-bold leading-none tracking-tight lg:text-[clamp(2.75rem,9vh,5rem)]">{day.getDate()}</p>
+        <p className="mt-1 truncate text-lg font-medium capitalize">{day.toLocaleDateString("fr-FR", { weekday: "long" })}</p>
+        <p className="truncate text-sm capitalize text-dash-panel-foreground/60">{day.toLocaleDateString("fr-FR", { month: "long", year: "numeric" })}</p>
       </div>
-      <div className="flex items-end justify-between gap-3">
-        <p className="text-sm font-medium">{daySummary(view)}</p>
+      <div className="flex min-w-0 items-end justify-between gap-3">
+        <p className="min-w-0 text-sm font-medium">{daySummary(view)}</p>
         {data.overallMastery !== null && <ProgressRing value={data.overallMastery} />}
       </div>
     </section>
@@ -190,7 +191,8 @@ function Suggestions({ data, onDismiss }: { data: DashboardData; onDismiss: (r: 
         <ul className="mt-3 space-y-2">
           {data.suggestions.map((s) => {
             const rec = s.recommendationId ? byId.get(s.recommendationId) : undefined;
-            const href = s.href ?? (rec ? recommendationHref(rec) : null);
+            // Une suggestion mène toujours à une page complète : à défaut de cible précise, le détail de la progression.
+            const href = s.href ?? (rec ? (recommendationHref(rec) ?? routes.progress) : null);
             const body = (
               <>
                 <span className="block font-medium leading-tight">{s.title}</span>

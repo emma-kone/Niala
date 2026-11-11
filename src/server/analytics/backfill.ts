@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
-import { db } from "@/lib/db";
+// Statistiques : client non filtré, les contenus supprimés par les étudiants restent comptés.
+import { dbAll as db } from "@/lib/db";
 import { actorKeyOf } from "@/server/analytics/track";
 import type { EventType } from "@/server/analytics/definitions";
 import { ensureActorKeys } from "@/server/admin/stats/common";

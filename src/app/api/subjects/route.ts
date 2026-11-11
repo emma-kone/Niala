@@ -26,9 +26,9 @@ export async function GET() {
       include: {
         chapters: {
           orderBy: { position: "asc" },
-          include: { _count: { select: { documents: true } } },
+          include: { _count: { select: { documents: { where: { deletedAt: null } } } } },
         },
-        _count: { select: { documents: true, exercises: true, sessions: true } },
+        _count: { select: { documents: { where: { deletedAt: null } }, exercises: true, sessions: true } },
       },
       orderBy: { createdAt: "asc" },
     });
@@ -63,8 +63,8 @@ export async function POST(req: Request) {
         iconAuto: !data.icon,
       },
       include: {
-        chapters: { orderBy: { position: "asc" }, include: { _count: { select: { documents: true } } } },
-        _count: { select: { documents: true, exercises: true, sessions: true } },
+        chapters: { orderBy: { position: "asc" }, include: { _count: { select: { documents: { where: { deletedAt: null } } } } } },
+        _count: { select: { documents: { where: { deletedAt: null } }, exercises: true, sessions: true } },
       },
     });
     return { subject };

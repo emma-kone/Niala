@@ -87,6 +87,78 @@ Formulaire (type, objet, description, module, urgence facultative, jusqu'à 3 fi
 `NL-AAMM-NNNN`, « Mes demandes » avec statuts et réponses, notifications (réponse, changement de statut, annonces). L'e-mail n'est jamais redemandé.
 Les notes internes ne sont jamais renvoyées côté étudiant (toutes les lectures filtrent `internal = false`).
 
+## 6 bis. Assistant IA du back-office — `src/server/admin/assistant/`
+
+Bouton « Assistant IA » en bas à droite de toutes les rubriques (`src/features/admin/admin-assistant.tsx`).
+
+* **Lecture** : l'assistant interroge les mêmes fonctions que les pages (vue d'ensemble, activité, fonctionnalités, pédagogie,
+  utilisateurs et fiches, demandes et feuille de route, rapports, performance, IA, annonces, paramètres et administrateurs,
+  journal). Chaque outil exige la même permission que la page : l'assistant ne voit jamais plus que le rôle connecté (`tools.ts`).
+* **Actions** (statut ou renseignements d'un compte, suppression, lien de réinitialisation, traitement des demandes, feuille de
+  route, paramètres, rôles, annonces, alertes, reconstitution de l'historique) : le modèle ne fait que **proposer**. Une carte
+  s'affiche ; rien n'est exécuté sans clic sur « Confirmer ». La proposition est signée (HMAC), liée à l'administrateur, valable
+  10 minutes et utilisable une fois ; à la confirmation, la permission est revérifiée en base et l'action passe par la fonction
+  métier habituelle (mêmes garde-fous, même audit) puis est tracée `assistant.action`. Une suppression exige de recopier
+  l'adresse du compte, comme dans la fiche utilisateur (`actions.ts`, route `POST /api/admin/assistant/confirm`).
+* **Confidentialité** (`privacy.ts`) : avant tout envoi au fournisseur d'IA, noms et e-mails sont retirés et remplacés par un
+  libellé stable (« Utilisateur #a3f9c1 », « Admin #07be12 ») ; e-mails, numéros de téléphone et noms connus sont masqués dans
+  les textes libres, y compris dans les messages de l'administrateur. Les vraies identités n'apparaissent que dans les cartes de
+  confirmation, côté navigateur. Les liens de réinitialisation ne sont jamais montrés au modèle.
+* **Sécurité** : les textes des étudiants sont présentés comme des données ; une instruction cachée dans une demande ne peut
+  au pire que faire apparaître une proposition, que l'administrateur refuse.
+* La conversation n'est pas enregistrée en base (`sessionStorage` de l'onglet). Chaque message compte dans le quota quotidien
+  d'appels IA de l'administrateur (`AI_DAILY_CALL_LIMIT`) et apparaît dans la supervision de l'IA (« Assistant du back-office »).
+  Nécessite Gemini (`GEMINI_API_KEY`) : le fournisseur Anthropic de repli ne gère pas les outils.
+
+## 6 ter. Suppressions : rien n'est perdu pour les statistiques — `src/lib/soft-delete.ts`
+
+Migration `20261121000000_niala_soft_delete` (colonne `deletedAt` sur `User` et sur 16 tables de contenus).
+
+* **Contenus** (matière, dossier, document, exercice, carte, conversation, note et lien de note, tâche, séance de révision,
+  pause, cours d'agenda, emploi du temps importé, labo, notion, section d'analyse) : la suppression par l'étudiant pose
+  `deletedAt`. Le contenu disparaît de l'application mais reste en base ; seul le fichier d'origine est retiré du stockage.
+  Les contenus dépendants sont marqués en cascade, et les liens qui étaient remis à NULL par la base le sont toujours sur les
+  lignes encore visibles (un cours d'agenda est détaché d'une matière supprimée) : l'étudiant voit exactement ce qu'il voyait
+  avant. Une tentative reste rattachée à son exercice supprimé (statistiques pédagogiques par matière).
+* **Client `db`** (application) : ajoute « encore visible » à toutes les lectures et mises à jour (le modèle et ses ancêtres
+  en cascade, calculés depuis le schéma) et **refuse toute suppression définitive** de ces tables (`HardDeleteError`).
+  **Client `dbAll`** : voit tout ; utilisé par les statistiques (`src/server/admin/stats/*`, historique, fiche utilisateur).
+  Les requêtes SQL brutes de l'administration voient tout également.
+* **Compte** (par l'étudiant, par un administrateur ou via l'assistant IA) : **anonymisation** (`purgeAccount`). Nom, adresse
+  (remplacée par `compte-supprime-<id>@anonyme.niala.invalid`), mot de passe, liaison Google, photo, rôle, notifications et liens
+  de réinitialisation sont effacés ; fichiers d'origine et pièces jointes retirés du stockage ; sessions fermées ; statut
+  `DELETED`. L'activité et le profil scolaire restent. L'adresse d'origine peut resservir à une nouvelle inscription.
+  Les comptes supprimés sont masqués de la liste des utilisateurs (filtre « Supprimé (anonymisé) ») et n'acceptent plus
+  aucune action. Vue d'ensemble : « Utilisateurs inscrits » = comptes existants à la date de fin ; nouveau KPI « Comptes
+  supprimés » ; les inscriptions et cohortes comptent toujours les comptes supprimés depuis.
+* Nouvelle suppression à coder : appeler `softDelete(tx, "Modèle", where)` ; pour une vraie purge technique (tests), `dbAll`.
+
+## 6 quater. Demandes, assistance sans compte et annonces hors site
+
+Migration `20261122000000_niala_assistance_push`.
+
+* **Demandes** : liste avec sélection multiple (clôturer « résolues » / « refusées », autre statut, supprimer) et message
+  complet dépliable ; fiche avec boutons « Clôturer », « Supprimer », aide sur les statuts (`REQUEST_STATUS_HELP`).
+  Supprimer = suppression douce (masquée partout, comptée dans les statistiques). Routes `DELETE /api/admin/requests/[id]`,
+  `POST /api/admin/requests/bulk`.
+* **Assistance sans compte** : bouton sur la page de connexion → `/assistance`. La demande (`userId` nul, `guestEmail`)
+  arrive dans la même file ; les réponses partent par e-mail avec un lien personnel `/assistance/suivi#jeton` (jeton dans le
+  fragment : jamais journalisé), où le visiteur lit l'échange et répond. « Renvoyer un lien de suivi » invalide l'ancien.
+  Limites : 5 envois/heure par IP, 3 demandes/jour par adresse, champ piège anti-robots.
+* **Annonces** : « Tous les utilisateurs actifs » ou audience ciblée ; canaux en plus de la cloche : **e-mail** (Resend,
+  désinscription en un clic `/desinscription`, réglage « Annonces par e-mail ») et **push** (service worker `public/sw.js`,
+  l'étudiant active « Notifications sur cet appareil » dans Paramètres). Envoi après la réponse ; compteurs e-mail/push dans
+  l'historique. « Supprimer » retire l'annonce et ses notifications dans Niala (les e-mails et push reçus restent).
+* **Configuration** : `RESEND_API_KEY`, `EMAIL_FROM` (domaine vérifié chez Resend), `APP_URL` (liens des e-mails),
+  `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` (mailto: de contact). Sans elles, tout fonctionne dans le site et
+  l'aperçu d'annonce signale que l'e-mail ou le push ne partira pas.
+
+## 6 quinquies. Page d'accueil publique
+
+`/accueil` (et `/` pour un visiteur sans session, réécrit par `src/proxy.ts`). Captures réelles d'un compte de démonstration
+fictif dans `public/accueil/`. Pour les refaire : base locale (`scripts/dev-db.mjs`), `scripts/demo/seed-demo.ts`, une
+instance `next dev` sur cette base, puis `scripts/demo/capture.mjs` (puppeteer-core + Edge/Chrome).
+
 ## 7. Exploitation
 
 ```bash
@@ -98,6 +170,20 @@ Variables : `ADMIN_PATH` (obligatoire en production, voir §1), `ADMIN_HOST` (fa
 rend les anciens événements inattribuables à un compte existant).
 
 Développement local sans toucher à Supabase : `node scripts/dev-db.mjs` puis `node scripts/dev-admin.mjs 3200`.
+
+## 7 bis. Anomalies, assistant en pleine page, actualisation
+
+* **Anomalies à résoudre** (`/admin/anomalies`, permission `tech.view`) : `src/server/admin/anomalies.ts` croise les mesures réelles (routes lentes de `RequestLog`
+  avec un seuil propre aux opérations longues, erreurs récurrentes, échecs et lenteurs d'IA, documents en erreur, alertes ouvertes, problèmes signalés par
+  les étudiants) et les classe de P1 à P4. Chaque anomalie vient avec un prompt prêt à copier ; « Copier tous les prompts » donne la liste dans l'ordre de priorité.
+  « Marquer traitée » est mémorisé dans le navigateur. L'assistant IA lit la même liste (outil `list_anomalies`).
+* **Assistant IA en pleine page** : `/admin/assistant` (bouton « Pleine page » du panneau flottant). Même conversation que le panneau (stockée dans l'onglet).
+* **Messages effaçables** : chaque message d'information (`Notice`) a une croix ; l'effacement est mémorisé dans le navigateur (empreinte du texte).
+  « Réafficher les messages effacés » est dans le menu du profil.
+* **Actualisation en arrière-plan** : `AutoRefresh` relit les données serveur chaque minute (onglet visible, pas pendant une saisie) sans recharger la page ; le bouton
+  de la barre supérieure force l'actualisation.
+* **Vitesse** : l'administrateur n'est lu qu'une fois par requête, l'évaluation des alertes se fait après la réponse (`after`), la pastille de notifications est mise
+  en cache 20 s, et les liens du menu sont préchargés.
 
 ## 8. Limites connues
 

@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
-import { db } from "@/lib/db";
+// Statistiques : client non filtré, les contenus supprimés par les étudiants restent comptés.
+import { dbAll as db } from "@/lib/db";
 import { ACTIVE_TYPES, INACTIVE_AFTER_DAYS, categoryLabel } from "@/server/analytics/definitions";
 import { activeTypesSql, bucketSql, cached, coverage, ensureActorKeys, fillSeries, metric, n, periodKey, ratio, round1, sessionsCte, startOfDay, type Metric, type Period } from "@/server/admin/stats/common";
 
@@ -93,16 +94,20 @@ async function computeOverview(p: Period): Promise<Overview> {
   const k = (key: string, label: string, source: Source, m: Metric, extra: Partial<Kpi> = {}): Kpi => ({ key, label, source, ...m, ...extra });
 
   const [
-    totalNow, totalPrev, newCur, newPrev,
+    totalNow, totalPrev, newCur, newPrev, deletedCur, deletedPrev,
     actToday, actYesterday, act7, act7Prev, act30, act30Prev, actPeriod, actPeriodPrev,
     inactive, pedCur, pedPrev, retention, retentionPrev,
     sessCur, sessPrev, retCur, retPrev,
     attemptsCur, attemptsPrev, docsCur, docsPrev, mapsCur, mapsPrev, coursesCur, coursesPrev, eventsCur, eventsPrev,
   ] = await Promise.all([
-    db.user.count({ where: { createdAt: { lte: p.to }, adminRole: null } }),
-    db.user.count({ where: { createdAt: { lte: p.prevTo }, adminRole: null } }),
+    // Comptes existants à la date de fin : un compte supprimé (anonymisé) avant cette date n'est plus compté.
+    db.user.count({ where: { createdAt: { lte: p.to }, adminRole: null, OR: [{ deletedAt: null }, { deletedAt: { gt: p.to } }] } }),
+    db.user.count({ where: { createdAt: { lte: p.prevTo }, adminRole: null, OR: [{ deletedAt: null }, { deletedAt: { gt: p.prevTo } }] } }),
+    // Inscriptions de la période, y compris les comptes supprimés depuis : ces personnes se sont bien inscrites.
     db.user.count({ where: { createdAt: { gte: p.from, lte: p.to }, adminRole: null } }),
     db.user.count({ where: { createdAt: { gte: p.prevFrom, lte: p.prevTo }, adminRole: null } }),
+    db.user.count({ where: { deletedAt: { gte: p.from, lte: p.to }, adminRole: null } }),
+    db.user.count({ where: { deletedAt: { gte: p.prevFrom, lte: p.prevTo }, adminRole: null } }),
     activeUsers(today, now),
     activeUsers(new Date(today.getTime() - DAY), new Date(now.getTime() - DAY)),
     activeUsers(new Date(today.getTime() - 6 * DAY), now),
@@ -140,6 +145,7 @@ async function computeOverview(p: Period): Promise<Overview> {
   const users: Kpi[] = [
     k("total", "Utilisateurs inscrits", "table", metric(totalNow, totalPrev)),
     k("new", "Nouveaux inscrits", "table", metric(newCur, newPrev)),
+    k("deleted", "Comptes supprimés", "table", metric(deletedCur, deletedPrev), { hint: "Comptes supprimés sur la période : identité effacée, activité conservée de façon anonyme dans les statistiques." }),
     k("active-today", "Actifs aujourd'hui", "events", guard(metric(actToday, actYesterday), new Date(today.getTime() - DAY), true), { hint: "Comparé à la veille, à la même heure." }),
     k("active-7d", "Actifs sur 7 jours", "events", guard(metric(act7, act7Prev), new Date(today.getTime() - 13 * DAY), true)),
     k("active-30d", "Actifs sur 30 jours", "events", guard(metric(act30, act30Prev), new Date(today.getTime() - 59 * DAY), true)),
@@ -235,7 +241,7 @@ async function exerciseSeries(p: Period): Promise<Point[]> {
 async function categorySplit() {
   const rows = await db.$queryRaw<{ category: string | null; value: bigint }[]>`
     SELECT p.category AS category, count(*) AS value FROM "User" u LEFT JOIN "StudentProfile" p ON p."userId" = u.id
-    WHERE u."adminRole" IS NULL GROUP BY 1 ORDER BY 2 DESC`;
+    WHERE u."adminRole" IS NULL AND u."deletedAt" IS NULL GROUP BY 1 ORDER BY 2 DESC`;
   return rows.map((r) => ({ key: r.category ?? "NONE", label: categoryLabel(r.category), value: n(r.value) }));
 }
 

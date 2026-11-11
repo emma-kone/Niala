@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { ApiHttpError } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
+import { softDelete } from "@/lib/soft-delete";
 import { addDays, breakOverlap, type BreakRecord, daysBetween, expandEvents, findConflicts, formatMinutes, isDate, occurrenceDates, validateTimes, type Occurrence, type Recurrence, type ScheduleEventRecord, type ScheduleOverrideRecord, type WeekPattern } from "@/server/domain/schedule";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -249,7 +250,7 @@ export async function deleteEvent(userId: string, id: string, scope: "all" | "oc
     await db.scheduleOverride.upsert({ where: { eventId_date: { eventId: event.id, date: occurrenceDate } }, create: { eventId: event.id, date: occurrenceDate, cancelled: true }, update: { cancelled: true } });
     return { ok: true };
   }
-  await db.scheduleEvent.delete({ where: { id: event.id } });
+  await softDelete(db, "ScheduleEvent", { id: event.id });
   return { ok: true };
 }
 

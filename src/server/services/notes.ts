@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
-import { db } from "@/lib/db";
+import { db, type DbTx } from "@/lib/db";
+import { softDelete } from "@/lib/soft-delete";
 import { ApiHttpError } from "@/lib/api-helpers";
 import { requireSubject } from "@/server/services/folders";
 import {
@@ -37,7 +38,7 @@ export const linkInputSchema = z.object({
 export type LinkInput = z.infer<typeof linkInputSchema>;
 
 const noteInclude = {
-  links: { include: { document: { select: { id: true, name: true } } }, orderBy: { id: "asc" } },
+  links: { where: { deletedAt: null }, include: { document: { select: { id: true, name: true } } }, orderBy: { id: "asc" } },
 } satisfies Prisma.NoteInclude;
 
 type NoteWithLinks = Prisma.NoteGetPayload<{ include: typeof noteInclude }>;
@@ -100,7 +101,7 @@ export interface ListFilter {
 
 /** Toutes les notes de l'étudiant, regroupées par matière (matières sans note comprises). */
 export async function listAllNotes(userId: string) {
-  const subjects = await db.subject.findMany({ where: { userId }, orderBy: { name: "asc" }, select: { id: true, name: true, color: true, icon: true, notes: { where: { userId }, orderBy: { updatedAt: "desc" }, take: 8, select: { id: true, title: true, updatedAt: true } } } });
+  const subjects = await db.subject.findMany({ where: { userId }, orderBy: { name: "asc" }, select: { id: true, name: true, color: true, icon: true, notes: { where: { userId, deletedAt: null }, orderBy: { updatedAt: "desc" }, take: 8, select: { id: true, title: true, updatedAt: true } } } });
   return { groups: subjects.map(({ notes, ...subject }) => ({ subject, notes })) };
 }
 
@@ -111,7 +112,7 @@ export async function listNotes(userId: string, filter: ListFilter) {
       userId,
       subjectId: filter.subjectId,
       ...(filter.kind ? { kind: filter.kind } : {}),
-      ...(filter.documentId ? { links: { some: { documentId: filter.documentId, userId } } } : {}),
+      ...(filter.documentId ? { links: { some: { documentId: filter.documentId, userId, deletedAt: null } } } : {}),
     },
     include: noteInclude,
     orderBy: { updatedAt: "desc" },
@@ -186,8 +187,8 @@ export async function updateNote(userId: string, id: string, input: { revision: 
   return { revision: note.revision, updatedAt: note.updatedAt };
 }
 
-async function refreshKind(tx: Prisma.TransactionClient, userId: string, noteId: string) {
-  const note = await tx.note.findFirstOrThrow({ where: { id: noteId, userId }, include: { links: { select: { anchor: true } } } });
+async function refreshKind(tx: DbTx, userId: string, noteId: string) {
+  const note = await tx.note.findFirstOrThrow({ where: { id: noteId, userId }, include: { links: { where: { deletedAt: null }, select: { anchor: true } } } });
   const kind = deriveKind(note.kind, note.links);
   if (kind !== note.kind) await tx.note.update({ where: { id: noteId }, data: { kind } });
 }
@@ -216,14 +217,14 @@ export async function removeLink(userId: string, noteId: string, linkId: string)
   const link = await db.noteLink.findFirst({ where: { id: linkId, noteId, userId } });
   if (!link) throw new ApiHttpError("Lien introuvable.", 404);
   await db.$transaction(async (tx) => {
-    await tx.noteLink.delete({ where: { id: linkId } });
+    await softDelete(tx, "NoteLink", { id: linkId, userId });
     await refreshKind(tx, userId, noteId);
   });
   return getNote(userId, noteId);
 }
 
 export async function deleteNote(userId: string, id: string) {
-  const res = await db.note.deleteMany({ where: { id, userId } });
-  if (res.count === 0) throw new ApiHttpError("Note introuvable.", 404);
+  const removed = await softDelete(db, "Note", { id, userId });
+  if (!removed.length) throw new ApiHttpError("Note introuvable.", 404);
   return { ok: true };
 }

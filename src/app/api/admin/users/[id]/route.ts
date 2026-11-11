@@ -18,7 +18,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
   });
 }
 
-/** Suppression définitive : l'adresse du compte doit être saisie dans le corps de la requête. */
+/** Suppression (anonymisation) d'un compte : l'adresse du compte doit être saisie dans le corps de la requête. */
 export async function DELETE(req: Request, ctx: Ctx) {
   return handle(async () => {
     const admin = await requireAdmin("users.delete");

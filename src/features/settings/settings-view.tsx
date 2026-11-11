@@ -30,6 +30,7 @@ import { UserAvatar } from "@/features/profile/user-avatar";
 import { startTour } from "@/components/tour/product-tour";
 import { STUDENT_TOUR_ID } from "@/features/tour/steps";
 import { useSettings, type UserSettings } from "./use-settings";
+import { PushDeviceToggle } from "@/features/settings/push-device-toggle";
 
 const SECTIONS: { id: string; label: string; icon: LucideIcon }[] = [
   { id: "compte", label: "Mon compte", icon: UserRound },
@@ -233,7 +234,7 @@ function DeleteAccount({ profile }: { profile: Profile }) {
         <form onSubmit={confirm} className="space-y-4">
           <AlertDialogHeader>
             <AlertDialogTitle>Supprimer définitivement votre compte ?</AlertDialogTitle>
-            <AlertDialogDescription>Vos matières, documents, notes, cartes, exercices, résultats, conversations et votre agenda seront effacés. Cette action est irréversible.</AlertDialogDescription>
+            <AlertDialogDescription>Votre identité (nom, adresse e-mail, mot de passe, photo) et vos fichiers d&apos;origine seront effacés, et vous ne pourrez plus vous connecter. Vos données d&apos;activité seront conservées sous une forme anonyme, sans lien avec vous, à des fins statistiques. Cette action est irréversible.</AlertDialogDescription>
           </AlertDialogHeader>
           <div className="space-y-2">
             <Label htmlFor="delete-confirm">{withPassword ? "Confirmez avec votre mot de passe" : "Recopiez votre adresse e-mail pour confirmer"}</Label>
@@ -361,6 +362,8 @@ export default function SettingsView() {
                 {toggle("notifyProgress", "Progression", "Votre résultat et sa prise en compte à la fin d'un exercice.")}
                 {toggle("notifyRevision", "Rappels de révision", "Au plus une fois par jour, les notions qu'il est utile de retravailler.")}
                 {toggle("notifyActivities", "Tâches, cours et rappels", "Rappels de vos tâches à l'heure prévue, de vos cours et de vos séances de travail.")}
+                <Row title="Notifications sur cet appareil" text="Annonces de l'équipe Niala reçues sur ce téléphone ou cet ordinateur, même quand Niala est fermé." htmlFor="setting-push-device"><PushDeviceToggle /></Row>
+                {toggle("emailAnnouncements", "Annonces par e-mail", "Les informations importantes de l'équipe Niala (nouveautés, maintenance) reçues aussi par e-mail.")}
               </Section>
             </>
           )}
@@ -369,7 +372,7 @@ export default function SettingsView() {
             <Row title="Utilisation de vos données" text="Ce que Niala collecte, pourquoi, et qui y accède.">
               <Button asChild variant="outline" size="sm"><Link href={routes.privacy}>Politique de confidentialité</Link></Button>
             </Row>
-            {profile && <Row title="Supprimer mon compte" text="Efface définitivement votre compte et tous vos contenus."><DeleteAccount profile={profile} /></Row>}
+            {profile && <Row title="Supprimer mon compte" text="Efface définitivement votre compte et votre identité ; l'activité restante est conservée de façon anonyme."><DeleteAccount profile={profile} /></Row>}
           </Section>
         </div>
       </div>

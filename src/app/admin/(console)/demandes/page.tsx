@@ -7,6 +7,7 @@ import { requireAdminPage } from "@/server/admin/session";
 import { assignableAdmins, getRequestAnalytics, listRequests, listRoadmap, REQUEST_PAGE_SIZE, requestCounts } from "@/server/admin/support";
 import { MODULES, PRIORITIES, REQUEST_STATUSES, REQUEST_TYPES, ROADMAP_STATUSES } from "@/server/analytics/definitions";
 import { RoadmapStatusSelect } from "@/features/admin/request-panel";
+import { RequestsTable } from "@/features/admin/requests-table";
 import { flat, keep, periodOf, rows, type SP } from "../_lib";
 
 export default async function RequestsPage({ searchParams }: { searchParams: SP }) {
@@ -19,7 +20,7 @@ export default async function RequestsPage({ searchParams }: { searchParams: SP 
 
   const header = (
     <>
-      <PageHeader title="Suggestions et demandes" description="Retours, signalements et demandes d'assistance envoyés par les étudiants depuis Niala." />
+      <PageHeader title="Suggestions et demandes" description="Retours, signalements et demandes d'assistance envoyés par les étudiants depuis Niala, et par les visiteurs sans compte depuis la page de connexion." />
       <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         <Stat label="Total des demandes" value={fmtNumber(counts.total)} />
         <Stat label="Nouvelles" value={fmtNumber(counts.received)} tone={counts.received ? "warn" : undefined} />
@@ -97,25 +98,11 @@ export default async function RequestsPage({ searchParams }: { searchParams: SP 
           <div className="flex items-end gap-2"><button className="h-9 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground">Filtrer</button><Link href="?view=liste" className="h-9 rounded-lg border px-3 text-sm leading-9 hover:bg-muted">Réinitialiser</Link></div>
         </form>
       </Panel>
-      <Table>
-        <thead><tr><Th>Référence</Th>{sh("Type", "type")}<Th>Objet</Th><Th>Utilisateur</Th><Th>Module</Th>{sh("Soumise le", "createdAt")}{sh("Priorité", "priority")}{sh("Statut", "status")}<Th>Responsable</Th></tr></thead>
-        <tbody>
-          {res.rows.map((r) => (
-            <tr key={r.id} className="hover:bg-muted/40">
-              <Td className="font-mono text-xs"><Link className="underline" href={`/admin/demandes/${r.id}`}>{r.reference}</Link></Td>
-              <Td>{REQUEST_TYPES[r.type as keyof typeof REQUEST_TYPES]}</Td>
-              <Td className="max-w-[260px] truncate"><Link href={`/admin/demandes/${r.id}`} className="hover:underline">{r.subject}</Link></Td>
-              <Td className="max-w-[180px] truncate">{r.userName ?? r.userEmail}</Td>
-              <Td>{r.module ? (MODULES[r.module as keyof typeof MODULES] ?? r.module) : "—"}</Td>
-              <Td className="whitespace-nowrap">{fmtDate(r.createdAt)}</Td>
-              <Td><Pill tone={priorityTone(r.priority)}>{PRIORITIES[r.priority as keyof typeof PRIORITIES]}</Pill></Td>
-              <Td><Pill tone={statusTone(r.status)}>{REQUEST_STATUSES[r.status as keyof typeof REQUEST_STATUSES]}</Pill></Td>
-              <Td className="text-muted-foreground">{nameOf(r.assigneeId)}</Td>
-            </tr>
-          ))}
-          {!res.rows.length && <tr><Td className="py-10 text-center text-muted-foreground">Aucune demande ne correspond à ces critères.</Td></tr>}
-        </tbody>
-      </Table>
+      <RequestsTable
+        manage={manage}
+        headers={{ sortType: sh("Type", "type"), sortDate: sh("Soumise le", "createdAt"), sortPriority: sh("Priorité", "priority"), sortStatus: sh("Statut", "status") }}
+        rows={res.rows.map((r) => ({ id: r.id, reference: r.reference, type: r.type, subject: r.subject, description: r.description, module: r.module, priority: r.priority, status: r.status, createdAt: r.createdAt.toISOString(), who: r.userName ?? (r.userEmail || "—"), guest: r.guest, assignee: nameOf(r.assigneeId) }))}
+      />
       <Pagination page={res.page} pages={res.pages} total={res.total} base={base} size={REQUEST_PAGE_SIZE} />
       {!manage && <Notice className="mt-4"><p>Votre rôle permet de consulter les demandes mais pas d'y répondre.</p></Notice>}
     </>

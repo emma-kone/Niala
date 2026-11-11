@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
-import { db } from "@/lib/db";
+// Statistiques : client non filtré, les contenus supprimés par les étudiants restent comptés.
+import { dbAll as db } from "@/lib/db";
 import { CATEGORIES, type CategoryKey } from "@/server/analytics/definitions";
 import { activeTypesSql, cached, coverage, ensureActorKeys, n, periodKey, ratio, round1, sessionsCte, startOfDay, truncate, type Period } from "@/server/admin/stats/common";
 
@@ -127,7 +128,7 @@ export function getCategoryComparison(period: Period): Promise<CategoryRow[]> {
     await ensureActorKeys();
     const keys = Object.keys(CATEGORIES) as CategoryKey[];
     const [accounts, ev, ses, ex] = await Promise.all([
-      db.$queryRaw<{ c: string | null; v: bigint }[]>`SELECT p.category AS c, count(*) AS v FROM "User" u LEFT JOIN "StudentProfile" p ON p."userId" = u.id WHERE u."adminRole" IS NULL GROUP BY 1`,
+      db.$queryRaw<{ c: string | null; v: bigint }[]>`SELECT p.category AS c, count(*) AS v FROM "User" u LEFT JOIN "StudentProfile" p ON p."userId" = u.id WHERE u."adminRole" IS NULL AND u."deletedAt" IS NULL GROUP BY 1`,
       db.$queryRaw<{ c: string | null; users: bigint; events: bigint; ai: bigint }[]>`
         SELECT category AS c, count(DISTINCT "actorKey") AS users, count(*) AS events, count(*) FILTER (WHERE type = 'assistant.message') AS ai
         FROM "AnalyticsEvent" WHERE type IN (${activeTypesSql}) AND "createdAt" >= ${period.from} AND "createdAt" <= ${period.to} GROUP BY 1`,

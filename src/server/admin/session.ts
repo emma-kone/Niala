@@ -1,4 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
+import { cache } from "react";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { ApiHttpError } from "@/lib/api-helpers";
@@ -62,7 +63,7 @@ export interface AdminUser {
 }
 
 /** Administrateur de la session courante, ou null (pas de session, jeton expiré, rôle retiré, compte suspendu). */
-export async function getAdmin(): Promise<AdminUser | null> {
+async function readAdmin(): Promise<AdminUser | null> {
   const token = (await cookies()).get(ADMIN_COOKIE)?.value;
   if (!token) return null;
   const session = verifyAdminToken(token);
@@ -75,6 +76,12 @@ export async function getAdmin(): Promise<AdminUser | null> {
     return null;
   }
 }
+
+/**
+ * Le layout, la page et leurs sous-composants demandent tous l'administrateur : une seule lecture en base par requête
+ * (le rôle, le statut et la version de session restent relus à CHAQUE requête, jamais gardés d'une requête à l'autre).
+ */
+export const getAdmin = cache(readAdmin);
 
 export class ForbiddenError extends ApiHttpError {
   constructor(message = "Vous n'avez pas l'autorisation d'effectuer cette action.") {

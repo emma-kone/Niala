@@ -34,9 +34,9 @@ describe("retour de la connexion Google", () => {
     expect(signOut).toHaveBeenCalledWith({ scope: "local" });
   });
 
-  it("amène un compte tout juste créé à son profil", async () => {
+  it("amène un compte tout juste créé au tableau de bord (la fenêtre de profil s'y affiche)", async () => {
     signInWithGoogle.mockResolvedValue({ id: "niala-2", email: "ada@example.fr", name: "Ada Test", created: true });
-    expect(await call("?code=abc")).toBe("https://niala.test/profil");
+    expect(await call("?code=abc")).toBe("https://niala.test/");
     expect(setSessionCookie).toHaveBeenCalledWith("niala-2");
   });
 

@@ -1,24 +1,30 @@
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { AdminShell } from "@/components/admin/admin-shell";
 import { db } from "@/lib/db";
 import { can, ROLE_LABELS, sectionsFor } from "@/server/admin/rbac";
 import { adminLoginPath, getAdmin } from "@/server/admin/session";
+import { cached } from "@/server/admin/stats/common";
 import { evaluateAlerts } from "@/server/admin/stats/tech";
 
 export const dynamic = "force-dynamic";
 
+const openAlerts = () => cached("admin:bell:alerts", () => db.adminAlert.findMany({ where: { status: "OPEN" }, orderBy: { createdAt: "desc" }, take: 5, select: { id: true, title: true, severity: true, detail: true } }), 20_000);
+const newRequests = () => cached("admin:bell:requests", () => db.supportRequest.count({ where: { status: "RECEIVED" } }), 20_000);
+
 // Garde de toutes les rubriques : une session d'administration valide est exigée ici (puis la permission de chaque page).
 export default async function ConsoleLayout({ children }: { children: React.ReactNode }) {
-  const admin = await getAdmin();
+  // Les lectures de la pastille de notifications partent en même temps que la vérification de la session (un seul aller-retour
+  // vers la base au lieu de deux) ; elles ne sont utilisées que si le rôle y a droit.
+  const [admin, alertRows, newRequestCount] = await Promise.all([getAdmin(), openAlerts(), newRequests()]);
   if (!admin) redirect(adminLoginPath);
 
   const canTech = can(admin.role, "tech.view");
   const canRequests = can(admin.role, "support.view");
-  if (canTech) await evaluateAlerts();
-  const [alerts, newRequests] = await Promise.all([
-    canTech ? db.adminAlert.findMany({ where: { status: "OPEN" }, orderBy: { createdAt: "desc" }, take: 5, select: { id: true, title: true, severity: true, detail: true } }) : [],
-    canRequests ? db.supportRequest.count({ where: { status: "RECEIVED" } }) : 0,
-  ]);
+  // L'évaluation des règles d'alerte (une dizaine de requêtes) ne retarde plus l'affichage : elle se fait après la réponse.
+  if (canTech) after(() => evaluateAlerts());
+  const alerts = canTech ? alertRows : [];
+  const requestCount = canRequests ? newRequestCount : 0;
 
   const quick = [
     ...(canRequests ? [{ href: "/admin/demandes?open=1", label: "Traiter les demandes ouvertes" }] : []),
@@ -31,7 +37,7 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
     <AdminShell
       admin={{ id: admin.id, name: admin.name, email: admin.email, roleLabel: ROLE_LABELS[admin.role] }}
       sections={sectionsFor(admin.role).map((s) => ({ key: s.key, href: s.href, label: s.label }))}
-      bell={{ alerts, newRequests, canSeeRequests: canRequests, canSeeTech: canTech }}
+      bell={{ alerts, newRequests: requestCount, canSeeRequests: canRequests, canSeeTech: canTech }}
       quick={quick}
     >
       {children}

@@ -22,6 +22,8 @@ export interface AppUser {
   name: string | null;
   avatar?: string | null;
   profileComplete?: boolean;
+  /** Compte créé ou lié avec Google (sert à demander de compléter le parcours). */
+  viaGoogle?: boolean;
 }
 
 /** Métadonnées de fichier (les objets File eux-mêmes ne sont pas sérialisables). */

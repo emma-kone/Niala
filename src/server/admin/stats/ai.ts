@@ -1,4 +1,5 @@
-import { db } from "@/lib/db";
+// Statistiques : client non filtré, les contenus supprimés par les étudiants restent comptés.
+import { dbAll as db } from "@/lib/db";
 import { bucketSql, cached, fillSeries, metric, n, periodKey, ratio, type Metric, type Period } from "@/server/admin/stats/common";
 
 // Supervision de l'IA : lue dans AIUsageLog (une ligne par appel au fournisseur). Aucune clé, aucun prompt, aucune réponse.
@@ -14,6 +15,7 @@ export const AI_FEATURES: { key: string; label: string; group: "generation" | "a
   { key: "index", label: "Indexation des cours", group: "other", prefixes: ["index.embed"] },
   { key: "verify", label: "Vérification des sources", group: "other", prefixes: ["reliability."] },
   { key: "agenda", label: "Import d'emploi du temps", group: "other", prefixes: ["agenda."] },
+  { key: "admin-assistant", label: "Assistant du back-office", group: "other", prefixes: ["admin.assistant"] },
 ];
 
 export const featureOfOp = (op: string) => AI_FEATURES.find((f) => f.prefixes.some((p) => op.startsWith(p))) ?? { key: "other", label: "Autres opérations", group: "other" as const, prefixes: [] };

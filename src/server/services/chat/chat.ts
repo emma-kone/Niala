@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
+import { softDelete } from "@/lib/soft-delete";
 import { ApiHttpError } from "@/lib/api-helpers";
 import { AiCallError, getProvider, type ChatPart, type ChatTurn, type ToolDeclaration } from "@/server/ai/provider";
 import { checkQuota } from "@/server/ai/structured";
@@ -129,12 +130,9 @@ export async function renameConversation(userId: string, id: string, title: stri
 
 export async function deleteConversation(userId: string, id: string) {
   await ownedConversation(userId, id);
-  // Les vérifications référencent les messages sans clé étrangère : elles doivent disparaître avec la conversation.
-  const messages = await db.conversationMessage.findMany({ where: { conversationId: id, userId }, select: { id: true } });
-  await db.$transaction([
-    db.verificationRun.deleteMany({ where: { userId, entityType: "ConversationMessage", entityId: { in: messages.map((m) => m.id) } } }),
-    db.conversation.delete({ where: { id } }),
-  ]);
+  // Suppression douce : la conversation, ses messages et leurs vérifications restent en base pour les statistiques ;
+  // les vérifications ne sont lues qu'à partir des messages, qui deviennent invisibles avec la conversation.
+  await softDelete(db, "Conversation", { id, userId });
   return { ok: true };
 }
 

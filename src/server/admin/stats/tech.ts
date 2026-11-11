@@ -1,8 +1,9 @@
 import { Prisma } from "@prisma/client";
-import { db } from "@/lib/db";
+// Statistiques : client non filtré, les contenus supprimés par les étudiants restent comptés.
+import { dbAll as db } from "@/lib/db";
 import { audit } from "@/server/admin/audit";
 import { getSetting } from "@/server/admin/settings";
-import { bucketSql, cached, fillSeries, n, periodKey, ratio, round1, type Period } from "@/server/admin/stats/common";
+import { bucketSql, cached, clearStatsCache, fillSeries, n, periodKey, ratio, round1, type Period } from "@/server/admin/stats/common";
 
 // Supervision technique : mesurée sur les requêtes réelles de l'application (RequestLog) et sur les journaux d'IA.
 // Aucun contenu de requête ni identifiant d'utilisateur n'est conservé dans ces journaux.
@@ -199,5 +200,6 @@ export async function openAlertCount() {
 
 export async function resolveAlert(actor: { id: string; email: string }, id: string) {
   const alert = await db.adminAlert.update({ where: { id }, data: { status: "RESOLVED", resolvedAt: new Date() } });
+  clearStatsCache(); // la pastille de notifications ne doit plus montrer l'alerte résolue
   await audit(actor, "alert.resolve", { targetType: "alert", targetId: id, detail: { key: alert.key } });
 }

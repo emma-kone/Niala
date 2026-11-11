@@ -43,7 +43,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 /** Envoi avec réponse en flux de lignes JSON : `status` et `delta` pendant la rédaction, puis le résultat final. */
-export async function postStream<T>(url: string, body: unknown, on: { status: (text: string) => void; delta: (text: string) => void }, signal?: AbortSignal): Promise<T> {
+export async function postStream<T>(url: string, body: unknown, on: { status: (text: string) => void; delta: (text: string) => void; /** Autres événements du flux (ex. proposition d'action). */ other?: (event: Record<string, unknown>) => void }, signal?: AbortSignal): Promise<T> {
   const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" }, body: JSON.stringify(body), credentials: "same-origin", signal });
   if (!res.ok || !res.body) {
     const data = (await res.json().catch(() => null)) as { error?: string } | null;
@@ -60,6 +60,7 @@ export async function postStream<T>(url: string, body: unknown, on: { status: (t
     else if (e.type === "delta") on.delta(e.text ?? "");
     else if (e.type === "error") throw new ApiError(e.error ?? "Envoi impossible.", e.status ?? 500);
     else if (e.type === "done") result = e;
+    else on.other?.(e);
   };
   for (;;) {
     const { done, value } = await reader.read();

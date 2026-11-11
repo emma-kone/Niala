@@ -3,6 +3,7 @@ import { z } from "zod";
 import { ApiHttpError } from "@/lib/api-helpers";
 import { hashPassword } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { emailConfigured, sendEmail } from "@/server/email";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Mot de passe oublié. Un lien à usage unique est créé ; seule l'empreinte SHA-256 du jeton est conservée en base.
@@ -26,7 +27,7 @@ export const resetSchema = z.object({
   password: z.string().min(MIN_PASSWORD_LENGTH, `Le mot de passe doit contenir au moins ${MIN_PASSWORD_LENGTH} caractères.`).max(200),
 });
 
-export const emailConfigured = () => !!(process.env.RESEND_API_KEY?.trim() && process.env.EMAIL_FROM?.trim());
+export { emailConfigured } from "@/server/email";
 
 async function createToken(userId: string, ttlMs: number, createdBy: "USER" | "ADMIN") {
   const token = randomBytes(32).toString("base64url");
@@ -41,18 +42,16 @@ async function createToken(userId: string, ttlMs: number, createdBy: "USER" | "A
 export const resetUrl = (origin: string, token: string) => `${origin}/reinitialiser-mot-de-passe#${token}`;
 
 async function sendResetEmail(to: string, link: string) {
-  const res = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      from: process.env.EMAIL_FROM,
-      to,
-      subject: "Niala — réinitialisation de votre mot de passe",
-      text: `Bonjour,\n\nPour choisir un nouveau mot de passe Niala, ouvrez ce lien (valable 30 minutes, utilisable une seule fois) :\n${link}\n\nSi vous n'êtes pas à l'origine de cette demande, ignorez ce message : votre mot de passe actuel reste valable.`,
-    }),
-    signal: AbortSignal.timeout(10_000),
+  await sendEmail({
+    to,
+    subject: "Niala — réinitialisation de votre mot de passe",
+    text: `Bonjour,
+
+Pour choisir un nouveau mot de passe Niala, ouvrez ce lien (valable 30 minutes, utilisable une seule fois) :
+${link}
+
+Si vous n'êtes pas à l'origine de cette demande, ignorez ce message : votre mot de passe actuel reste valable.`,
   });
-  if (!res.ok) throw new Error(`envoi refusé (${res.status})`);
 }
 
 /**

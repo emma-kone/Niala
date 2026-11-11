@@ -12,13 +12,14 @@ datasource db {
 
 model User {
   id           String   @id @default(cuid())
+  deletedAt DateTime? // anonymisation du compte : identité effacée, activité conservée pour les statistiques
   email        String   @unique
   passwordHash String
   googleSub    String?  @unique // identifiant Google lié à ce compte (connexion Google sur un compte inscrit par mot de passe)
   name         String?
   sessionVersion Int    @default(0) // incrémenté pour fermer toutes les sessions ouvertes
   adminRole    String? // SUPER_ADMIN | ADMIN | SUPPORT | ANALYST ; null = compte étudiant ordinaire (voir server/admin/rbac.ts)
-  accountStatus String  @default("ACTIVE") // ACTIVE | SUSPENDED | DISABLED
+  accountStatus String  @default("ACTIVE") // ACTIVE | SUSPENDED | DISABLED | DELETED (compte supprimé et anonymisé)
   statusReason String? // motif interne de la dernière suspension ou désactivation
   statusChangedAt DateTime?
   actorKey     String?   @unique // pseudonyme d'analyse (HMAC) : relie les statistiques d'usage au compte, tant que celui-ci existe
@@ -35,6 +36,7 @@ model User {
   conceptStats    ConceptStat[]
   recommendations StudyRecommendation[]
   aiLogs          AIUsageLog[]
+  pushSubscriptions PushSubscription[]
 
   // ── V2 ──
   folders          Folder[]
@@ -94,6 +96,7 @@ model UserSettings {
   notifyProgress   Boolean @default(true)
   notifyRevision   Boolean @default(true)
   notifyActivities Boolean @default(true)
+  emailAnnouncements Boolean @default(true) // recevoir les annonces de l'équipe par e-mail (désinscription en un clic)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
@@ -122,6 +125,7 @@ model StudentProfile {
 
 model Subject {
   id        String   @id @default(cuid())
+  deletedAt DateTime? // suppression par l'étudiant : masqué dans l'application, conservé pour les statistiques
   userId    String
   name      String
   color     String   @default("#8b5cf6")
@@ -168,6 +172,7 @@ model Chapter {
 
 model Document {
   id            String   @id @default(cuid())
+  deletedAt DateTime? // suppression par l'étudiant : masqué dans l'application, conservé pour les statistiques
   userId        String
   subjectId     String?
   chapterId     String?
@@ -536,6 +541,7 @@ enum LabMode {
 /// NB : @@unique ne protège pas les noms à la racine (parentId NULL en SQL) → contrôlé en transaction par le service.
 model Folder {
   id        String   @id @default(cuid())
+  deletedAt DateTime? // suppression par l'étudiant : masqué dans l'application, conservé pour les statistiques
   userId    String
   subjectId String
   parentId  String?
@@ -634,6 +640,7 @@ model DocumentAnalysis {
 /// Plan hiérarchique du document (CHAPITRE II > I > A > 1 > a …), fidèle à la numérotation d'origine.
 model CourseSection {
   id         String  @id @default(cuid())
+  deletedAt DateTime? // suppression par l'étudiant : masqué dans l'application, conservé pour les statistiques
   userId     String
   analysisId String
   parentId   String?
@@ -661,6 +668,7 @@ model CourseSection {
 /// Identité d'une notion DANS UNE MATIÈRE (jamais fusionnée entre matières).
 model Concept {
   id             String      @id @default(cuid())
+  deletedAt DateTime? // suppression par l'étudiant : masqué dans l'application, conservé pour les statistiques
   userId         String
   subjectId      String
   name           String
@@ -728,6 +736,7 @@ model ConceptRelation {
 /// Un seul système : personnelle, liée à un document, annotation de passage ou fiche de synthèse.
 model Note {
   id        String   @id @default(cuid())
+  deletedAt DateTime? // suppression par l'étudiant : masqué dans l'application, conservé pour les statistiques
   userId    String
   subjectId String
   kind      NoteKind @default(PERSONAL)
@@ -748,6 +757,7 @@ model Note {
 /// Référence N:N d'une note vers des documents ; porte l'ancrage précis d'une annotation.
 model NoteLink {
   id         String  @id @default(cuid())
+  deletedAt DateTime? // suppression par l'étudiant : masqué dans l'application, conservé pour les statistiques
   userId     String
   noteId     String
   documentId String
@@ -769,6 +779,7 @@ model NoteLink {
 
 model MindMap {
   id         String   @id @default(cuid())
+  deletedAt DateTime? // suppression par l'étudiant : masqué dans l'application, conservé pour les statistiques
   userId     String
   subjectId  String
   analysisId String?
@@ -851,6 +862,7 @@ model MindMapRevision {
 /// Exercice indépendant du document source (référence conservée, SetNull si supprimé).
 model Exercise {
   id          String         @id @default(cuid())
+  deletedAt DateTime? // suppression par l'étudiant : masqué dans l'application, conservé pour les statistiques
   userId      String
   subjectId   String? // null : exercice libre ou importé, sans matière enregistrée
   documentId  String?
@@ -1051,6 +1063,7 @@ model LearningRecommendation {
 
 model LabWorkspace {
   id         String   @id @default(cuid())
+  deletedAt DateTime? // suppression par l'étudiant : masqué dans l'application, conservé pour les statistiques
   userId     String
   subjectId  String?
   exerciseId String?
@@ -1103,6 +1116,7 @@ enum ChatRole {
 
 model Conversation {
   id         String            @id @default(cuid())
+  deletedAt DateTime? // suppression par l'étudiant : masqué dans l'application, conservé pour les statistiques
   userId     String
   scope      ConversationScope
   documentId String?
@@ -1223,6 +1237,7 @@ model ClaimEvidence {
 /// Cours ou événement de l'emploi du temps. Date « AAAA-MM-JJ » et minutes depuis minuit : heure locale de l'établissement.
 model ScheduleEvent {
   id           String    @id @default(cuid())
+  deletedAt DateTime? // suppression par l'étudiant : masqué dans l'application, conservé pour les statistiques
   userId       String
   subjectId    String?
   importId     String?
@@ -1279,6 +1294,7 @@ model ScheduleOverride {
 /// Import d'un emploi du temps : fichier d'origine et brouillon soumis à la validation de l'étudiant.
 model ScheduleImport {
   id          String    @id @default(cuid())
+  deletedAt DateTime? // suppression par l'étudiant : masqué dans l'application, conservé pour les statistiques
   userId      String
   fileName    String
   mime        String
@@ -1303,6 +1319,7 @@ model ScheduleImport {
 /// Pause d'un emploi du temps : extraite d'un document ou saisie par l'étudiant, jamais imposée.
 model ScheduleBreak {
   id           String          @id @default(cuid())
+  deletedAt DateTime? // suppression par l'étudiant : masqué dans l'application, conservé pour les statistiques
   userId       String
   importId     String?
   label        String          @default("Pause")
@@ -1319,6 +1336,7 @@ model ScheduleBreak {
 /// Échéance de l'agenda académique personnel (devoir, TD à rendre, projet, révision…).
 model AcademicTask {
   id                 String    @id @default(cuid())
+  deletedAt DateTime? // suppression par l'étudiant : masqué dans l'application, conservé pour les statistiques
   userId             String
   subjectId          String?
   documentId         String?
@@ -1354,6 +1372,7 @@ model AcademicTask {
 /// Séance de travail acceptée par l'étudiant pour une échéance.
 model StudySession {
   id           String       @id @default(cuid())
+  deletedAt DateTime? // suppression par l'étudiant : masqué dans l'application, conservé pour les statistiques
   userId       String
   taskId       String
   date         String
@@ -1413,7 +1432,11 @@ model RequestLog {
 model SupportRequest {
   id            String    @id @default(cuid())
   reference     String    @unique // NL-AAMM-NNNN, communiquée à l'utilisateur
-  userId        String
+  deletedAt     DateTime? // supprimée par l'équipe : masquée partout, conservée pour les statistiques
+  userId        String? // null = demande d'un visiteur sans compte (assistance depuis la page de connexion)
+  guestEmail    String? // visiteur sans compte : adresse où envoyer les réponses
+  guestName     String?
+  guestNonce    String? // visiteur sans compte : sel du lien de suivi (le changer invalide les anciens liens)
   type          String // IMPROVEMENT | FEATURE | BUG | EXERCISE_DIFFICULTY | AI_ISSUE | ASSISTANCE | OTHER
   subject       String
   description   String
@@ -1429,7 +1452,7 @@ model SupportRequest {
   firstReplyAt  DateTime?
   closedAt      DateTime?
 
-  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user        User?            @relation(fields: [userId], references: [id], onDelete: Cascade)
   roadmapItem RoadmapItem?     @relation(fields: [roadmapItemId], references: [id], onDelete: SetNull)
   messages    SupportMessage[]
 
@@ -1514,10 +1537,30 @@ model Announcement {
   body           String
   audience       Json // { categories?: string[], levels?: string[], institutions?: string[] } ; objet vide = tous les comptes actifs
   recipientCount Int
+  channels       Json? // { email: boolean, push: boolean } : canaux en plus de la notification dans Niala
+  emailSent      Int      @default(0)
+  pushSent       Int      @default(0)
+  deletedAt      DateTime? // supprimée par l'équipe : retirée des notifications des étudiants
   createdById    String?
   createdAt      DateTime @default(now())
 
   @@index([createdAt])
+}
+
+/// Abonnement aux notifications push d'un appareil (navigateur, téléphone) : accepté par l'étudiant.
+model PushSubscription {
+  id         String   @id @default(cuid())
+  userId     String
+  endpoint   String   @unique
+  p256dh     String
+  auth       String
+  userAgent  String?
+  createdAt  DateTime @default(now())
+  lastUsedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 /// Notification affichée à l'étudiant dans Niala (annonce, réponse à une demande, changement de statut).

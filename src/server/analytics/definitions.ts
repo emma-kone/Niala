@@ -141,6 +141,16 @@ export const REQUEST_STATUSES = {
 export type RequestStatus = keyof typeof REQUEST_STATUSES;
 export const CLOSED_STATUSES: RequestStatus[] = ["RESOLVED", "REJECTED"];
 
+/** À quoi sert chaque statut : affiché à l'équipe dans le back-office. L'étudiant est notifié à chaque changement. */
+export const REQUEST_STATUS_HELP: Record<RequestStatus, string> = {
+  RECEIVED: "Nouvelle demande, pas encore lue par l'équipe (statut de départ).",
+  PENDING_REVIEW: "Lue, à examiner ; l'étudiant a aussi pu compléter sa demande.",
+  IN_PROGRESS: "Prise en charge : quelqu'un s'en occupe (posé automatiquement à la première réponse).",
+  NEEDS_INFO: "En attente de l'étudiant : il doit préciser quelque chose. Sa réponse remet la demande « en attente d'examen ».",
+  RESOLVED: "Traitée : problème réglé ou suggestion prise en compte. Clôture la demande ; l'étudiant ne peut plus y répondre.",
+  REJECTED: "Non retenue (hors sujet, doublon, impossible). Clôture la demande ; l'étudiant ne peut plus y répondre.",
+};
+
 export const PRIORITIES = { LOW: "Basse", NORMAL: "Normale", HIGH: "Haute", URGENT: "Urgente" } as const;
 export type Priority = keyof typeof PRIORITIES;
 
@@ -153,5 +163,5 @@ export const ROADMAP_STATUSES = {
 } as const;
 export type RoadmapStatus = keyof typeof ROADMAP_STATUSES;
 
-export const ACCOUNT_STATUSES = { ACTIVE: "Actif", SUSPENDED: "Suspendu", DISABLED: "Désactivé" } as const;
+export const ACCOUNT_STATUSES = { ACTIVE: "Actif", SUSPENDED: "Suspendu", DISABLED: "Désactivé", DELETED: "Supprimé (anonymisé)" } as const;
 export type AccountStatus = keyof typeof ACCOUNT_STATUSES;

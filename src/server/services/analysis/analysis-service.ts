@@ -1,5 +1,5 @@
 import type { Origin, Prisma } from "@prisma/client";
-import { db } from "@/lib/db";
+import { db, type DbTx } from "@/lib/db";
 import { ApiHttpError } from "@/lib/api-helpers";
 import { stitchChunks, type PageText } from "@/server/domain/chunking";
 import { parseStructure, sectionTexts } from "@/server/domain/structure-parser";
@@ -31,7 +31,7 @@ export function pagesBetween(pages: PageText[], from: number | null, to: number 
   return pages.filter((p) => p.page != null && p.page >= from && p.page <= (to ?? from));
 }
 
-type Tx = Prisma.TransactionClient;
+type Tx = DbTx;
 
 /** Persiste notions, sources et relations d'une extraction de section. */
 export async function saveExtraction(tx: Tx, userId: string, subjectId: string, analysisId: string, sectionId: string, ex: SectionExtraction) {

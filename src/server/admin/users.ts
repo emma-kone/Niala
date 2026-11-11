@@ -1,13 +1,13 @@
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { ApiHttpError } from "@/lib/api-helpers";
-import { db } from "@/lib/db";
+import { db, dbAll } from "@/lib/db";
 import { audit } from "@/server/admin/audit";
 import { ForbiddenError, type AdminUser } from "@/server/admin/session";
 import { can } from "@/server/admin/rbac";
 import { activeTypesSql, ensureActorKeys, n, ratio, round1, SESSION_GAP_SQL } from "@/server/admin/stats/common";
 import { SESSION_GAP_MIN, SUCCESS_RATIO, categoryLabel } from "@/server/analytics/definitions";
-import { purgeAccount } from "@/server/services/profile";
+import { DELETED_STATUS, purgeAccount } from "@/server/services/profile";
 import { forgetCategory } from "@/server/analytics/track";
 
 // Gestion des utilisateurs : liste filtrable, fiche détaillée (sans contenu de travail ni conversations) et actions auditées.
@@ -19,7 +19,7 @@ export const listQuerySchema = z.object({
   category: z.enum(["ESATIC", "OTHER_SCHOOL", "TESTER", "NONE"]).optional(),
   institution: z.string().trim().max(120).optional(),
   field: z.string().trim().max(120).optional(),
-  status: z.enum(["ACTIVE", "SUSPENDED", "DISABLED"]).optional(),
+  status: z.enum(["ACTIVE", "SUSPENDED", "DISABLED", "DELETED"]).optional(),
   activity: z.enum(["active7", "active30", "inactive30", "never"]).optional(),
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -71,7 +71,9 @@ export async function listUsers(admin: AdminUser, raw: unknown) {
   if (q.category) where.push(q.category === "NONE" ? Prisma.sql`p.category IS NULL` : Prisma.sql`p.category = ${q.category}`);
   if (q.institution) where.push(Prisma.sql`p.institution = ${q.institution}`);
   if (q.field) where.push(Prisma.sql`p.field = ${q.field}`);
+  // Les comptes supprimés (anonymisés) n'apparaissent que si on les demande explicitement.
   if (q.status) where.push(Prisma.sql`u."accountStatus" = ${q.status}`);
+  else where.push(Prisma.sql`u."accountStatus" <> ${DELETED_STATUS}`);
   if (q.from) where.push(Prisma.sql`u."createdAt" >= ${new Date(`${q.from}T00:00:00.000Z`)}`);
   if (q.to) where.push(Prisma.sql`u."createdAt" < ${new Date(new Date(`${q.to}T00:00:00.000Z`).getTime() + 86_400_000)}`);
   const day = 86_400_000;
@@ -137,7 +139,7 @@ export async function getUserDetail(admin: AdminUser, id: string) {
     status: user.accountStatus,
     statusReason: user.statusReason,
     statusChangedAt: user.statusChangedAt,
-    signIn: user.passwordHash.startsWith("scrypt$") ? (user.googleSub ? "Mot de passe + Google" : "Mot de passe") : "Google",
+    signIn: user.accountStatus === DELETED_STATUS ? "Impossible (compte supprimé)" : user.passwordHash.startsWith("scrypt$") ? (user.googleSub ? "Mot de passe + Google" : "Mot de passe") : "Google",
   };
 
   const requests = await db.supportRequest.findMany({ where: { userId: id }, orderBy: { createdAt: "desc" }, take: 10, select: { id: true, reference: true, subject: true, status: true, type: true, createdAt: true } });
@@ -174,8 +176,9 @@ export async function getUserDetail(admin: AdminUser, id: string) {
       FROM "Exercise" e LEFT JOIN "Subject" s ON s.id = e."subjectId" LEFT JOIN "ExerciseAttempt" a ON a."exerciseId" = e.id
       WHERE e."userId" = ${id} GROUP BY 1 ORDER BY 2 DESC LIMIT 20`,
     db.analyticsEvent.count({ where: { actorKey, type: "course.view" } }),
-    db.document.count({ where: { userId: id } }),
-    db.mindMap.count({ where: { userId: id } }),
+    // Comptes historiques : les contenus supprimés par l'étudiant restent comptés.
+    dbAll.document.count({ where: { userId: id } }),
+    dbAll.mindMap.count({ where: { userId: id } }),
     db.$queryRaw<{ kind: string; c: bigint }[]>`SELECT kind::text AS kind, count(*) AS c FROM "LabWorkspace" WHERE "userId" = ${id} GROUP BY 1`,
     db.$queryRaw<{ kind: string; c: bigint }[]>`SELECT w.kind::text AS kind, count(*) AS c FROM "LabRun" r JOIN "LabWorkspace" w ON w.id = r."workspaceId" WHERE r."userId" = ${id} GROUP BY 1`,
     db.$queryRaw<{ k: string; c: bigint }[]>`SELECT category::text AS k, count(*) AS c FROM "ErrorDiagnosis" WHERE "userId" = ${id} GROUP BY 1 ORDER BY 2 DESC`,
@@ -190,7 +193,7 @@ export async function getUserDetail(admin: AdminUser, id: string) {
       JOIN "QuestionConcept" qc ON qc."questionId" = q.id JOIN "Concept" c ON c.id = qc."conceptId"
       WHERE an."userId" = ${id} AND an.verdict IS NOT NULL GROUP BY 1 HAVING count(*) >= 3 AND count(*) FILTER (WHERE an.verdict = 'incorrect') * 2 >= count(*) ORDER BY 2 DESC LIMIT 6`,
   ]);
-  const results = await db.exerciseAttempt.findMany({ where: { userId: id, status: { in: ["GRADED", "SUBMITTED"] }, maxScore: { gt: 0 } }, orderBy: { finishedAt: "desc" }, take: 20, select: { finishedAt: true, score: true, maxScore: true } });
+  const results = await dbAll.exerciseAttempt.findMany({ where: { userId: id, status: { in: ["GRADED", "SUBMITTED"] }, maxScore: { gt: 0 } }, orderBy: { finishedAt: "desc" }, take: 20, select: { finishedAt: true, score: true, maxScore: true } });
   const a0 = attempts[0];
 
   return {
@@ -227,6 +230,7 @@ async function targetUser(admin: AdminUser, id: string) {
   const user = await db.user.findUnique({ where: { id }, include: { profile: true } });
   if (!user) throw new ApiHttpError("Utilisateur introuvable.", 404);
   if (user.adminRole) throw new ForbiddenError("Les comptes d'administration se gèrent depuis les paramètres d'administration.");
+  if (user.accountStatus === DELETED_STATUS) throw new ApiHttpError("Ce compte a été supprimé et anonymisé : aucune action n'est plus possible.", 409);
   return user;
 }
 
@@ -276,7 +280,10 @@ export async function updateAdminInfo(admin: AdminUser, id: string, raw: unknown
 
 export const deleteSchema = z.object({ confirmEmail: z.string().trim().max(320) });
 
-/** Suppression définitive : l'administrateur doit saisir l'adresse du compte. Les statistiques agrégées sont conservées (pseudonymisées). */
+/**
+ * Suppression d'un compte par l'administration : l'administrateur saisit l'adresse du compte, puis le compte est anonymisé
+ * comme lors d'une suppression par l'étudiant (identité effacée, activité conservée pour les statistiques).
+ */
 export async function deleteUserAccount(admin: AdminUser, id: string, raw: unknown) {
   const { confirmEmail } = deleteSchema.parse(raw);
   const user = await targetUser(admin, id);

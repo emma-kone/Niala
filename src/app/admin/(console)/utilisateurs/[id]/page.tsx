@@ -47,7 +47,9 @@ export default async function UserPage({ params }: { params: Promise<{ id: strin
           </dl>
         </Panel>
         <Panel title="Actions administratives">
-          {can(admin.role, "users.manage") || can(admin.role, "users.delete") ? (
+          {i.status === "DELETED" ? (
+            <p className="text-sm text-muted-foreground">Ce compte a été supprimé : son identité est effacée et plus aucune action n&apos;est possible. Son activité reste comptée, de façon anonyme, dans les statistiques.</p>
+          ) : can(admin.role, "users.manage") || can(admin.role, "users.delete") ? (
             <UserActions id={i.id} email={i.email} name={i.name} status={i.status} category={i.category} institution={i.institution} field={i.field} canManage={can(admin.role, "users.manage")} canDelete={can(admin.role, "users.delete")} />
           ) : <p className="text-sm text-muted-foreground">Votre rôle ne permet pas de modifier ce compte.</p>}
           <p className="mt-3 text-xs text-muted-foreground">Chaque action demande une confirmation et est enregistrée dans le journal d'audit.</p>

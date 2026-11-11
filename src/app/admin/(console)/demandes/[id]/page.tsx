@@ -49,7 +49,7 @@ export default async function RequestPage({ params }: { params: Promise<{ id: st
             <ol className="space-y-3">
               {r.messages.map((m) => (
                 <li key={m.id} className={`rounded-xl border p-3 text-sm ${m.internal ? "border-amber-500/50 bg-amber-500/10" : m.authorRole === "ADMIN" ? "border-[var(--niala-accent)]/30 bg-[var(--niala-accent)]/8" : "bg-muted/40"}`}>
-                  <div className="mb-1 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"><span className="font-medium text-foreground">{m.internal ? "Note interne" : m.authorRole === "ADMIN" ? "Équipe Niala" : (r.user.name ?? "Étudiant")}{m.internal && m.authorName ? ` — ${m.authorName}` : ""}</span><time dateTime={m.createdAt.toISOString()}>{fmtDateTime(m.createdAt)}</time></div>
+                  <div className="mb-1 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"><span className="font-medium text-foreground">{m.internal ? "Note interne" : m.authorRole === "ADMIN" ? "Équipe Niala" : (r.user?.name ?? r.guestName ?? (r.user ? "Étudiant" : "Visiteur"))}{m.internal && m.authorName ? ` — ${m.authorName}` : ""}</span><time dateTime={m.createdAt.toISOString()}>{fmtDateTime(m.createdAt)}</time></div>
                   <p className="whitespace-pre-wrap">{m.body}</p>
                 </li>
               ))}
@@ -58,17 +58,25 @@ export default async function RequestPage({ params }: { params: Promise<{ id: st
           </Panel>
 
           {manage ? (
-            <RequestPanel id={r.id} status={r.status} priority={r.priority} assigneeId={r.assigneeId} admins={admins.map((a) => ({ id: a.id, label: a.name ?? a.email }))} roadmap={roadmap.map((i) => ({ id: i.id, title: i.title }))} currentRoadmap={r.roadmapItem?.id ?? null} similar={r.similar.map((s) => ({ id: s.id, reference: s.reference, subject: s.subject, score: s.score, grouped: !!s.roadmapItemId }))} defaultTitle={r.subject} />
+            <RequestPanel id={r.id} status={r.status} priority={r.priority} assigneeId={r.assigneeId} admins={admins.map((a) => ({ id: a.id, label: a.name ?? a.email }))} roadmap={roadmap.map((i) => ({ id: i.id, title: i.title }))} currentRoadmap={r.roadmapItem?.id ?? null} similar={r.similar.map((s) => ({ id: s.id, reference: s.reference, subject: s.subject, score: s.score, grouped: !!s.roadmapItemId }))} defaultTitle={r.subject} guestEmail={r.user ? null : r.guestEmail} />
           ) : <Notice><p>Votre rôle permet de consulter cette demande mais pas d'y répondre ni de la modifier.</p></Notice>}
         </div>
 
         <aside className="space-y-4">
-          <Panel title="Étudiant">
-            <p className="text-sm font-medium">{r.user.name ?? "—"}</p>
-            <p className="break-all text-sm text-muted-foreground">{r.user.email}</p>
-            <p className="mt-2 text-xs text-muted-foreground">{categoryLabel(r.user.profile?.category)}{r.user.profile?.institution ? ` · ${r.user.profile.institution}` : ""}{r.user.profile?.field ? ` · ${r.user.profile.field}` : ""}</p>
-            {canSeeUser && <Link href={`/admin/utilisateurs/${r.user.id}`} className="mt-3 inline-block text-sm text-[var(--niala-accent)] underline">Ouvrir la fiche utilisateur</Link>}
-          </Panel>
+          {r.user ? (
+            <Panel title="Étudiant">
+              <p className="text-sm font-medium">{r.user.name ?? "—"}</p>
+              <p className="break-all text-sm text-muted-foreground">{r.user.email}</p>
+              <p className="mt-2 text-xs text-muted-foreground">{categoryLabel(r.user.profile?.category)}{r.user.profile?.institution ? ` · ${r.user.profile.institution}` : ""}{r.user.profile?.field ? ` · ${r.user.profile.field}` : ""}</p>
+              {canSeeUser && <Link href={`/admin/utilisateurs/${r.user.id}`} className="mt-3 inline-block text-sm text-[var(--niala-accent)] underline">Ouvrir la fiche utilisateur</Link>}
+            </Panel>
+          ) : (
+            <Panel title="Visiteur sans compte">
+              <p className="text-sm font-medium">{r.guestName ?? "Nom non indiqué"}</p>
+              <p className="break-all text-sm text-muted-foreground">{r.guestEmail}</p>
+              <p className="mt-2 text-xs text-muted-foreground">Demande envoyée depuis la page de connexion. Les réponses lui sont envoyées par e-mail avec un lien personnel pour suivre l&apos;échange et répondre.</p>
+            </Panel>
+          )}
           <Panel title="Suivi">
             <dl className="space-y-2 text-sm">
               <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Responsable</dt><dd>{r.assignee ? (r.assignee.name ?? r.assignee.email) : "Non assignée"}</dd></div>

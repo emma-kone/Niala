@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { Prisma, type MapKind, type Origin, type RelationType } from "@prisma/client";
-import { db } from "@/lib/db";
+import { db, type DbTx } from "@/lib/db";
+import { softDelete } from "@/lib/soft-delete";
 import { ApiHttpError } from "@/lib/api-helpers";
 import { requireSubject } from "@/server/services/folders";
 import { layoutLayers, layoutTree } from "@/server/domain/map-layout";
@@ -33,7 +34,7 @@ async function ownedMap(userId: string, id: string) {
   return map;
 }
 
-async function readState(tx: Prisma.TransactionClient | typeof db, mapId: string): Promise<{ nodes: NodeDto[]; edges: EdgeDto[] }> {
+async function readState(tx: DbTx | typeof db, mapId: string): Promise<{ nodes: NodeDto[]; edges: EdgeDto[] }> {
   const [nodes, edges] = await Promise.all([tx.mindMapNode.findMany({ where: { mapId } }), tx.mindMapEdge.findMany({ where: { mapId } })]);
   return {
     nodes: nodes.map((n) => ({ id: n.id, label: n.label, x: n.x, y: n.y, origin: n.origin, conceptId: n.conceptId, sectionId: n.sectionId, data: (n.data as NodeDto["data"]) ?? null })),
@@ -41,7 +42,7 @@ async function readState(tx: Prisma.TransactionClient | typeof db, mapId: string
   };
 }
 
-async function snapshot(tx: Prisma.TransactionClient, userId: string, map: { id: string; title: string }) {
+async function snapshot(tx: DbTx, userId: string, map: { id: string; title: string }) {
   const state = await readState(tx, map.id);
   const last = await tx.mindMapRevision.findFirst({ where: { mapId: map.id }, orderBy: { number: "desc" } });
   const content: Snapshot = { title: map.title, ...state };
@@ -280,8 +281,8 @@ export async function renameMap(userId: string, id: string, title: string) {
 }
 
 export async function deleteMap(userId: string, id: string) {
-  const res = await db.mindMap.deleteMany({ where: { id, userId } });
-  if (res.count === 0) throw new ApiHttpError("Carte introuvable.", 404);
+  const removed = await softDelete(db, "MindMap", { id, userId });
+  if (!removed.length) throw new ApiHttpError("Carte introuvable.", 404);
   return { ok: true };
 }
 

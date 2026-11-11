@@ -2,7 +2,7 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { ApiHttpError } from "@/lib/api-helpers";
 import { hashPassword, verifyPassword } from "@/lib/auth";
-import { db } from "@/lib/db";
+import { db, dbAll } from "@/lib/db";
 import { avatarSchema, profileColumns, profileInputSchema } from "@/server/domain/profile";
 import { getStorage, withPreviewKeys } from "@/server/storage";
 import { MIN_PASSWORD_LENGTH } from "./accounts";
@@ -91,26 +91,47 @@ export async function revokeSessions(userId: string) {
 
 export const deleteAccountSchema = z.object({ password: z.string().max(200).optional(), confirmEmail: z.string().trim().max(320).optional() });
 
-/** Suppression en base puis dans le stockage : commune à la suppression par l'étudiant et à celle décidée par l'administration. */
+/** Statut d'un compte supprimé : identité effacée, activité conservée de façon anonyme. */
+export const DELETED_STATUS = "DELETED";
+/** Adresse de remplacement d'un compte anonymisé (domaine réservé, jamais joignable ; libère l'adresse d'origine). */
+export const anonymousEmail = (userId: string) => `compte-supprime-${userId}@anonyme.niala.invalid`;
+
+/**
+ * Suppression d'un compte, commune à l'étudiant et à l'administration : le compte est ANONYMISÉ.
+ *  - Effacé : nom, adresse e-mail (remplacée), mot de passe, liaison Google, photo de profil, rôle d'administration,
+ *    notifications, liens de réinitialisation ; toutes les sessions sont fermées et la connexion devient impossible.
+ *  - Retiré du stockage : fichiers d'origine (cours, emplois du temps importés, pièces jointes des demandes).
+ *  - Conservé pour les statistiques : toute l'activité (matières, documents et analyses, exercices et résultats, notions,
+ *    cartes, notes, conversations, agenda, labos, demandes) et le profil scolaire (catégorie, établissement, filière, niveau),
+ *    rattachés à un compte que plus rien ne relie à la personne. L'adresse d'origine peut servir à une nouvelle inscription.
+ */
 export async function purgeAccount(userId: string) {
-  const [versions, imports] = await Promise.all([
-    db.documentVersion.findMany({ where: { userId, storageKey: { not: null } }, select: { storageKey: true } }),
-    db.scheduleImport.findMany({ where: { userId }, select: { storageKey: true } }),
+  // Client non filtré : les fichiers des contenus déjà supprimés par l'étudiant sont retirés eux aussi.
+  const [versions, imports, requests] = await Promise.all([
+    dbAll.documentVersion.findMany({ where: { userId, storageKey: { not: null } }, select: { storageKey: true } }),
+    dbAll.scheduleImport.findMany({ where: { userId }, select: { storageKey: true } }),
+    dbAll.supportRequest.findMany({ where: { userId }, select: { id: true, attachments: true } }),
   ]);
-  await db.$transaction([
-    // Tables historiques sans clé étrangère vers le compte : la suppression en cascade ne les atteint pas.
-    db.programRun.deleteMany({ where: { userId } }),
-    db.sqlQueryLog.deleteMany({ where: { userId } }),
-    db.chatMessage.deleteMany({ where: { userId } }),
-    db.user.delete({ where: { id: userId } }),
-  ]);
-  const keys = [...withPreviewKeys(versions.map((v) => v.storageKey!)), ...imports.map((i) => i.storageKey)];
+  const withFiles = requests.map((r) => ({ id: r.id, files: (r.attachments as { key?: string; name: string; mime: string; size: number }[] | null) ?? [] })).filter((r) => r.files.some((f) => f.key));
+  const now = new Date();
+  await db.$transaction(async (tx) => {
+    await tx.user.update({
+      where: { id: userId },
+      data: { email: anonymousEmail(userId), name: null, passwordHash: "deleted$", googleSub: null, adminRole: null, accountStatus: DELETED_STATUS, statusReason: "Compte supprimé : identité effacée, activité conservée de façon anonyme pour les statistiques.", statusChangedAt: now, deletedAt: now, sessionVersion: { increment: 1 } },
+    });
+    await tx.studentProfile.updateMany({ where: { userId }, data: { avatar: null } });
+    await tx.userNotification.deleteMany({ where: { userId } });
+    await tx.passwordResetToken.deleteMany({ where: { userId } });
+    // Pièces jointes : la description (nom, type, taille) reste, la référence au fichier disparaît avec lui.
+    for (const r of withFiles) await tx.supportRequest.update({ where: { id: r.id }, data: { attachments: r.files.map(({ key: _key, ...meta }) => (void _key, { ...meta, removed: true })) as unknown as Prisma.InputJsonValue } });
+  });
+  const keys = [...withPreviewKeys(versions.map((v) => v.storageKey!)), ...imports.map((i) => i.storageKey), ...withFiles.flatMap((r) => r.files.map((f) => f.key).filter((k): k is string => !!k))];
   await getStorage().remove(keys).catch((e) => console.error("[account] fichiers non retirés du stockage :", e instanceof Error ? e.message : e));
 }
 
 /**
- * Suppression définitive : un compte à mot de passe confirme ce mot de passe, un compte Google recopie son adresse.
- * Les fichiers originaux sont retirés du stockage après la suppression en base, qui reste l'opération décisive.
+ * Suppression du compte par l'étudiant : un compte à mot de passe confirme ce mot de passe, un compte Google recopie son
+ * adresse. Le compte est anonymisé (voir purgeAccount).
  */
 export async function deleteAccount(userId: string, input: z.infer<typeof deleteAccountSchema>) {
   const user = await db.user.findUnique({ where: { id: userId } });

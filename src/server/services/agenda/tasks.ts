@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { ApiHttpError } from "@/lib/api-helpers";
 import { db } from "@/lib/db";
+import { softDelete } from "@/lib/soft-delete";
 import { DEFAULT_PREFS, PRIORITIES, TASK_STATUSES, TASK_TYPES, effectiveStatus, isOpen, planStudySessions, type BusySlot, type PlannerPrefs, type StoredStatus } from "@/server/domain/academic";
 import { addDays, breakOverlap, findConflicts, isDate, overlaps, validateTimes, weekday } from "@/server/domain/schedule";
 import { loadBreaks, occurrencesBetween, ownedSchedule } from "./agenda";
@@ -33,7 +34,7 @@ const taskFields = {
 export const createTaskSchema = z.object(taskFields);
 export const patchTaskSchema = z.object(taskFields).partial();
 
-const taskInclude = { subject: { select: { id: true, name: true, color: true, icon: true } }, sessions: { orderBy: [{ date: "asc" as const }, { startMinutes: "asc" as const }] } };
+const taskInclude = { subject: { select: { id: true, name: true, color: true, icon: true } }, sessions: { where: { deletedAt: null }, orderBy: [{ date: "asc" as const }, { startMinutes: "asc" as const }] } };
 
 async function assertRelations(userId: string, input: { subjectId?: string | null; documentId?: string | null; exerciseId?: string | null; parentId?: string | null }) {
   const [subject, document, exercise, parent] = await Promise.all([
@@ -94,7 +95,7 @@ export async function updateTask(userId: string, id: string, patch: z.infer<type
 
 export async function deleteTask(userId: string, id: string) {
   await ownedTask(userId, id);
-  await db.academicTask.delete({ where: { id } });
+  await softDelete(db, "AcademicTask", { id, userId });
   return { ok: true };
 }
 
@@ -150,13 +151,16 @@ export async function acceptPlan(userId: string, id: string, input: z.infer<type
       if (pause) throw new ApiHttpError(`Une séance du ${s.date} empiète sur « ${pause.label} ».`, 409, { confirmable: true });
     }
   }
-  await db.$transaction([db.studySession.deleteMany({ where: { taskId: id, userId, done: false } }), db.studySession.createMany({ data: input.sessions.map((s) => ({ ...s, userId, taskId: id })) })]);
+  await db.$transaction(async (tx) => {
+    await softDelete(tx, "StudySession", { taskId: id, userId, done: false });
+    await tx.studySession.createMany({ data: input.sessions.map((s) => ({ ...s, userId, taskId: id })) });
+  });
   return { ok: true, count: input.sessions.length };
 }
 
 export async function deleteSession(userId: string, id: string) {
-  const { count } = await db.studySession.deleteMany({ where: { id, userId } });
-  if (!count) throw new ApiHttpError("Séance introuvable.", 404);
+  const removed = await softDelete(db, "StudySession", { id, userId });
+  if (!removed.length) throw new ApiHttpError("Séance introuvable.", 404);
   return { ok: true };
 }
 
@@ -197,7 +201,7 @@ export async function updateBreak(userId: string, id: string, patch: z.infer<typ
 }
 
 export async function deleteBreak(userId: string, id: string) {
-  const { count } = await db.scheduleBreak.deleteMany({ where: { id, userId } });
-  if (!count) throw new ApiHttpError("Pause introuvable.", 404);
+  const removed = await softDelete(db, "ScheduleBreak", { id, userId });
+  if (!removed.length) throw new ApiHttpError("Pause introuvable.", 404);
   return { ok: true };
 }

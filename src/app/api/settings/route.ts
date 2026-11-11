@@ -26,6 +26,7 @@ const patchSchema = z.object({
   notifyProgress: z.boolean().optional(),
   notifyRevision: z.boolean().optional(),
   notifyActivities: z.boolean().optional(),
+  emailAnnouncements: z.boolean().optional(),
 });
 
 export async function PUT(req: Request) {

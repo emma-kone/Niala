@@ -24,13 +24,17 @@ export const AUDIT_ACTIONS: Record<string, string> = {
   "request.update": "Modification d'une demande",
   "request.reply": "Réponse à un utilisateur",
   "request.note": "Note interne ajoutée",
+  "request.delete": "Suppression d'une demande",
+  "request.guest_link": "Nouveau lien de suivi envoyé à un visiteur",
   "request.group": "Regroupement de demandes",
   "roadmap.update": "Modification de la feuille de route",
   "setting.update": "Modification d'un paramètre",
   "announcement.publish": "Publication d'une annonce",
+  "announcement.delete": "Suppression d'une annonce",
   "report.export": "Export d'un rapport",
   "data.backfill": "Reconstitution de l'historique",
   "alert.resolve": "Alerte résolue",
+  "assistant.action": "Action confirmée depuis l'assistant IA",
 };
 
 export interface AuditActor {

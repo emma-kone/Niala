@@ -67,8 +67,8 @@ export async function GET(req: Request) {
     await setSessionCookie(user.id);
     const created = (user as { created?: boolean }).created === true;
     track(user.id, created ? "account.register" : "auth.login", { props: { method: "google" } });
-    // Un compte tout juste créé par Google n'a pas encore de parcours : on l'amène directement à son profil.
-    return NextResponse.redirect(`${origin}${(user as { created?: boolean }).created ? "/profil" : "/"}`);
+    // Dans tous les cas, on arrive sur le tableau de bord : un compte Google sans parcours y voit une fenêtre l'invitant à le compléter.
+    return NextResponse.redirect(`${origin}/`);
   } catch (e) {
     if (e instanceof GoogleSignInError && e.reason === "account_exists" && profile) {
       // Compte à mot de passe : l'étudiant confirme son mot de passe Niala pour lier Google à ce compte.

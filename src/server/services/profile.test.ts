@@ -142,16 +142,26 @@ describe("compte", () => {
     await auth.setSessionCookie(u.id);
     expect((await auth.getCurrentUser())?.id).toBe(u.id);
   });
-  it("supprime le compte et toutes ses données après confirmation", async () => {
+  it("anonymise le compte après confirmation : identité effacée, activité conservée pour les statistiques", async () => {
     const u = await signup("bye@x.fr", { category: "TESTER" });
     await db.subject.create({ data: { userId: u.id, name: "Algo" } });
     await db.programRun.create({ data: { userId: u.id, language: "python", code: "1" } });
+    await db.studentProfile.update({ where: { userId: u.id }, data: { avatar: "data:image/png;base64,AAAA" } });
+    await db.userNotification.create({ data: { userId: u.id, kind: "ANNOUNCEMENT", title: "Bienvenue" } });
     await expect(profile.deleteAccount(u.id, { password: "faux" })).rejects.toMatchObject({ status: 403 });
     await profile.deleteAccount(u.id, { password: PASSWORD });
-    expect(await db.user.count({ where: { id: u.id } })).toBe(0);
-    expect(await db.subject.count({ where: { userId: u.id } })).toBe(0);
-    expect(await db.programRun.count({ where: { userId: u.id } })).toBe(0);
-    expect(await db.studentProfile.count({ where: { userId: u.id } })).toBe(0);
+    const row = await db.user.findUniqueOrThrow({ where: { id: u.id } });
+    expect(row).toMatchObject({ email: profile.anonymousEmail(u.id), name: null, googleSub: null, accountStatus: "DELETED", passwordHash: "deleted$" });
+    expect(row.deletedAt).toBeInstanceOf(Date);
+    // Activité et profil scolaire conservés ; photo et notifications effacées.
+    expect(await db.subject.count({ where: { userId: u.id } })).toBe(1);
+    expect(await db.programRun.count({ where: { userId: u.id } })).toBe(1);
+    expect(await db.studentProfile.findUniqueOrThrow({ where: { userId: u.id } })).toMatchObject({ category: "TESTER", avatar: null });
+    expect(await db.userNotification.count({ where: { userId: u.id } })).toBe(0);
+    // Plus de connexion possible, et l'adresse d'origine est libérée pour une nouvelle inscription.
+    await expect(profile.deleteAccount(u.id, { password: PASSWORD })).rejects.toMatchObject({ status: 403 });
+    const again = await signup("bye@x.fr", { category: "TESTER" });
+    expect(again.id).not.toBe(u.id);
   });
   it("confirme la suppression d'un compte Google par son adresse", async () => {
     const g = await db.user.create({ data: { email: "g2@x.fr", passwordHash: "oauth:google:2" } });
