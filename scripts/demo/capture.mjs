@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Captures d'écran des modules pour la page d'accueil, prises sur le compte de DÉMONSTRATION d'une instance locale.
 //   1. node scripts/dev-db.mjs (base locale)  2. npx tsx scripts/demo/seed-demo.ts  3. next dev -p 3100 sur cette base
-//   4. node scripts/demo/capture.mjs [http://localhost:3100]   (nécessite puppeteer-core et Microsoft Edge ou Chrome)
+//   4. DEMO_PASSWORD=<le même qu'à l'étape 2> node scripts/demo/capture.mjs [http://localhost:3100]   (nécessite puppeteer-core et Microsoft Edge ou Chrome)
 // Les images sont écrites dans public/accueil/.
 // ─────────────────────────────────────────────────────────────────────────────
 import { existsSync, mkdirSync } from "node:fs";
@@ -9,6 +9,11 @@ import path from "node:path";
 import puppeteer from "puppeteer-core";
 
 const BASE = process.argv[2] ?? "http://localhost:3100";
+const DEMO_PASSWORD = process.env.DEMO_PASSWORD ?? "";
+if (!DEMO_PASSWORD) {
+  console.error("Définissez DEMO_PASSWORD (le mot de passe donné à scripts/demo/seed-demo.ts).");
+  process.exit(1);
+}
 const OUT = path.join(process.cwd(), "public", "accueil");
 const ID = JSON.parse(process.env.DEMO_IDS ?? "{}");
 const BROWSERS = [process.env.BROWSER_PATH, "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", "C:/Program Files/Google/Chrome/Application/chrome.exe", "/opt/pw-browsers/chromium", "/usr/bin/chromium"].filter(Boolean);
@@ -37,10 +42,10 @@ try {
   await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1 });
   await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: "light" }]);
   await page.goto(`${BASE}/login`, { waitUntil: "networkidle2", timeout: 120_000 });
-  const login = await page.evaluate(async () => {
-    const r = await fetch("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: "demo@niala.local", password: "demo-niala-2026" }) });
+  const login = await page.evaluate(async (password) => {
+    const r = await fetch("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: "demo@niala.local", password }) });
     return r.status;
-  });
+  }, DEMO_PASSWORD);
   if (login !== 200) throw new Error(`Connexion du compte de démonstration impossible (${login}).`);
   // Visite guidée déjà vue : elle ne recouvre pas les captures.
   const me = await page.evaluate(async () => (await (await fetch("/api/auth/me")).json().catch(() => ({}))));

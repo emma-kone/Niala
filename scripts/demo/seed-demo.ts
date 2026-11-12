@@ -1,8 +1,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Données FICTIVES de démonstration, pour les captures d'écran de la page d'accueil. À lancer UNIQUEMENT sur la base
 // locale (scripts/dev-db.mjs) : le script refuse toute autre base.
-//   DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5433/postgres?connection_limit=1 npx tsx scripts/demo/seed-demo.ts
-// Compte créé : demo@niala.local / mot de passe affiché à la fin.
+//   DEMO_PASSWORD=<10 caractères min> DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5433/postgres?connection_limit=1 npx tsx scripts/demo/seed-demo.ts
+// Compte créé : demo@niala.local, avec le mot de passe fourni dans DEMO_PASSWORD (jamais écrit dans le dépôt, qui est public).
 // ─────────────────────────────────────────────────────────────────────────────
 
 const url = process.env.DATABASE_URL ?? "";
@@ -14,7 +14,11 @@ if (!/@(127\.0\.0\.1|localhost):/.test(url)) {
 import type { AiProvider } from "@/server/ai/provider";
 
 export const DEMO_EMAIL = "demo@niala.local";
-export const DEMO_PASSWORD = "demo-niala-2026";
+export const DEMO_PASSWORD = process.env.DEMO_PASSWORD ?? "";
+if (DEMO_PASSWORD.length < 10) {
+  console.error("Refus : définissez DEMO_PASSWORD (10 caractères minimum) pour le compte de démonstration.");
+  process.exit(1);
+}
 
 const MONDAY = "2026-11-09";
 const addDays = (d: string, n: number) => new Date(new Date(`${d}T12:00:00Z`).getTime() + n * 86_400_000).toISOString().slice(0, 10);
@@ -177,7 +181,7 @@ async function main() {
   await db.conversationMessage.create({ data: { userId: U, conversationId: conv.id, role: "USER", content: "Peux-tu m'expliquer simplement la récursivité avec un exemple ?" } });
   await db.conversationMessage.create({ data: { userId: U, conversationId: conv.id, role: "ASSISTANT", content: "Une fonction **récursive** est une fonction qui s'appelle elle-même pour résoudre un problème plus petit.\n\n**Exemple : la factorielle**\n\n```python\ndef factorielle(n):\n    if n == 0:        # cas de base\n        return 1\n    return n * factorielle(n - 1)\n```\n\n1. Le **cas de base** (`n == 0`) arrête les appels.\n2. Chaque appel **rapproche** du cas de base (`n - 1`).\n\nVeux-tu que je te propose un exercice pour t'entraîner ?" } });
 
-  console.log(`Compte de démonstration prêt : ${DEMO_EMAIL} / ${DEMO_PASSWORD}`);
+  console.log(`Compte de démonstration prêt : ${DEMO_EMAIL} (mot de passe : celui de DEMO_PASSWORD).`);
   await db.$disconnect();
 }
 
