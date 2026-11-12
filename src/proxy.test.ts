@@ -154,3 +154,48 @@ describe("code d'accès devant la connexion (ADMIN_ACCESS_HASH)", () => {
     expect(denied(await call("niala.test", "/admin/login", undefined, { cookie: "niala_gate=faux" }))).toBe(true);
   });
 });
+
+describe("garde-fous contre les abus", () => {
+  const send = async (url: string, init: { method?: string; headers?: Record<string, string> } = {}) => {
+    const { proxy } = await import("./proxy");
+    return proxy(new NextRequest(new URL(url, "https://niala.test"), { method: init.method ?? "POST", headers: { host: "niala.test", ...init.headers } }));
+  };
+
+  it("refuse les écritures d'API venues d'un autre site, et elles seules", async () => {
+    vi.resetModules();
+    expect((await send("/api/notes", { headers: { origin: "https://evil.example" } })).status).toBe(403);
+    expect((await send("/api/notes", { headers: { origin: "null" } })).status).toBe(403);
+    expect((await send("/api/notes", { headers: { "sec-fetch-site": "cross-site" } })).status).toBe(403);
+    // Même site, client sans navigateur, lecture, et désinscription « un clic » des messageries : acceptés.
+    expect((await send("/api/notes", { headers: { origin: "https://niala.test" } })).status).toBe(200);
+    expect((await send("/api/notes")).status).toBe(200);
+    expect((await send("/api/notes", { method: "GET", headers: { origin: "https://evil.example" } })).status).toBe(200);
+    expect((await send("/api/desinscription", { headers: { origin: "https://mail.example" } })).status).toBe(200);
+  });
+
+  it("accepte l'adresse publique configurée (APP_URL) comme origine", async () => {
+    vi.resetModules();
+    vi.stubEnv("APP_URL", "https://niala.app");
+    expect((await send("/api/notes", { headers: { origin: "https://niala.app" } })).status).toBe(200);
+    expect((await send("/api/notes", { headers: { origin: "https://niala.app.evil.io" } })).status).toBe(403);
+  });
+
+  it("refuse les corps démesurés sans les lire", async () => {
+    vi.resetModules();
+    expect((await send("/api/notes", { headers: { "content-length": String(26 * 1024 * 1024) } })).status).toBe(413);
+    expect((await send("/api/notes", { headers: { "content-length": "2048" } })).status).toBe(200);
+    expect((await send("/api/uploads/v1/content", { method: "PUT", headers: { "content-length": String(50 * 1024 * 1024) } })).status).toBe(200);
+    expect((await send("/api/uploads/v1/content", { method: "PUT", headers: { "content-length": String(70 * 1024 * 1024) } })).status).toBe(413);
+  });
+
+  it("répond 429 à une adresse qui martèle le site, sans gêner les autres", async () => {
+    vi.resetModules();
+    vi.stubEnv("FLOOD_MAX_PER_10S", "60");
+    const from = (ip: string) => send("/matieres", { method: "GET", headers: { "x-forwarded-for": ip } });
+    for (let i = 0; i < 60; i++) expect((await from("203.0.113.9")).status).toBe(200);
+    const blocked = await from("203.0.113.9");
+    expect(blocked.status).toBe(429);
+    expect(Number(blocked.headers.get("retry-after"))).toBeGreaterThan(0);
+    expect((await from("203.0.113.10")).status).toBe(200);
+  });
+});

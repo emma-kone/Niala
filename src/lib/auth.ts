@@ -47,6 +47,19 @@ export function verifyPassword(password: string, stored: string): boolean {
   }
 }
 
+let dummyHash: string | null = null;
+
+/**
+ * Vérifie un mot de passe en dépensant TOUJOURS le coût d'un hachage, même si le compte n'existe pas ou n'a pas de mot
+ * de passe (compte Google). Sans cela, une réponse plus rapide trahit les adresses qui n'ont pas de compte.
+ */
+export function checkPassword(password: string, stored: string | null | undefined): boolean {
+  if (stored && stored.startsWith("scrypt$")) return verifyPassword(password, stored);
+  dummyHash ??= hashPassword(randomBytes(16).toString("hex"));
+  verifyPassword(password, dummyHash);
+  return false;
+}
+
 // ── Jeton de session signé (HMAC-SHA256) ─────────────────────────────────────
 function sign(payload: string): string {
   return createHmac("sha256", getSecret()).update(payload).digest("base64url");

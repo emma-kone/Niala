@@ -1594,3 +1594,13 @@ model PasswordResetToken {
 
   @@index([userId, createdAt])
 }
+
+/// Compteur de limitation de débit partagé entre toutes les instances (connexion, inscription, mot de passe oublié…).
+/// La clé est une empreinte HMAC : ni adresse IP ni adresse e-mail n'est conservée en clair.
+model RateLimit {
+  key     String   @id
+  count   Int      @default(0)
+  resetAt DateTime
+
+  @@index([resetAt])
+}

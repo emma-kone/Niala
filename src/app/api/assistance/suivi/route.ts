@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { clientIp, handle, limit, readJson } from "@/lib/api-helpers";
+import { clientIp, handle, limit, limitDurable, readJson } from "@/lib/api-helpers";
 import { getGuestThread, replyAsGuest } from "@/server/admin/support";
 
 // Le jeton du lien de suivi voyage dans le corps de la requête (jamais dans l'adresse : il n'apparaît dans aucun journal).
@@ -13,7 +13,7 @@ export async function POST(req: Request) {
       limit(`assistance-read:${clientIp(req)}`, 60, 60_000);
       return getGuestThread(token);
     }
-    limit(`assistance-reply:${clientIp(req)}`, 10, 10 * 60_000);
+    await limitDurable(`assistance-reply:${clientIp(req)}`, 10, 10 * 60_000);
     await replyAsGuest(token, body);
     return getGuestThread(token);
   });

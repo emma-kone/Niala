@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { NextResponse } from "next/server";
 import { clearLinkCookie, getPendingLink, setSessionCookie } from "@/lib/auth";
-import { ApiHttpError, handle, jsonError, limit, readJson } from "@/lib/api-helpers";
+import { ApiHttpError, handle, jsonError, limitDurable, readJson } from "@/lib/api-helpers";
 import { LinkError, linkGoogleAccount } from "@/server/services/accounts";
 
 const linkSchema = z.object({ password: z.string().min(1, "Mot de passe requis").max(200) });
@@ -12,7 +12,7 @@ export async function POST(req: Request) {
     const pending = await getPendingLink();
     if (!pending) return jsonError("La demande a expiré : reprenez la connexion avec Google.", 410);
     // Limite par adresse contre les essais de mots de passe.
-    limit(`google-link:${pending.email.toLowerCase()}`, 5, 10 * 60_000);
+    await limitDurable(`google-link:${pending.email.toLowerCase()}`, 5, 10 * 60_000);
     const { password } = linkSchema.parse(await readJson<unknown>(req));
     try {
       const user = await linkGoogleAccount(pending, password);

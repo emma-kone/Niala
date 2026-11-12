@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 import { AuthError, rateLimit } from "@/lib/auth";
+import { durableLimit } from "@/lib/rate-limit";
 import { classifyError, classifyStatus, logRequest, pathOfRequest } from "@/server/analytics/request-log";
 
 /** Erreur métier avec code HTTP explicite (404, 409…). */
@@ -64,6 +65,16 @@ export function clientIp(req: Request): string {
 
 export function limit(key: string, max: number, windowMs: number) {
   if (!rateLimit(key, max, windowMs)) {
+    throw new ApiHttpError("Trop de requêtes — patientez un instant avant de réessayer.", 429);
+  }
+}
+
+/**
+ * Même limite, mais comptée en base : commune à toutes les instances du serveur. À utiliser sur les routes ouvertes sans
+ * session (connexion, inscription, mot de passe oublié, assistance), celles qu'un attaquant martèle.
+ */
+export async function limitDurable(key: string, max: number, windowMs: number) {
+  if (!(await durableLimit(key, max, windowMs))) {
     throw new ApiHttpError("Trop de requêtes — patientez un instant avant de réessayer.", 429);
   }
 }

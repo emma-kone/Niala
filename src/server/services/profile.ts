@@ -58,7 +58,7 @@ async function accountWithPassword(userId: string, password: string) {
   return user;
 }
 
-export const emailChangeSchema = z.object({ email: z.string().trim().email("Adresse e-mail invalide."), password: z.string().min(1, "Confirmez avec votre mot de passe.").max(200) });
+export const emailChangeSchema = z.object({ email: z.string().trim().email("Adresse e-mail invalide."), password: z.string().max(200).min(1, "Confirmez avec votre mot de passe.").max(200) });
 
 export async function changeEmail(userId: string, input: z.infer<typeof emailChangeSchema>) {
   await accountWithPassword(userId, input.password);

@@ -1,5 +1,5 @@
 import { ApiHttpError } from "@/lib/api-helpers";
-import { verifyPassword } from "@/lib/auth";
+import { checkPassword } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { audit } from "@/server/admin/audit";
 import { isAdminRole, landingFor, type AdminRole } from "@/server/admin/rbac";
@@ -20,7 +20,8 @@ export interface AdminLoginResult {
 export async function loginAdminWithPassword(emailRaw: string, password: string, meta: { ip: string | null }): Promise<AdminLoginResult> {
   const email = emailRaw.trim().toLowerCase();
   const user = await db.user.findUnique({ where: { email } });
-  const passwordOk = !!user && verifyPassword(password, user.passwordHash);
+  // Le hachage est calculé même pour une adresse inconnue : le temps de réponse ne révèle pas quelles adresses ont un compte.
+  const passwordOk = checkPassword(password, user?.passwordHash) && !!user;
   if (!user || !passwordOk || !isAdminRole(user.adminRole) || user.accountStatus !== "ACTIVE") {
     await audit({ id: user?.id ?? null, email }, "admin.login_failed", { targetType: "admin", result: "FAILED", detail: { reason: !user || !passwordOk ? "credentials" : "not_authorized", ip: meta.ip } });
     throw new ApiHttpError(GENERIC, 401);

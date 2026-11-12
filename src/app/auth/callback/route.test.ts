@@ -7,6 +7,8 @@ const setSessionCookie = vi.fn(async () => undefined);
 const setLinkCookie = vi.fn(async () => undefined);
 const signInWithGoogle = vi.fn();
 
+// La limite de débit durable (en base) est hors sujet ici : elle a ses propres tests (lib/rate-limit.test.ts).
+vi.mock("@/lib/rate-limit", () => ({ durableLimit: async () => true }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ auth: { exchangeCodeForSession, signOut } }) }));
 vi.mock("@/lib/auth", async (original) => ({ ...(await original<typeof import("@/lib/auth")>()), setSessionCookie, setLinkCookie }));
 vi.mock("@/server/services/accounts", async (original) => ({ ...(await original<typeof import("@/server/services/accounts")>()), signInWithGoogle }));

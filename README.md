@@ -17,6 +17,7 @@ Détails, création de compte, production : [docs/INSTALLATION.md](docs/INSTALLA
 |---|---|
 | [INSTALLATION](docs/INSTALLATION.md) | Installation, démarrage, production, vérifications |
 | [ENVIRONNEMENT](docs/ENVIRONNEMENT.md) | Variables d'environnement |
+| [SECURITE](docs/SECURITE.md) | Protections (DoS, force brute, OWASP), réglages du pare-feu Vercel, suivi d'un test d'intrusion |
 | [ARCHITECTURE](docs/ARCHITECTURE.md) | Couches, services IA, sécurité, exécution isolée, tests |
 | [DONNEES](docs/DONNEES.md) | Schéma de données documenté |
 | [MIGRATION](docs/MIGRATION.md) | Migration V1 → V2 sans perte, archivage des tables V1 |
