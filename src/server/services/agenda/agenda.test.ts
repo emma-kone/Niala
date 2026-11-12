@@ -281,6 +281,18 @@ describe("import complet", () => {
     await expect(imports.importFile(B, r.id)).rejects.toMatchObject({ status: 404 });
   });
 
+  it("deux validations simultanées du même import : une seule enregistre, l'autre reçoit 409, aucun doublon", async () => {
+    await clean();
+    aiResult = { cours: [course(), course({ matiere: "Réseaux", jour: 2, debut: "14:00", fin: "16:00", salle: null })] };
+    const r = await imports.startImport(A, csv("Lundi Algorithmique 8h; Mardi Réseaux 14h"));
+    const body = confirmBody(validated(r));
+    const settled = await Promise.allSettled([imports.confirmImport(A, r.id, body), imports.confirmImport(A, r.id, body)]);
+    expect(settled.filter((s) => s.status === "fulfilled")).toHaveLength(1);
+    const failed = settled.find((s) => s.status === "rejected") as PromiseRejectedResult;
+    expect(failed.reason).toMatchObject({ status: 409 });
+    expect(await week(A)).toHaveLength(2);
+  });
+
   it("un second import identique ne crée aucun doublon", async () => {
     await clean();
     aiResult = { cours: [course()] };

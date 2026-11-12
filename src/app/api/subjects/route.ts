@@ -11,16 +11,10 @@ const subjectSchema = z.object({
   icon: z.enum(SUBJECT_ICON_IDS).nullable().optional(),
 });
 
-/** Matières créées avant les icônes : l'icône déduite est enregistrée une fois pour toutes. */
-async function attributeMissingIcons(userId: string) {
-  const missing = await db.subject.findMany({ where: { userId, icon: null }, select: { id: true, name: true } });
-  await Promise.all(missing.map((s) => db.subject.update({ where: { id: s.id }, data: { icon: suggestSubjectIcon(s.name) } })));
-}
 
 export async function GET() {
   return handle(async () => {
     const user = await requireUser();
-    await attributeMissingIcons(user.id);
     const subjects = await db.subject.findMany({
       where: { userId: user.id },
       include: {
@@ -32,6 +26,13 @@ export async function GET() {
       },
       orderBy: { createdAt: "asc" },
     });
+    // Matières créées avant les icônes : l'icône déduite est enregistrée une fois pour toutes, à partir de la liste
+    // déjà lue (auparavant une lecture de plus à chaque appel, avant la liste).
+    const missing = subjects.filter((s) => s.icon === null);
+    if (missing.length) {
+      await Promise.all(missing.map((s) => db.subject.updateMany({ where: { id: s.id, userId: user.id }, data: { icon: suggestSubjectIcon(s.name) } })));
+      for (const s of missing) s.icon = suggestSubjectIcon(s.name);
+    }
     return { subjects };
   });
 }

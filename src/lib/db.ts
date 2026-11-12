@@ -11,9 +11,12 @@ const globalForPrisma = globalThis as unknown as {
  */
 export const dbAll =
   globalForPrisma.prisma ??
-  new PrismaClient(
-    process.env.PRISMA_LOG_QUERIES ? { log: ['query'] } : undefined,
-  )
+  new PrismaClient({
+    ...(process.env.PRISMA_LOG_QUERIES ? { log: ['query' as const] } : {}),
+    // Transactions interactives : le délai par défaut de Prisma (5 s, 2 s d'attente d'une connexion) est trop court dès que
+    // la base répond lentement ; la transaction était alors fermée en cours de route (erreur P2028, réponse 500).
+    transactionOptions: { maxWait: 10_000, timeout: 20_000 },
+  })
 
 // Always assign to globalForPrisma so that the singleton is preserved across
 // hot-reloads in dev AND across Vercel/Edge cold-start module re-evaluations

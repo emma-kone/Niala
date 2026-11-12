@@ -21,6 +21,8 @@ export interface CompletionRequest {
 export interface CompletionResult {
   text: string;
   model: string;
+  /** Le modèle s'est arrêté sur sa limite de longueur : la réponse est incomplète. */
+  truncated?: boolean;
 }
 
 /** Élément de conversation opaque (format du fournisseur) : les appels d'outils doivent être renvoyés tels quels. */
@@ -73,8 +75,55 @@ export class AiUnavailableError extends Error {
 /** Limite de consommation atteinte. */
 export class AiQuotaError extends Error {}
 
+/**
+ * Nature d'un échec : surcharge du fournisseur, débit ou quota du fournisseur, délai dépassé, réseau, réponse vide,
+ * contenu refusé, requête rejetée (modèle inconnu, paramètre invalide), ou autre (réponse inexploitable).
+ */
+export type AiFailureKind = "overload" | "rate_limit" | "timeout" | "network" | "empty" | "refused" | "request" | "other";
+
 /** Échec d'appel ou réponse inexploitable (le détail reste dans les logs serveur). */
-export class AiCallError extends Error {}
+export class AiCallError extends Error {
+  kind: AiFailureKind;
+  constructor(message?: string, kind: AiFailureKind = "other") {
+    super(message);
+    this.kind = kind;
+  }
+}
+
+/** Échec passager : un nouvel essai ou un autre modèle a une vraie chance d'aboutir. */
+export const isTransientAiFailure = (e: unknown) => e instanceof AiCallError && ["overload", "rate_limit", "timeout", "network", "empty"].includes(e.kind);
+
+const kindOfStatus = (status: number): AiFailureKind => (status === 429 ? "rate_limit" : status === 408 || status >= 500 ? "overload" : "request");
+
+/**
+ * Attentes entre deux essais d'un même appel (429 / 5xx / réseau) : croissantes, avec une part d'aléa pour que des
+ * requêtes simultanées ne reviennent pas toutes au même instant. Modifiable par les tests.
+ */
+export const aiRetry = { delaysMs: [800, 2500, 6000] };
+
+/** Attente interrompue si l'appel est annulé ou son délai dépassé. */
+function pause(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) return reject(new AiCallError("Délai dépassé.", "timeout"));
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new AiCallError("Délai dépassé.", "timeout"));
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/** Durée d'attente avant l'essai suivant : celle demandée par le fournisseur (Retry-After, bornée à 10 s), sinon la progression prévue. */
+function retryDelay(attempt: number, retryAfter?: string | null): number {
+  const asked = Number(retryAfter);
+  if (retryAfter && Number.isFinite(asked) && asked > 0) return Math.min(asked * 1000, 10_000);
+  const base = aiRetry.delaysMs[Math.min(attempt, aiRetry.delaysMs.length - 1)] ?? 0;
+  return Math.round(base * (0.75 + Math.random() * 0.5));
+}
 
 const DEFAULT_MODEL = "claude-sonnet-5-5";
 /** Modèles Gemini vérifiés sur l'API (liste des modèles du compte) et la documentation officielle. */
@@ -85,10 +134,12 @@ const isAbort = (e: unknown) => ["TimeoutError", "AbortError"].includes((e as { 
 
 /** Appel HTTP Gemini avec reprises (429/5xx). La clé ne figure que dans l'en-tête, jamais dans l'URL ni les erreurs. */
 async function geminiFetch(apiKey: string, path: string, body: unknown, signal: AbortSignal): Promise<Response> {
-  const maxRetries = 2;
+  const maxRetries = aiRetry.delaysMs.length;
   let lastError = "";
+  let wait = 0;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    if (attempt > 0) await new Promise((r) => setTimeout(r, attempt * 1500));
+    if (attempt > 0) await pause(wait, signal);
+    wait = retryDelay(attempt);
     try {
       const res = await fetch(`${GEMINI_ENDPOINT}/${path}`, {
         method: "POST",
@@ -99,15 +150,18 @@ async function geminiFetch(apiKey: string, path: string, body: unknown, signal: 
       if (!res.ok) {
         const err = await res.json().catch(() => null);
         lastError = err?.error?.message ?? `HTTP ${res.status}`;
-        if ((res.status === 429 || res.status >= 500) && attempt < maxRetries) continue;
-        throw new AiCallError(lastError);
+        if ((res.status === 429 || res.status >= 500) && attempt < maxRetries) {
+          wait = retryDelay(attempt, res.headers.get("retry-after"));
+          continue;
+        }
+        throw new AiCallError(lastError, kindOfStatus(res.status));
       }
       return res;
     } catch (e) {
       if (e instanceof AiCallError) throw e;
-      if (isAbort(e)) throw new AiCallError("Délai dépassé.");
+      if (isAbort(e)) throw new AiCallError("Délai dépassé.", "timeout");
       lastError = e instanceof Error ? e.message : "Erreur réseau";
-      if (attempt === maxRetries) throw new AiCallError(lastError);
+      if (attempt === maxRetries) throw new AiCallError(lastError, "network");
     }
   }
   throw new AiCallError(lastError || "Échec de l'appel.");
@@ -118,8 +172,8 @@ export async function geminiPost(apiKey: string, path: string, body: unknown, si
   try {
     return await res.json();
   } catch (e) {
-    if (isAbort(e)) throw new AiCallError("Délai dépassé.");
-    throw new AiCallError("Réponse illisible.");
+    if (isAbort(e)) throw new AiCallError("Délai dépassé.", "timeout");
+    throw new AiCallError("Réponse illisible.", "network");
   }
 }
 
@@ -167,7 +221,7 @@ async function geminiStream(apiKey: string, path: string, body: unknown, signal:
     }
     if (buffer.trim()) take(buffer);
   } catch (e) {
-    if (isAbort(e)) throw new AiCallError("Délai dépassé.");
+    if (isAbort(e)) throw new AiCallError("Délai dépassé.", "timeout");
     throw new AiCallError("Flux interrompu.");
   }
   return { parts, modelVersion, blockReason };
@@ -201,8 +255,8 @@ export function geminiProvider(apiKey: string, model: string, embeddingModel = D
         signal
       );
       const text = textOf(data.candidates?.[0]?.content?.parts);
-      if (!text.trim()) throw new AiCallError(data.promptFeedback?.blockReason ? "Contenu refusé par le modèle." : "Réponse vide.");
-      return { text, model: data.modelVersion ?? model };
+      if (!text.trim()) throw data.promptFeedback?.blockReason ? new AiCallError("Contenu refusé par le modèle.", "refused") : new AiCallError("Réponse vide.", "empty");
+      return { text, model: data.modelVersion ?? model, truncated: data.candidates?.[0]?.finishReason === "MAX_TOKENS" };
     },
     async converse({ system, turns, tools, maxTokens, temperature, signal, onText }) {
       const path = `${encodeURIComponent(model)}:generateContent`;
@@ -288,19 +342,19 @@ export function anthropicProvider(apiKey: string, model: string): AiProvider {
             const body = await res.json().catch(() => null);
             lastError = body?.error?.message ?? `HTTP ${res.status}`;
             if ((res.status === 429 || res.status >= 500) && attempt < maxRetries) continue;
-            throw new AiCallError(lastError);
+            throw new AiCallError(lastError, kindOfStatus(res.status));
           }
           const data = await res.json();
           const text = Array.isArray(data.content)
             ? data.content.filter((b: { type: string }) => b.type === "text").map((b: { text: string }) => b.text).join("")
             : "";
-          if (!text.trim()) throw new AiCallError("Réponse vide.");
-          return { text, model: data.model ?? model };
+          if (!text.trim()) throw new AiCallError("Réponse vide.", "empty");
+          return { text, model: data.model ?? model, truncated: data.stop_reason === "max_tokens" };
         } catch (e) {
           if (e instanceof AiCallError) throw e;
-          if ((e as { name?: string })?.name === "TimeoutError" || (e as { name?: string })?.name === "AbortError") throw new AiCallError("Délai dépassé.");
+          if ((e as { name?: string })?.name === "TimeoutError" || (e as { name?: string })?.name === "AbortError") throw new AiCallError("Délai dépassé.", "timeout");
           lastError = e instanceof Error ? e.message : "Erreur réseau";
-          if (attempt === maxRetries) throw new AiCallError(lastError);
+          if (attempt === maxRetries) throw new AiCallError(lastError, "network");
         }
       }
       throw new AiCallError(lastError || "Échec de l'appel.");
@@ -323,6 +377,24 @@ export function getProvider(): AiProvider | null {
   const key = process.env.ANTHROPIC_API_KEY?.trim();
   if (!key) return null;
   return anthropicProvider(key, process.env.ANTHROPIC_MODEL?.trim() || DEFAULT_MODEL);
+}
+
+/** Modèle de repli vérifié disponible sur le compte (voir docs/ENVIRONNEMENT.md) : plus lent, mais sur une autre capacité que le modèle principal. */
+export const DEFAULT_GEMINI_FALLBACK_MODELS = "gemini-3.6-flash";
+
+/**
+ * Modèles de repli, essayés dans l'ordre quand le modèle principal est surchargé, limité en débit ou trop lent.
+ * Même fournisseur et même clé que le modèle principal : aucune donnée ne part chez un autre prestataire.
+ * GEMINI_FALLBACK_MODELS (liste séparée par des virgules) ; valeur vide ou « none » : aucun repli.
+ */
+export function getFallbackProviders(): AiProvider[] {
+  if (override !== undefined) return [];
+  const gemini = process.env.GEMINI_API_KEY?.trim();
+  if (!gemini) return [];
+  const primary = process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
+  const raw = process.env.GEMINI_FALLBACK_MODELS ?? DEFAULT_GEMINI_FALLBACK_MODELS;
+  const models = raw.split(",").map((m) => m.trim()).filter((m) => m && m.toLowerCase() !== "none" && m !== primary);
+  return [...new Set(models)].map((m) => geminiProvider(gemini, m));
 }
 
 export const isAiConfigured = () => getProvider() !== null;

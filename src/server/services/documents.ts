@@ -1,4 +1,5 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { after } from "next/server";
 import { db } from "@/lib/db";
 import { softDelete } from "@/lib/soft-delete";
 import { ApiHttpError } from "@/lib/api-helpers";
@@ -17,6 +18,7 @@ import {
 import { pathTo } from "@/server/domain/folder-tree";
 import { loadFolders, requireSubject } from "@/server/services/folders";
 import { track } from "@/server/analytics/track";
+import { runPool } from "@/lib/concurrency";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Documents V2 : l'ORIGINAL est stocké tel quel (DocumentVersion.storageKey) ; le texte
@@ -43,58 +45,72 @@ export type PrepareResult =
 export async function prepareUploads(userId: string, input: PrepareInput): Promise<PrepareResult[]> {
   if (input.files.length === 0) throw new ApiHttpError("Aucun fichier reçu.", 400);
   if (input.files.length > MAX_FILES_PER_IMPORT) throw new ApiHttpError(`Maximum ${MAX_FILES_PER_IMPORT} fichiers par import.`, 400);
-  if (input.subjectId) await requireSubject(userId, input.subjectId);
-  else if (input.folderId) throw new ApiHttpError("Dossier introuvable.", 404);
-  if (input.subjectId && input.folderId) {
-    const folders = await loadFolders(db, userId, input.subjectId);
-    if (!folders.some((f) => f.id === input.folderId)) throw new ApiHttpError("Dossier introuvable.", 404);
-  }
-  const limit = await maxUploadBytes(userId);
+  if (!input.subjectId && input.folderId) throw new ApiHttpError("Dossier introuvable.", 404);
+  // Contrôles et réglages lus ensemble (auparavant l'un après l'autre) ; la matière est vérifiée avant le dossier, comme avant.
+  const [, folders, limit] = await Promise.all([
+    input.subjectId ? requireSubject(userId, input.subjectId) : null,
+    input.subjectId && input.folderId ? loadFolders(db, userId, input.subjectId) : null,
+    maxUploadBytes(userId),
+  ]);
+  if (folders && !folders.some((f) => f.id === input.folderId)) throw new ApiHttpError("Dossier introuvable.", 404);
   const storage = getStorage();
-  const results: PrepareResult[] = [];
 
-  for (const file of input.files) {
+  // Les fichiers sont préparés à plusieurs de front, et les trois écritures d'un fichier partent en un seul lot pendant
+  // que l'adresse de dépôt est demandée au stockage. Auparavant : un fichier après l'autre, quatre attentes par fichier
+  // (un import de 20 fichiers dépassait 10 s). L'ordre des résultats reste celui des fichiers reçus.
+  return runPool(input.files, PREPARE_CONCURRENCY, async (file): Promise<PrepareResult> => {
     const name = sanitizeName(file.name);
     const kind = detectKind(name);
-    if (!kind) {
-      results.push({ name: file.name, ok: false, error: "Format non pris en charge. Formats acceptés : PDF, DOCX, PPTX, TXT, MD." });
-      continue;
-    }
-    if (!Number.isInteger(file.size) || file.size <= 0) {
-      results.push({ name, ok: false, error: "Fichier vide." });
-      continue;
-    }
-    if (file.size > limit) {
-      results.push({ name, ok: false, error: `Fichier trop volumineux (${(file.size / 1048576).toFixed(1)} Mo, maximum ${Math.round(limit / 1048576)} Mo).` });
-      continue;
-    }
+    if (!kind) return { name: file.name, ok: false, error: "Format non pris en charge. Formats acceptés : PDF, DOCX, PPTX, TXT, MD." };
+    if (!Number.isInteger(file.size) || file.size <= 0) return { name, ok: false, error: "Fichier vide." };
+    if (file.size > limit) return { name, ok: false, error: `Fichier trop volumineux (${(file.size / 1048576).toFixed(1)} Mo, maximum ${Math.round(limit / 1048576)} Mo).` };
     try {
       const mime = mimeFor(kind);
-      const doc = await db.document.create({
-        data: {
-          userId,
-          subjectId: input.subjectId,
-          folderId: input.folderId,
-          name: name.replace(/\.[^.]+$/, "") || name,
-          originalName: name,
-          type: kind,
-          size: file.size,
-          status: "PENDING",
-        },
-      });
-      const key = newStorageKey(userId, doc.id, 1, randomBytes(12).toString("hex"));
-      const version = await db.documentVersion.create({
-        data: { userId, documentId: doc.id, number: 1, storageKey: key, mime, size: file.size, extractStatus: "PENDING" },
-      });
-      await db.document.update({ where: { id: doc.id }, data: { currentVersionId: version.id } });
-      const upload = await storage.createUploadTarget(key, mime, `/api/uploads/${version.id}/content`);
-      results.push({ name, ok: true, documentId: doc.id, versionId: version.id, upload });
+      const documentId = randomUUID().replace(/-/g, "");
+      const versionId = randomUUID().replace(/-/g, "");
+      const key = newStorageKey(userId, documentId, 1, randomBytes(12).toString("hex"));
+      const [upload] = await Promise.all([
+        storage.createUploadTarget(key, mime, `/api/uploads/${versionId}/content`),
+        db.$transaction([
+          db.document.create({
+            data: {
+              id: documentId,
+              userId,
+              subjectId: input.subjectId,
+              folderId: input.folderId,
+              name: name.replace(/\.[^.]+$/, "") || name,
+              originalName: name,
+              type: kind,
+              size: file.size,
+              status: "PENDING",
+            },
+            select: { id: true },
+          }),
+          db.documentVersion.create({ data: { id: versionId, userId, documentId, number: 1, storageKey: key, mime, size: file.size, extractStatus: "PENDING" }, select: { id: true } }),
+          db.document.updateMany({ where: { id: documentId, userId }, data: { currentVersionId: versionId } }),
+        ]),
+      ]);
+      return { name, ok: true, documentId, versionId, upload };
     } catch (e) {
       console.error("[prepareUploads]", e);
-      results.push({ name, ok: false, error: "Impossible de préparer l'import de ce fichier." });
+      return { name, ok: false, error: "Impossible de préparer l'import de ce fichier." };
     }
+  });
+}
+
+/** Fichiers préparés de front : assez pour un import groupé, sans monopoliser les connexions à la base. */
+const PREPARE_CONCURRENCY = 4;
+
+/**
+ * Lance un travail une fois la réponse envoyée (aperçu PDF d'un DOCX, par exemple) : l'étudiant n'attend pas.
+ * Hors d'une requête (tests, scripts), le travail est exécuté tout de suite.
+ */
+async function afterResponse(task: () => Promise<unknown>) {
+  try {
+    after(task);
+  } catch {
+    await task();
   }
-  return results;
 }
 
 async function ownedPendingVersion(userId: string, versionId: string) {
@@ -148,8 +164,7 @@ export async function finalizeUpload(userId: string, versionId: string): Promise
   }
 
   // 1. Le fichier est-il bien arrivé, à la bonne taille, avec le bon contenu ?
-  const limit = await maxUploadBytes(userId);
-  const stored = await storage.size(key);
+  const [limit, stored] = await Promise.all([maxUploadBytes(userId), storage.size(key)]);
   if (stored == null || stored === 0) {
     await discard(versionId, doc.id, key);
     return { ok: false, documentId: doc.id, status: "FAILED", warnings: [], error: "Le fichier n'a pas été reçu. Réessayez l'import." };
@@ -164,12 +179,14 @@ export async function finalizeUpload(userId: string, versionId: string): Promise
     return { ok: false, documentId: doc.id, status: "FAILED", warnings: [], error: `Le contenu ne correspond pas à un fichier ${kind.toUpperCase()} valide.` };
   }
   const sha256 = createHash("sha256").update(buffer).digest("hex");
-  const dupe = await db.documentVersion.findFirst({
-    where: { userId, sha256, documentId: { not: doc.id }, document: { subjectId: doc.subjectId } },
-    select: { document: { select: { id: true, name: true } } },
-  });
-
-  await db.documentVersion.update({ where: { id: versionId }, data: { extractStatus: "PROCESSING", size: buffer.length, sha256 } });
+  // Recherche d'un doublon et passage à « en cours » : indépendants, lancés ensemble.
+  const [dupe] = await Promise.all([
+    db.documentVersion.findFirst({
+      where: { userId, sha256, documentId: { not: doc.id }, document: { subjectId: doc.subjectId } },
+      select: { document: { select: { id: true, name: true } } },
+    }),
+    db.documentVersion.updateMany({ where: { id: versionId, userId }, data: { extractStatus: "PROCESSING", size: buffer.length, sha256 } }),
+  ]);
 
   // 2. Extraction + indexation (l'original reste intact quoi qu'il arrive)
   try {
@@ -212,8 +229,10 @@ export async function finalizeUpload(userId: string, versionId: string): Promise
         },
       });
     });
-    // Aperçu PDF (meilleur effort : un échec n'invalide pas l'import, il sera retenté à l'ouverture)
-    await ensurePdfPreview(userId, doc.id).catch((e) => console.error("[finalizeUpload] aperçu PDF", e));
+    // Aperçu PDF (meilleur effort : un échec n'invalide pas l'import, il sera retenté à l'ouverture). Un PDF n'a rien à
+    // convertir. Pour les autres formats, la conversion part après la réponse et réutilise le fichier déjà en mémoire
+    // (auparavant : attendue avant de répondre, avec un second téléchargement du fichier).
+    if (kind !== "pdf") await afterResponse(() => ensurePdfPreview(userId, doc.id, buffer).catch((e) => console.error("[finalizeUpload] aperçu PDF", e)));
     track(userId, "document.import", { module: "documents", sourceRef: versionId, props: { kind, pages: extracted.pageCount ?? null, status } });
     return {
       ok: true,
@@ -300,19 +319,8 @@ export interface ExplorerQuery {
 }
 
 export async function explorer(userId: string, query: ExplorerQuery) {
-  const subject = await requireSubject(userId, query.subjectId);
-  const folders = await db.folder.findMany({
-    where: { userId, subjectId: subject.id },
-    select: { id: true, parentId: true, name: true, updatedAt: true },
-  });
-  if (query.folderId && !folders.some((f) => f.id === query.folderId)) throw new ApiHttpError("Dossier introuvable.", 404);
-
-  const nodes = folders.map(({ id, parentId, name }) => ({ id, parentId, name }));
-  const pathLabel = (id: string | null) =>
-    id ? pathTo(nodes, id).map((f) => f.name).join(" / ") : "";
-
   const q = query.q?.trim();
-  const docWhere: Record<string, unknown> = { subjectId: subject.id };
+  const docWhere: Record<string, unknown> = { subjectId: query.subjectId };
   if (query.kind) docWhere.type = query.kind;
   if (query.status) docWhere.currentVersion = { extractStatus: query.status };
 
@@ -328,7 +336,21 @@ export async function explorer(userId: string, query: ExplorerQuery) {
   } else {
     docWhere.folderId = query.folderId;
   }
-  const docs = await fetchDocs(userId, docWhere);
+  // Matière, dossiers et documents sont lus ensemble (ils ne dépendent que de la demande et sont tous filtrés sur
+  // l'étudiant) ; les contrôles « matière introuvable » puis « dossier introuvable » s'appliquent ensuite, comme avant.
+  const [subject, folders, docs] = await Promise.all([
+    requireSubject(userId, query.subjectId),
+    db.folder.findMany({
+      where: { userId, subjectId: query.subjectId },
+      select: { id: true, parentId: true, name: true, updatedAt: true },
+    }),
+    fetchDocs(userId, docWhere),
+  ]);
+  if (query.folderId && !folders.some((f) => f.id === query.folderId)) throw new ApiHttpError("Dossier introuvable.", 404);
+
+  const nodes = folders.map(({ id, parentId, name }) => ({ id, parentId, name }));
+  const pathLabel = (id: string | null) =>
+    id ? pathTo(nodes, id).map((f) => f.name).join(" / ") : "";
   let items = docs.map((d) => toDto(d, pathLabel));
 
   const dir = query.dir === "asc" ? 1 : -1;
@@ -496,7 +518,8 @@ export interface PdfPreview {
 }
 
 /** Garantit qu'un PDF consultable existe pour la version courante (le génère au besoin, une seule fois). */
-export async function ensurePdfPreview(userId: string, id: string): Promise<PdfPreview> {
+/** `original` : contenu du fichier s'il est déjà en mémoire (évite de le retélécharger du stockage). */
+export async function ensurePdfPreview(userId: string, id: string, original?: Buffer): Promise<PdfPreview> {
   const doc = await db.document.findFirst({ where: { id, userId }, include: { currentVersion: true } });
   if (!doc) throw new ApiHttpError("Document introuvable.", 404);
   const version = doc.currentVersion;
@@ -508,7 +531,7 @@ export async function ensurePdfPreview(userId: string, id: string): Promise<PdfP
   const key = previewKey(version.storageKey);
   if (((await storage.size(key)) ?? 0) > 0) return { available: true, source: "converted", key };
   try {
-    const result = await convertToPdf(doc.type, await storage.read(version.storageKey));
+    const result = await convertToPdf(doc.type, original ?? (await storage.read(version.storageKey)));
     await storage.put(key, result.pdf, "application/pdf");
     if (version.pageCount == null) {
       await db.documentVersion.update({ where: { id: version.id }, data: { pageCount: result.pageCount } });
