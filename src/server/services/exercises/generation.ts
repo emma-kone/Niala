@@ -238,6 +238,8 @@ export async function generateExercise(userId: string, rawConfig: unknown) {
   let calls = 0;
   let failures = 0;
   let fatal = null as Error | null;
+  /** Dernier échec du service d'IA : son message dit à l'étudiant ce qui s'est passé (surcharge, délai…) et quoi faire. */
+  let lastAiFailure = null as AiCallError | null;
   const seenStatements = new Set<string>();
 
   const jobs = [...byWindow].flatMap(([w, list]) => Array.from({ length: Math.ceil(list.length / MAX_SLOTS_PER_CALL) }, (_, n) => ({ w, group: list.slice(n * MAX_SLOTS_PER_CALL, (n + 1) * MAX_SLOTS_PER_CALL) })));
@@ -254,7 +256,8 @@ export async function generateExercise(userId: string, rawConfig: unknown) {
           fatal = e;
           return;
         }
-        if (!(e instanceof AiCallError)) console.error("[exercise]", e);
+        if (e instanceof AiCallError) lastAiFailure = e;
+        else console.error("[exercise]", e);
         return;
       }
       result.insufficient.forEach((s) => insufficient.add(s));
@@ -302,7 +305,7 @@ export async function generateExercise(userId: string, rawConfig: unknown) {
   }
   if (accepted.length === 0) {
     console.warn("[exercise] aucune question retenue", { dropped, insufficient: [...insufficient], calls, failures });
-    if (failures === calls) throw new ApiHttpError("Le service d'IA est momentanément indisponible. Réessayez dans un instant.", 502);
+    if (failures === calls) throw new ApiHttpError(lastAiFailure?.message || "Le service d'IA est momentanément indisponible. Réessayez dans un instant.", 502);
     throw new ApiHttpError("Le document ne fournit pas assez d'informations fiables pour créer des questions de ce type. Essayez d'autres types ou une autre partie du document.", 422);
   }
 
@@ -383,6 +386,7 @@ export async function generateFreeExercise(userId: string, rawConfig: unknown) {
   let dropped = 0;
   let fatal = null as Error | null;
 
+  let lastFreeFailure = null as AiCallError | null;
   const pass = (list: (typeof groups)) => runPool(list, AI_CONCURRENCY, async (group) => {
     if (fatal) return;
     const spec = [...new Set(group.map((s) => s.type))].map((t) => `- ${t} (${TYPE_LABEL[t]}) : ${FORMAT[t]}`).join("\n");
@@ -396,7 +400,8 @@ export async function generateFreeExercise(userId: string, rawConfig: unknown) {
     } catch (e) {
       failures++;
       if (e instanceof AiQuotaError || e instanceof AiUnavailableError) fatal = e;
-      else if (!(e instanceof AiCallError)) console.error("[exercise.free]", e);
+      else if (e instanceof AiCallError) lastFreeFailure = e;
+      else console.error("[exercise.free]", e);
       return;
     }
     for (const rawQ of result.questions) {
@@ -426,6 +431,7 @@ export async function generateFreeExercise(userId: string, rawConfig: unknown) {
 
   if (accepted.length === 0) {
     if (fatal) throw new ApiHttpError(fatal instanceof AiQuotaError ? fatal.message : "Le service d'IA n'est pas configuré.", fatal instanceof AiQuotaError ? 429 : 503);
+    if (lastFreeFailure && failures >= groups.length) throw new ApiHttpError(lastFreeFailure.message, 502);
     if (failures === groups.length) throw new ApiHttpError("Le service d'IA est momentanément indisponible. Réessayez dans un instant.", 502);
     throw new ApiHttpError("Ce thème ne permet pas de créer des questions fiables. Précisez la matière ou le chapitre, ou essayez d'autres types de questions.", 422);
   }

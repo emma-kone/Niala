@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, scrypt, scryptSync, timingSafeEqual } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { cookies } from "next/headers";
@@ -58,6 +58,25 @@ export function checkPassword(password: string, stored: string | null | undefine
   dummyHash ??= hashPassword(randomBytes(16).toString("hex"));
   verifyPassword(password, dummyHash);
   return false;
+}
+
+/**
+ * Même vérification que `checkPassword` (mêmes paramètres scrypt, même comparaison à temps constant, même coût dépensé
+ * pour un compte inconnu), mais le hachage tourne hors du fil principal : pendant ces dizaines de millisecondes, le
+ * serveur continue de répondre aux autres requêtes au lieu de toutes les suspendre.
+ */
+export async function checkPasswordAsync(password: string, stored: string | null | undefined): Promise<boolean> {
+  const real = !!stored && stored.startsWith("scrypt$");
+  dummyHash ??= hashPassword(randomBytes(16).toString("hex"));
+  const [algo, salt, hash] = (real ? stored! : dummyHash).split("$");
+  if (algo !== "scrypt" || !salt || !hash) return false;
+  try {
+    const candidate = await new Promise<Buffer>((resolve, reject) => scrypt(password, salt, 64, { N: 16384, r: 8, p: 1 }, (err, key) => (err ? reject(err) : resolve(key))));
+    const expected = Buffer.from(hash, "hex");
+    return candidate.length === expected.length && timingSafeEqual(candidate, expected) && real;
+  } catch {
+    return false;
+  }
 }
 
 // ── Jeton de session signé (HMAC-SHA256) ─────────────────────────────────────
@@ -138,10 +157,11 @@ export async function clearLinkCookie() {
 }
 
 // ── Cookie de session (httpOnly, sameSite lax) ───────────────────────────────
-export async function setSessionCookie(userId: string) {
+/** `knownVersion` : version de session que l'appelant vient de lire en base (connexion) ; elle évite une seconde lecture du compte. */
+export async function setSessionCookie(userId: string, knownVersion?: number) {
   const jar = await cookies();
-  const account = await db.user.findUnique({ where: { id: userId }, select: { sessionVersion: true } });
-  jar.set(COOKIE_NAME, createToken(userId, account?.sessionVersion ?? 0), {
+  const version = knownVersion ?? (await db.user.findUnique({ where: { id: userId }, select: { sessionVersion: true } }))?.sessionVersion ?? 0;
+  jar.set(COOKIE_NAME, createToken(userId, version), {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",

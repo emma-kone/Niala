@@ -6,7 +6,7 @@ import { BAND_LABEL, DIFFICULTY_EVIDENCE_WEIGHT, MIN_CONFIDENCE, answerEvidenceS
 import { buildRecommendations, type ConceptView, type ErrorTally } from "@/server/domain/recommend";
 import { buildSuggestions, pickHighlight, type CourseToday, type ScheduleStatus } from "@/server/domain/dashboard";
 import { addDays } from "@/server/domain/schedule";
-import { loadBreaks, occurrencesBetween } from "@/server/services/agenda/agenda";
+import { occurrencesBetween } from "@/server/services/agenda/agenda";
 import { listTasks, taskOverview } from "@/server/services/agenda/tasks";
 import { isOpen } from "@/server/domain/academic";
 
@@ -34,12 +34,16 @@ export interface EvidenceRow extends Evidence {
 async function collectEvidence(userId: string): Promise<EvidenceRow[]> {
   const out: EvidenceRow[] = [];
 
-  const answers = await db.answer.findMany({
-    where: { userId, attempt: { status: "GRADED", exerciseId: { not: null } } },
-    select: { position: true, verdict: true, points: true, updatedAt: true, attemptId: true, attempt: { select: { snapshot: true, finishedAt: true, exercise: { select: { id: true, title: true } } } } },
-    orderBy: { updatedAt: "desc" },
-    take: 3000,
-  });
+  const [answers, labs] = await Promise.all([
+    db.answer.findMany({
+      where: { userId, attempt: { status: "GRADED", exerciseId: { not: null } } },
+      select: { position: true, verdict: true, points: true, updatedAt: true, attemptId: true, attempt: { select: { snapshot: true, finishedAt: true, exercise: { select: { id: true, title: true } } } } },
+      orderBy: { updatedAt: "desc" },
+      take: 3000,
+    }),
+    // Laboratoire : dernier passage des tests d'un espace issu d'une question d'exercice.
+    db.labWorkspace.findMany({ where: { userId, mode: "EXERCISE", exerciseId: { not: null } }, select: { id: true, title: true, exerciseId: true, brief: true }, take: 500 }),
+  ]);
   for (const a of answers) {
     const snap = a.attempt.snapshot as { questions?: SnapQuestion[] } | null;
     const q = snap?.questions?.find((x) => x.position === a.position);
@@ -51,16 +55,23 @@ async function collectEvidence(userId: string): Promise<EvidenceRow[]> {
     }
   }
 
-  // Laboratoire : dernier passage des tests d'un espace issu d'une question d'exercice.
-  const labs = await db.labWorkspace.findMany({ where: { userId, mode: "EXERCISE", exerciseId: { not: null } }, select: { id: true, title: true, exerciseId: true, brief: true }, take: 500 });
-  for (const w of labs) {
+  // Une lecture groupée des exécutions et une des questions, au lieu de deux lectures par espace de travail.
+  const fromQuestion = labs.flatMap((w) => {
     const brief = w.brief as { origin?: string; source?: { position?: number } } | null;
-    if (brief?.origin !== "question" || !brief.source?.position) continue;
-    const runs = await db.labRun.findMany({ where: { workspaceId: w.id, userId }, orderBy: { createdAt: "desc" }, select: { tests: true, createdAt: true }, take: 20 });
-    const last = runs.find((r) => (r.tests as { summary?: unknown } | null)?.summary);
+    return brief?.origin === "question" && brief.source?.position ? [{ ...w, position: brief.source.position }] : [];
+  });
+  const [labRuns, labQuestions] = fromQuestion.length
+    ? await Promise.all([
+        db.labRun.findMany({ where: { userId, workspaceId: { in: fromQuestion.map((w) => w.id) } }, orderBy: { createdAt: "desc" }, select: { workspaceId: true, tests: true, createdAt: true }, take: 20 * fromQuestion.length }),
+        db.question.findMany({ where: { userId, OR: fromQuestion.map((w) => ({ exerciseId: w.exerciseId!, position: w.position })) }, select: { exerciseId: true, position: true, difficulty: true, concepts: { where: { concept: { deletedAt: null } }, select: { conceptId: true } } } }),
+      ])
+    : [[], []];
+  for (const w of fromQuestion) {
+    // Comme avant : parmi les 20 dernières exécutions de l'espace, la plus récente qui a passé des tests.
+    const last = labRuns.filter((r) => r.workspaceId === w.id).slice(0, 20).find((r) => (r.tests as { summary?: unknown } | null)?.summary);
     if (!last) continue;
     const ratio = (last.tests as { summary: { ratio: number; passed: number; total: number } }).summary;
-    const q = await db.question.findFirst({ where: { exerciseId: w.exerciseId!, position: brief.source.position, userId }, select: { difficulty: true, concepts: { where: { concept: { deletedAt: null } }, select: { conceptId: true } } } });
+    const q = labQuestions.find((x) => x.exerciseId === w.exerciseId && x.position === w.position);
     if (!q) continue;
     for (const c of q.concepts) {
       out.push({ conceptId: c.conceptId, score: ratio.ratio, weight: DIFFICULTY_EVIDENCE_WEIGHT[q.difficulty] ?? 1, at: last.createdAt, source: `lab:${w.id}`, kind: "lab", label: w.title, detail: { workspaceId: w.id, passed: ratio.passed, total: ratio.total } });
@@ -96,11 +107,12 @@ export async function recomputeMastery(userId: string) {
 
 /** Le tableau de bord n'affiche pas les prérequis : `light` évite de charger le graphe complet des notions. */
 async function loadConceptViews(userId: string, subjectId?: string, light = false): Promise<(ConceptView & { subjectName: string })[]> {
-  const concepts = await db.concept.findMany({
-    where: { userId, ...(subjectId ? { subjectId } : {}) },
-    include: { mastery: true, subject: { select: { name: true } }, incoming: light ? { where: { id: "" }, include: { from: { include: { mastery: true } } } } : { where: { type: "PREREQUISITE" }, include: { from: { include: { mastery: true } } } } },
-    take: 2000,
-  });
+  const where = { userId, ...(subjectId ? { subjectId } : {}) };
+  type Prerequisite = { from: { id: string; name: string; mastery: { level: number; confidence: number; evidenceCount: number } | null } };
+  // Mode allégé : aucune lecture des prérequis (auparavant un filtre impossible, mais les requêtes partaient quand même).
+  const concepts = light
+    ? (await db.concept.findMany({ where, include: { mastery: true, subject: { select: { name: true } } }, take: 2000 })).map((c) => ({ ...c, incoming: [] as Prerequisite[] }))
+    : await db.concept.findMany({ where, include: { mastery: true, subject: { select: { name: true } }, incoming: { where: { type: "PREREQUISITE" }, include: { from: { include: { mastery: true } } } } }, take: 2000 });
   return concepts.map((c) => ({
     id: c.id,
     name: c.name,
@@ -111,7 +123,7 @@ async function loadConceptViews(userId: string, subjectId?: string, light = fals
     confidence: c.mastery?.confidence ?? 0,
     evidenceCount: c.mastery?.evidenceCount ?? 0,
     lastEvidenceAt: c.mastery?.lastEvidenceAt ?? null,
-    prerequisites: c.incoming.map((r) => ({ id: r.from.id, name: r.from.name, level: r.from.mastery?.level ?? 0, confidence: r.from.mastery?.confidence ?? 0, evidenceCount: r.from.mastery?.evidenceCount ?? 0 })),
+    prerequisites: (c.incoming as Prerequisite[]).map((r) => ({ id: r.from.id, name: r.from.name, level: r.from.mastery?.level ?? 0, confidence: r.from.mastery?.confidence ?? 0, evidenceCount: r.from.mastery?.evidenceCount ?? 0 })),
   }));
 }
 
@@ -217,14 +229,16 @@ async function activityHref(userId: string, a: { type: string; refType: string |
 const NEXT_COURSE_HORIZON_DAYS = 21;
 
 /** Agenda indisponible : le tableau de bord reste utilisable et le signale, au lieu d'annoncer une journée sans cours. */
-async function courseWindow(userId: string, from: string, to: string): Promise<{ courses: CourseToday[]; schedule: ScheduleStatus }> {
+async function courseWindow(userId: string, from: string, to: string): Promise<{ courses: CourseToday[]; schedule: ScheduleStatus; breaks: { label: string; startMinutes: number; endMinutes: number; weekday: number | null }[] }> {
   try {
-    const [{ occurrences }, events] = await Promise.all([occurrencesBetween(userId, from, to), db.scheduleEvent.count({ where: { userId } })]);
+    // Les pauses et le nombre de cours viennent de la même lecture que les séances (auparavant : deux lectures de plus,
+    // chacune précédée d'une relecture de l'emploi du temps suivi).
+    const { occurrences, breaks, totalEvents: events } = await occurrencesBetween(userId, from, to);
     const courses = occurrences.filter((o) => !o.allDay).map((o) => ({ key: o.key, date: o.date, title: o.title, startMinutes: o.startMinutes, endMinutes: o.endMinutes, room: o.room, subjectId: o.subjectId, subjectName: o.subject?.name ?? null, teacher: o.teacher, subjectColor: o.subject?.color ?? null, subjectIcon: o.subject?.icon ?? null }));
-    return { courses, schedule: events > 0 ? "ok" : "empty" };
+    return { courses, schedule: events > 0 ? "ok" : "empty", breaks: breaks.map(({ label, startMinutes, endMinutes, weekday }) => ({ label, startMinutes, endMinutes, weekday })) };
   } catch (e) {
     console.warn("[dashboard] agenda indisponible :", e instanceof Error ? e.message : e);
-    return { courses: [], schedule: "error" };
+    return { courses: [], schedule: "error", breaks: [] };
   }
 }
 
@@ -252,7 +266,7 @@ async function agendaOverview(userId: string, clock: { date: string; minutes: nu
 export async function dashboard(userId: string, clock: { date: string; minutes: number }) {
   const tomorrow = addDays(clock.date, 1);
   // Toutes les lectures sont indépendantes : elles partent ensemble pour que le temps de réponse soit celui de la plus lente.
-  const [{ courses, schedule }, recentDocs, unopened, subjects, concepts, activities, recs, failedDocs, attempts, labRuns, academic, breaks] = await Promise.all([
+  const [{ courses, schedule, breaks }, recentDocs, unopened, subjects, concepts, activities, recs, failedDocs, attempts, labRuns, academic] = await Promise.all([
     courseWindow(userId, clock.date, addDays(clock.date, NEXT_COURSE_HORIZON_DAYS)),
     // Classement sur la dernière consultation réelle ; un document n'y figure qu'une fois, même ouvert plusieurs fois.
     db.document.findMany({ where: { userId, lastOpenedAt: { not: null }, subjectId: { not: null } }, orderBy: [{ lastOpenedAt: "desc" }, { id: "asc" }], take: 3, select: { id: true, name: true, type: true, subjectId: true, lastOpenedAt: true, lastPage: true, pageCount: true, currentVersion: { select: { pageCount: true } }, subject: { select: { name: true, color: true, icon: true } } } }),
@@ -265,7 +279,6 @@ export async function dashboard(userId: string, clock: { date: string; minutes: 
     db.exerciseAttempt.findMany({ where: { userId, status: "GRADED", exerciseId: { not: null }, exercise: { is: { deletedAt: null } } }, orderBy: { finishedAt: "desc" }, take: 5, select: { id: true, score: true, maxScore: true, finishedAt: true, exerciseId: true, exercise: { select: { title: true, subjectId: true } } } }),
     db.labRun.findMany({ where: { userId }, orderBy: { createdAt: "desc" }, take: 5, select: { id: true, createdAt: true, tests: true, workspace: { select: { id: true, title: true, kind: true } } } }),
     agendaOverview(userId, clock),
-    loadBreaks(userId).then((rows) => rows.map(({ label, startMinutes, endMinutes, weekday }) => ({ label, startMinutes, endMinutes, weekday }))).catch(() => []),
   ]);
 
   const perSubject = subjects.map((s) => {
@@ -333,16 +346,20 @@ export async function dashboard(userId: string, clock: { date: string; minutes: 
 // ── Page Progression ─────────────────────────────────────────────────────────
 
 export async function progress(userId: string, subjectId?: string) {
-  if (subjectId) assertFound(await db.subject.findFirst({ where: { id: subjectId, userId }, select: { id: true } }), "Matière");
-  const concepts = await loadConceptViews(userId, subjectId);
-  const attempts = await db.exerciseAttempt.findMany({
-    where: { userId, status: "GRADED", exerciseId: { not: null }, ...(subjectId ? { exercise: { subjectId } } : {}) },
-    orderBy: { finishedAt: "asc" },
-    take: 100,
-    select: { id: true, score: true, maxScore: true, finishedAt: true, exercise: { select: { title: true, subject: { select: { id: true, name: true, color: true, icon: true } } } } },
-  });
   const since = new Date(Date.now() - 30 * 24 * 3600 * 1000);
-  const diag = await db.errorDiagnosis.findMany({ where: { userId, createdAt: { gte: since } }, select: { category: true, evidence: true, conceptId: true } });
+  // Lectures indépendantes, lancées ensemble (la matière demandée est vérifiée dans la même vague).
+  const [subject, concepts, attempts, diag] = await Promise.all([
+    subjectId ? db.subject.findFirst({ where: { id: subjectId, userId }, select: { id: true } }) : null,
+    loadConceptViews(userId, subjectId),
+    db.exerciseAttempt.findMany({
+      where: { userId, status: "GRADED", exerciseId: { not: null }, ...(subjectId ? { exercise: { subjectId } } : {}) },
+      orderBy: { finishedAt: "asc" },
+      take: 100,
+      select: { id: true, score: true, maxScore: true, finishedAt: true, exercise: { select: { title: true, subject: { select: { id: true, name: true, color: true, icon: true } } } } },
+    }),
+    db.errorDiagnosis.findMany({ where: { userId, createdAt: { gte: since } }, select: { category: true, evidence: true, conceptId: true } }),
+  ]);
+  if (subjectId) assertFound(subject, "Matière");
   const byCategory = new Map<string, number>();
   for (const d of diag) if ((d.evidence as { source?: string } | null)?.source !== "ai") byCategory.set(d.category, (byCategory.get(d.category) ?? 0) + 1);
   const hypotheses = diag.filter((d) => (d.evidence as { source?: string } | null)?.source === "ai").length;
@@ -359,8 +376,12 @@ export async function progress(userId: string, subjectId?: string) {
 }
 
 export async function conceptDetail(userId: string, conceptId: string) {
-  const c = assertFound(await db.concept.findFirst({ where: { id: conceptId, userId }, include: { mastery: true, subject: { select: { id: true, name: true } }, sources: { take: 3, include: { section: { select: { label: true, pageStart: true } } } } } }), "Notion");
-  const evidence = (await collectEvidence(userId)).filter((e) => e.conceptId === conceptId).sort((a, b) => b.at.getTime() - a.at.getTime()).slice(0, 30);
+  const [found, allEvidence] = await Promise.all([
+    db.concept.findFirst({ where: { id: conceptId, userId }, include: { mastery: true, subject: { select: { id: true, name: true } }, sources: { take: 3, include: { section: { select: { label: true, pageStart: true } } } } } }),
+    collectEvidence(userId),
+  ]);
+  const c = assertFound(found, "Notion");
+  const evidence = allEvidence.filter((e) => e.conceptId === conceptId).sort((a, b) => b.at.getTime() - a.at.getTime()).slice(0, 30);
   const est = c.mastery ? { level: c.mastery.level, confidence: c.mastery.confidence, band: masteryBand(c.mastery.level, c.mastery.confidence) } : null;
   return {
     id: c.id,

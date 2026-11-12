@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { checkPassword, getCurrentUser, setSessionCookie } from "@/lib/auth";
+import { checkPasswordAsync, getCurrentUser, setSessionCookie } from "@/lib/auth";
 import { durableCount, durableHit, durableReset } from "@/lib/rate-limit";
 import { clientIp, handle, jsonError, limitDurable, readJson } from "@/lib/api-helpers";
 import { track } from "@/server/analytics/track";
@@ -34,17 +34,18 @@ export async function POST(req: Request) {
     }
     const user = await db.user.findUnique({ where: { email } });
     // Le hachage est calculé même pour une adresse inconnue : le temps de réponse ne révèle pas quels comptes existent.
-    if (!checkPassword(password, user?.passwordHash) || !user) {
+    if (!(await checkPasswordAsync(password, user?.passwordHash)) || !user) {
       await Promise.all([durableHit(sourceKey, FAIL_WINDOW), durableHit(accountKey, FAIL_WINDOW)]);
       return jsonError("E-mail ou mot de passe incorrect.", 401);
     }
-    await durableReset(sourceKey);
     if (user.accountStatus !== "ACTIVE") {
+      await durableReset(sourceKey);
       return jsonError(user.accountStatus === "SUSPENDED" ? "Ce compte est suspendu. Contactez l'équipe Niala pour en savoir plus." : "Ce compte a été désactivé. Contactez l'équipe Niala pour en savoir plus.", 403);
     }
-    // Les préférences existent dès la connexion (valeurs par défaut Niala : thème sombre…)
-    await db.userSettings.upsert({ where: { userId: user.id }, create: { userId: user.id }, update: {} });
-    await setSessionCookie(user.id);
+    // Deux écritures indépendantes, lancées ensemble : remise à zéro du compteur d'échecs, et préférences créées dès la
+    // connexion (valeurs par défaut Niala : thème sombre…). La version de session vient du compte déjà lu.
+    await Promise.all([durableReset(sourceKey), db.userSettings.upsert({ where: { userId: user.id }, create: { userId: user.id }, update: {} })]);
+    await setSessionCookie(user.id, user.sessionVersion);
     track(user.id, "auth.login", { props: { method: "password" } });
     return NextResponse.json({ ok: true, user: { id: user.id, email: user.email, name: user.name } });
   });

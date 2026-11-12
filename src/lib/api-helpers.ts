@@ -19,6 +19,26 @@ export function jsonError(message: string, status = 400, extra?: Record<string, 
   return NextResponse.json({ error: message, ...extra }, { status });
 }
 
+/**
+ * Erreurs de base de données qui ont une réponse utile pour l'étudiant, au lieu d'une erreur 500 anonyme. Le code Prisma
+ * est lu par son nom de classe et son code (pas d'import du client ici : ce fichier est aussi chargé hors base).
+ */
+export function databaseHttpError(err: unknown): { status: number; message: string } | null {
+  if (!(err instanceof Error)) return null;
+  const name = err.constructor.name;
+  const code = (err as { code?: unknown }).code;
+  // Base injoignable, groupe de connexions saturé, transaction expirée ou en conflit : rien n'a été enregistré, un nouvel essai suffit.
+  const busy = new Set(["P1001", "P1002", "P1008", "P1017", "P2024", "P2028", "P2034"]);
+  if (name === "PrismaClientInitializationError" || (name === "PrismaClientKnownRequestError" && typeof code === "string" && busy.has(code))) {
+    return { status: 503, message: "La base de données met trop de temps à répondre : rien n'a été enregistré. Réessayez dans un instant." };
+  }
+  if (name !== "PrismaClientKnownRequestError") return null;
+  if (code === "P2025") return { status: 404, message: "Élément introuvable : il a peut-être été supprimé entre-temps. Actualisez la page." };
+  if (code === "P2002") return { status: 409, message: "Cet élément existe déjà." };
+  if (code === "P2003") return { status: 409, message: "Opération impossible : un élément lié n'existe plus. Actualisez la page puis réessayez." };
+  return null;
+}
+
 /** Enveloppe standard : auth → validation → logique, erreurs centralisées. */
 export async function handle<T>(fn: () => Promise<T>): Promise<NextResponse> {
   const started = performance.now();
@@ -53,6 +73,11 @@ export async function handle<T>(fn: () => Promise<T>): Promise<NextResponse> {
     // et un identifiant de corrélation pour retrouver l'erreur.
     const ref = Math.random().toString(36).slice(2, 10);
     console.error(`[API ${ref}]`, err);
+    const known = databaseHttpError(err);
+    if (known) {
+      await measure(known.status, err);
+      return jsonError(known.status === 503 ? `${known.message} (réf. ${ref})` : known.message, known.status);
+    }
     await measure(500, err);
     return jsonError(`Une erreur interne est survenue (réf. ${ref}).`, 500);
   }

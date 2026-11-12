@@ -93,9 +93,9 @@ export async function createSchedule(userId: string, input: { label: string; act
  * Cours et pauses saisis autrefois sans emploi du temps : ils rejoignent une fois pour toutes l'emploi du temps suivi
  * (ou « Mes cours » s'il n'y en a pas), pour que chaque cours appartienne à un emploi du temps modifiable. Rien n'est supprimé.
  */
-async function adoptLooseEntries(userId: string) {
+async function adoptLooseEntries(userId: string): Promise<boolean> {
   const [events, breaks] = await Promise.all([db.scheduleEvent.count({ where: { userId, importId: null } }), db.scheduleBreak.count({ where: { userId, importId: null } })]);
-  if (!events && !breaks) return;
+  if (!events && !breaks) return false;
   // Ils restaient visibles avec l'emploi du temps suivi : ils le rejoignent. Sans emploi du temps suivi, « Mes cours » est créé.
   const active = await activeScheduleOf(userId);
   const row = active ? { id: active } : await db.scheduleImport.create({ data: { userId, source: "MANUAL", label: "Mes cours", fileName: "Mes cours", mime: MANUAL_MIME, size: 0, sha256: "", storageKey: "", status: "CONFIRMED", confirmedAt: new Date(), draft: {}, warnings: [] }, select: { id: true } });
@@ -103,15 +103,20 @@ async function adoptLooseEntries(userId: string) {
     db.scheduleEvent.updateMany({ where: { userId, importId: null }, data: { importId: row.id } }),
     db.scheduleBreak.updateMany({ where: { userId, importId: null }, data: { importId: row.id } }),
   ]);
+  return true;
 }
 
 /** Emplois du temps de l'étudiant (importés ou créés à la main) et celui qu'il suit. */
 export async function listImports(userId: string) {
-  await adoptLooseEntries(userId);
-  const [rows, activeId] = await Promise.all([
-    db.scheduleImport.findMany({ where: { userId, status: "CONFIRMED" }, orderBy: { createdAt: "desc" }, take: 30, select: { id: true, label: true, fileName: true, source: true, createdAt: true, confirmedAt: true, _count: { select: { events: { where: { deletedAt: null } }, breaks: { where: { deletedAt: null } } } } } }),
-    activeScheduleOf(userId),
-  ]);
+  const read = () =>
+    Promise.all([
+      db.scheduleImport.findMany({ where: { userId, status: "CONFIRMED" }, orderBy: { createdAt: "desc" }, take: 30, select: { id: true, label: true, fileName: true, source: true, createdAt: true, confirmedAt: true, _count: { select: { events: { where: { deletedAt: null } }, breaks: { where: { deletedAt: null } } } } } }),
+      activeScheduleOf(userId),
+    ]);
+  // La vérification des cours sans emploi du temps part avec la lecture : dans le cas courant (rien à adopter) elle ne
+  // retarde plus la réponse. S'il y avait des cours à rattacher, la liste est relue après le rattachement.
+  const [adopted, first] = await Promise.all([adoptLooseEntries(userId), read()]);
+  const [rows, activeId] = adopted ? await read() : first;
   // Un ancien import dont tous les cours ont été fusionnés ailleurs n'est plus proposé ; un emploi du temps créé à la main reste, même vide.
   const imports = rows.filter((r) => r.source === "MANUAL" || r._count.events > 0 || r.id === activeId).map((r) => ({ ...r, label: r.label?.trim() || r.fileName }));
   return { imports, activeId };
@@ -308,19 +313,25 @@ export async function confirmImport(userId: string, id: string, input: z.infer<t
   const specials = input.specials.filter((s) => !hasSpecial(s)).map((s) => ({ id: randomUUID().replace(/-/g, ""), userId, importId: target, title: s.label, kind: s.kind, date: s.startDate, endDate: s.endDate, allDay: true, startMinutes: s.startMinutes ?? 0, endMinutes: s.endMinutes ?? 1440 }));
 
   // Les éléments remplacés sont marqués supprimés (conservés pour les statistiques), dans le même ordre qu'avant.
+  // Une seule validation par import : la première requête « prend » l'import (REVIEW → CONFIRMED) ; un second clic ou un
+  // nouvel essai pendant que la première est en cours reçoit 409 au lieu d'enregistrer les cours en double.
+  // Les étapes sans objet sont sautées et le délai est large : avec beaucoup de cours à mettre à jour, la transaction
+  // dépassait le délai par défaut (5 s) et la validation échouait en erreur 500.
   await db.$transaction(async (tx) => {
-    await tx.subject.createMany({ data: newSubjects });
+    const claimed = await tx.scheduleImport.updateMany({ where: { id: row.id, userId, status: "REVIEW" }, data: { status: "CONFIRMED", confirmedAt: new Date(), label: input.label?.trim() || null } });
+    if (!claimed.count) throw new ApiHttpError("Cet import a déjà été validé.", 409);
+    if (newSubjects.length) await tx.subject.createMany({ data: newSubjects });
     if (replace) {
       await softDelete(tx, "ScheduleBreak", { userId, importId: active ?? { not: null } });
       await softDelete(tx, "ScheduleEvent", { userId, allDay: true, importId: active ?? { not: null } });
     }
-    await tx.scheduleBreak.createMany({ data: newBreaks });
-    await tx.scheduleEvent.createMany({ data: specials });
-    await softDelete(tx, "ScheduleEvent", { userId, id: { in: toRemove } });
-    await tx.scheduleEvent.createMany({ data: creations });
-    for (const u of updates) await tx.scheduleEvent.update({ where: { id: u.id }, data: u.data });
-    await tx.scheduleImport.update({ where: { id: row.id }, data: { status: "CONFIRMED", confirmedAt: new Date(), label: input.label?.trim() || null } });
+    if (newBreaks.length) await tx.scheduleBreak.createMany({ data: newBreaks });
+    if (specials.length) await tx.scheduleEvent.createMany({ data: specials });
+    if (toRemove.length) await softDelete(tx, "ScheduleEvent", { userId, id: { in: toRemove } });
+    if (creations.length) await tx.scheduleEvent.createMany({ data: creations });
+    // updateMany : une seule instruction par cours (update relit la ligne avant et après).
+    for (const u of updates) await tx.scheduleEvent.updateMany({ where: { id: u.id, userId }, data: u.data });
     if (separate && input.activate !== false) await tx.userSettings.upsert({ where: { userId }, create: { userId, activeScheduleId: row.id }, update: { activeScheduleId: row.id } });
-  });
+  }, { maxWait: 15_000, timeout: 60_000 });
   return { scheduleId: target, created: creations.length, updated: updates.length, removed: toRemove.length, skipped: diff.items.filter((i) => i.status === "identique").length, subjectsCreated: newSubjects.length };
 }

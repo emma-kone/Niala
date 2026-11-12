@@ -27,6 +27,14 @@
                                                    "3200"
                                                ],
                                "port":  3200
+                           },
+                           {
+                               "name":  "niala-perf",
+                               "runtimeExecutable":  "node",
+                               "runtimeArgs":  [
+                                                   "scripts/perf/serve.mjs",
+                                                   "3300", "80", "postgresql://postgres@127.0.0.1:5463/postgres"                                               ],
+                               "port":  3300
                            }
                        ]
 }

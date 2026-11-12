@@ -105,12 +105,33 @@ function expand(rows: EventRow[], from: string, to: string, swap: boolean): Occu
   return expandEvents(rows.map(toRecord), rows.flatMap((e): ScheduleOverrideRecord[] => e.overrides), from, to, swap);
 }
 
-/** Séances d'une période avec leur matière. */
+/**
+ * Séances d'une période avec leur matière.
+ * Toutes les lectures partent ensemble : réglages (emploi du temps suivi, inversion des semaines), emplois du temps
+ * validés, cours, pauses et matières. Le périmètre (emploi du temps demandé ou suivi) est ensuite appliqué en mémoire,
+ * avec exactement la règle de `scopeWhere`. Auparavant le périmètre était relu en base avant les cours ET avant les
+ * pauses, et les réglages une troisième fois : quatre lectures à la suite au lieu d'une vague.
+ * `totalEvents` : nombre de cours de l'étudiant tous emplois du temps confondus (le tableau de bord distingue « agenda vide »).
+ */
 export async function occurrencesBetween(userId: string, from: string, to: string, scheduleId?: string | null) {
-  const [rows, swap, subjects, breaks] = await Promise.all([loadEvents(userId, scheduleId), weekSwapOf(userId), db.subject.findMany({ where: { userId }, select: { id: true, name: true, color: true, icon: true }, orderBy: { name: "asc" } }), loadBreaks(userId, scheduleId)]);
+  const [settings, confirmed, allRows, allBreaks, subjects] = await Promise.all([
+    db.userSettings.findUnique({ where: { userId }, select: { activeScheduleId: true, scheduleWeekSwap: true } }),
+    db.scheduleImport.findMany({ where: { userId, status: "CONFIRMED" }, select: { id: true } }),
+    db.scheduleEvent.findMany({ where: { userId }, include: { overrides: true } }),
+    db.scheduleBreak.findMany({ where: { userId } }),
+    db.subject.findMany({ where: { userId }, select: { id: true, name: true, color: true, icon: true }, orderBy: { name: "asc" } }),
+  ]);
+  const known = new Set(confirmed.map((c) => c.id));
+  if (scheduleId && !known.has(scheduleId)) throw new ApiHttpError("Emploi du temps introuvable.", 404);
+  // Emploi du temps suivi ; s'il a été supprimé entre-temps, tous les emplois du temps sont affichés.
+  const active = settings?.activeScheduleId && known.has(settings.activeScheduleId) ? settings.activeScheduleId : null;
+  const inScope = (x: { importId: string | null }) => (scheduleId ? x.importId === scheduleId : !active || x.importId === null || x.importId === active);
+  const rows = allRows.filter(inScope);
+  const breaks: (BreakRecord & { id: string; importId: string | null })[] = allBreaks.filter(inScope);
+  const swap = settings?.scheduleWeekSwap ?? false;
   const byId = new Map(subjects.map((s) => [s.id, s]));
   const occurrences = expand(rows, from, to, swap).map((o) => ({ ...o, subject: o.subjectId ? (byId.get(o.subjectId) ?? null) : null }));
-  return { occurrences, subjects, weekSwap: swap, breaks };
+  return { occurrences, subjects, weekSwap: swap, breaks, totalEvents: allRows.length };
 }
 
 export async function listRange(userId: string, from: string, to: string, scheduleId?: string | null) {

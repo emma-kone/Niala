@@ -50,3 +50,7 @@ node_modules
 /storage/
 
 /.next-local/
+
+# banc de mesure (scripts/perf)
+/.pglite-perf/
+/.next-perf/
