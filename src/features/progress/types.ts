@@ -53,6 +53,8 @@ export interface DashboardData {
   highlight: { kind: string; eyebrow: string; title: string; detail: string; href: string | null; cta: string | null };
   suggestions: { id: string; kind: string; title: string; text: string; href: string | null; recommendationId?: string }[];
   overallMastery: number | null;
+  /** Série de jours consécutifs d'activité ; null si le calcul a échoué (le reste du tableau de bord reste affiché). */
+  streak: { current: number; longest: number; doneToday: boolean; atRisk: boolean; lastDay: string | null; totalDays: number; week: { date: string; active: boolean }[]; message: string } | null;
 }
 
 export interface ProgressConcept {

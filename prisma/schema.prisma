@@ -37,6 +37,7 @@ model User {
   recommendations StudyRecommendation[]
   aiLogs          AIUsageLog[]
   pushSubscriptions PushSubscription[]
+  activityDays    ActivityDay[]
 
   // ── V2 ──
   folders          Folder[]
@@ -1603,4 +1604,17 @@ model RateLimit {
   resetAt DateTime
 
   @@index([resetAt])
+}
+
+/// Un jour d'activité de l'étudiant (série de jours consécutifs). Une ligne par jour et par étudiant : la date est celle de
+/// l'appareil de l'étudiant (AAAA-MM-JJ), enregistrée telle quelle, sans conversion de fuseau. La série et le record sont
+/// recalculés à partir de ces lignes (voir server/domain/streak.ts).
+model ActivityDay {
+  userId    String
+  day       String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, day])
 }

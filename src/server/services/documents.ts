@@ -3,6 +3,7 @@ import { after } from "next/server";
 import { db } from "@/lib/db";
 import { softDelete } from "@/lib/soft-delete";
 import { ApiHttpError } from "@/lib/api-helpers";
+import { markActivity } from "@/server/services/progress/streak";
 import { chunkText, extractContent } from "@/lib/extraction";
 import { getStorage, newStorageKey, previewKey, withPreviewKeys } from "@/server/storage";
 import { canConvertToPdf, convertToPdf } from "@/server/pdf/convert";
@@ -488,6 +489,7 @@ export async function listRecentDocuments(userId: string, take = 6) {
 export async function recordOpening(userId: string, id: string) {
   const res = await db.document.updateMany({ where: { id, userId }, data: { lastOpenedAt: new Date() } });
   if (res.count === 0) throw new ApiHttpError("Document introuvable.", 404);
+  markActivity(userId);
   return { ok: true };
 }
 
@@ -504,6 +506,7 @@ export async function recordReading(userId: string, id: string, page: number) {
     if (existing) await tx.learningActivity.update({ where: { id: existing.id }, data });
     else await tx.learningActivity.create({ data: { userId, type: "READING", refType: "document", refId: id, ...data } });
   });
+  markActivity(userId);
   return { page: safePage };
 }
 

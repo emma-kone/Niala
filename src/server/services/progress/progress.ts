@@ -9,6 +9,7 @@ import { addDays } from "@/server/domain/schedule";
 import { occurrencesBetween } from "@/server/services/agenda/agenda";
 import { listTasks, taskOverview } from "@/server/services/agenda/tasks";
 import { isOpen } from "@/server/domain/academic";
+import { getStreak } from "./streak";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Progression adaptative. Sources de vérité : les RÉPONSES corrigées et les TESTS de laboratoire.
@@ -266,7 +267,7 @@ async function agendaOverview(userId: string, clock: { date: string; minutes: nu
 export async function dashboard(userId: string, clock: { date: string; minutes: number }) {
   const tomorrow = addDays(clock.date, 1);
   // Toutes les lectures sont indépendantes : elles partent ensemble pour que le temps de réponse soit celui de la plus lente.
-  const [{ courses, schedule, breaks }, recentDocs, unopened, subjects, concepts, activities, recs, failedDocs, attempts, labRuns, academic] = await Promise.all([
+  const [{ courses, schedule, breaks }, recentDocs, unopened, subjects, concepts, activities, recs, failedDocs, attempts, labRuns, academic, streak] = await Promise.all([
     courseWindow(userId, clock.date, addDays(clock.date, NEXT_COURSE_HORIZON_DAYS)),
     // Classement sur la dernière consultation réelle ; un document n'y figure qu'une fois, même ouvert plusieurs fois.
     db.document.findMany({ where: { userId, lastOpenedAt: { not: null }, subjectId: { not: null } }, orderBy: [{ lastOpenedAt: "desc" }, { id: "asc" }], take: 3, select: { id: true, name: true, type: true, subjectId: true, lastOpenedAt: true, lastPage: true, pageCount: true, currentVersion: { select: { pageCount: true } }, subject: { select: { name: true, color: true, icon: true } } } }),
@@ -279,6 +280,8 @@ export async function dashboard(userId: string, clock: { date: string; minutes: 
     db.exerciseAttempt.findMany({ where: { userId, status: "GRADED", exerciseId: { not: null }, exercise: { is: { deletedAt: null } } }, orderBy: { finishedAt: "desc" }, take: 5, select: { id: true, score: true, maxScore: true, finishedAt: true, exerciseId: true, exercise: { select: { title: true, subjectId: true } } } }),
     db.labRun.findMany({ where: { userId }, orderBy: { createdAt: "desc" }, take: 5, select: { id: true, createdAt: true, tests: true, workspace: { select: { id: true, title: true, kind: true } } } }),
     agendaOverview(userId, clock),
+    // Série de jours : une lecture légère, lancée avec les autres ; une erreur ici n'empêche pas le tableau de bord.
+    getStreak(userId, clock.date).catch(() => null),
   ]);
 
   const perSubject = subjects.map((s) => {
@@ -340,7 +343,7 @@ export async function dashboard(userId: string, clock: { date: string; minutes: 
     highlight: recentDocs.length ? undefined : highlight,
   });
 
-  return { resume, next: recs[0] ?? null, recommendations: recs.slice(0, 5), attention, subjects: perSubject, recent, hasData: subjects.length > 0, recentDocuments, today: courses, schedule, breaks, academic, highlight, suggestions, overallMastery };
+  return { resume, next: recs[0] ?? null, recommendations: recs.slice(0, 5), attention, subjects: perSubject, recent, hasData: subjects.length > 0, recentDocuments, today: courses, schedule, breaks, academic, highlight, suggestions, overallMastery, streak };
 }
 
 // ── Page Progression ─────────────────────────────────────────────────────────

@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import { usePathname } from "next/navigation";
 import { api } from "@/lib/client-api";
+import { STREAK_KEY } from "@/features/streak/use-streak";
 import { cn } from "@/lib/utils";
 import { routes } from "@/config/routes";
 import { useAppStore } from "@/store/app-store";
@@ -45,9 +46,12 @@ function Shell({ children, initial }: { children: React.ReactNode; initial: Sess
   const toolbar = useToolbarVisible();
   // La page ne défile plus : c'est la zone de contenu qui revient en haut à chaque changement d'onglet.
   const content = useRef<HTMLElement>(null);
+  const queryClient = useQueryClient();
   useEffect(() => {
     content.current?.scrollTo({ top: 0 });
-  }, [pathname]);
+    // Une activité a pu avoir lieu sur la page quittée : la série est relue, mais seulement si elle a plus d'une minute.
+    void queryClient.refetchQueries({ queryKey: STREAK_KEY, stale: true });
+  }, [pathname, queryClient]);
   // Le compte connu du serveur sert dès le premier rendu, avant que le magasin côté navigateur ne soit renseigné.
   const storedUser = useAppStore((s) => s.user);
   const user = storedUser ?? initial.user;

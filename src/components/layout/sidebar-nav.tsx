@@ -8,6 +8,7 @@ import { NialaLogo, NialaMark } from "@/components/brand/niala-logo";
 import { AccountMenu } from "@/components/layout/account-menu";
 import { NAV_GROUPS, isNavActive } from "@/config/navigation";
 import { cn } from "@/lib/utils";
+import { StreakBadge } from "@/features/streak/streak-badge";
 import type { AppUser } from "@/store/app-store";
 
 interface SidebarNavProps {
@@ -97,6 +98,7 @@ export function SidebarNav({ user, onLogout }: SidebarNavProps) {
         ))}
       </nav>
 
+      <StreakBadge collapsed={collapsed} className="mx-2 mb-2" />
       <div className={cn("mx-2 mb-3 flex items-center gap-1.5 rounded-[38px] bg-sidebar-accent p-2", collapsed && "flex-col")}>
         <AccountMenu user={user} collapsed={collapsed} />
         <button type="button" onClick={onLogout} aria-label="Se déconnecter" title="Se déconnecter" className="rounded-lg p-1.5 text-sidebar-foreground/70 hover:bg-sidebar-border hover:text-sidebar-foreground">

@@ -68,6 +68,9 @@
   --niala-accent: #8061b3;
   --niala-accent-foreground: #faf8fc;
   --accent-sun: #efcb72;
+  --streak-orange: #e2700b;
+  --streak-core: #ffc93c;
+  --streak-cold: #d2cdd8;
   --accent-sky: #bfcfe8;
   --accent-lilac: #dec8f0;
   --accent-mint: #bce2cb;
@@ -144,6 +147,9 @@
   --niala-accent: #cb6ce6;
   --niala-accent-foreground: #000000;
   --accent-sun: #f4c95d;
+  --streak-orange: #ff9f3a;
+  --streak-core: #ffd45e;
+  --streak-cold: #5e5570;
   --accent-sky: #b8cbea;
   --accent-lilac: #e7c6f5;
   --accent-mint: #b7e4c7;
@@ -555,4 +561,89 @@ samp,
    doit l'emporter sur la feuille de style de pdf.js. */
 .textLayer :is(span, br) {
   cursor: default;
+}
+
+/* ── Série de jours : flamme du tableau de bord ───────────────────────────────
+   Séquence de célébration (data-play) : la flamme grise s'écrase, s'étire, s'allume, jette des étincelles ;
+   le chiffre suivant monte à la place de l'ancien et le jour se coche. Au repos, une flamme allumée ondule doucement. */
+/* Éteinte, la flamme prend un gris tiré de la grande carte : elle reste lisible quel que soit le thème. */
+.niala-streak { --streak-cold: color-mix(in srgb, var(--dash-panel-foreground) 24%, var(--dash-panel)); }
+.niala-streak-outer { fill: var(--streak-cold); transition: fill 0.3s ease; }
+.niala-streak-core { fill: color-mix(in srgb, var(--streak-cold) 55%, white); transform-box: fill-box; transform-origin: 50% 100%; transition: fill 0.3s ease; }
+.niala-streak-glow { fill: color-mix(in srgb, var(--streak-cold) 35%, transparent); transform-box: fill-box; transform-origin: center; }
+.niala-streak-flame { transform-box: fill-box; transform-origin: 50% 100%; }
+svg[data-lit="true"] .niala-streak-outer { fill: var(--streak-orange); }
+svg[data-lit="true"] .niala-streak-core { fill: var(--streak-core); }
+svg[data-lit="true"] .niala-streak-glow { fill: color-mix(in srgb, var(--streak-core) 45%, transparent); }
+svg[data-lit="true"]:not([data-play]):not([data-calm]) .niala-streak-flame { animation: niala-streak-flicker 2.6s ease-in-out infinite; }
+svg[data-lit="true"]:not([data-play]):not([data-calm]) .niala-streak-core { animation: niala-streak-core 1.9s ease-in-out infinite; }
+
+svg[data-play] .niala-streak-flame { animation: niala-streak-ignite 1.15s cubic-bezier(.3,.7,.3,1) both; }
+svg[data-play] .niala-streak-outer { animation: niala-streak-light 1.15s linear both; }
+svg[data-play] .niala-streak-core { animation: niala-streak-core-in 1.15s ease-out both; }
+svg[data-play] .niala-streak-glow { animation: niala-streak-glow-in 1.15s ease-out both; }
+.niala-streak-sparks rect { fill: var(--streak-core); opacity: 0; animation: niala-streak-spark 0.7s ease-out both; }
+.niala-streak-sparks rect:nth-child(even) { fill: var(--streak-orange); }
+.niala-streak-old { animation: niala-streak-out 0.35s 0.55s ease-in both; }
+.niala-streak-new { animation: niala-streak-in 0.5s 0.62s cubic-bezier(.2,1.6,.4,1) both; }
+.niala-streak-day { animation: niala-streak-day 0.45s 1.05s cubic-bezier(.2,1.6,.4,1) both; }
+
+@keyframes niala-streak-ignite {
+  0% { transform: scale(1, 1); }
+  18% { transform: scale(1.35, 0.55); }
+  38% { transform: scale(0.82, 1.22) translateY(-8%); }
+  56% { transform: scale(1.1, 0.94); }
+  72% { transform: scale(0.97, 1.04); }
+  100% { transform: scale(1, 1); }
+}
+@keyframes niala-streak-light {
+  0%, 26% { fill: var(--streak-cold); }
+  40%, 100% { fill: var(--streak-orange); }
+}
+@keyframes niala-streak-core-in {
+  0%, 30% { transform: scale(0); fill: var(--streak-core); }
+  60% { transform: scale(1.15); fill: var(--streak-core); }
+  100% { transform: scale(1); fill: var(--streak-core); }
+}
+@keyframes niala-streak-glow-in {
+  0%, 30% { transform: scale(0.3); opacity: 0; fill: color-mix(in srgb, var(--streak-core) 45%, transparent); }
+  60% { transform: scale(1.2); opacity: 1; fill: color-mix(in srgb, var(--streak-core) 45%, transparent); }
+  100% { transform: scale(1); fill: color-mix(in srgb, var(--streak-core) 45%, transparent); }
+}
+@keyframes niala-streak-spark {
+  0% { opacity: 0; transform: translate(0, 0) scale(0.4); }
+  20% { opacity: 1; }
+  100% { opacity: 0; transform: translate(var(--sx), var(--sy)) scale(1) rotate(90deg); }
+}
+@keyframes niala-streak-out { to { transform: translateY(-110%); opacity: 0; } }
+@keyframes niala-streak-in {
+  from { transform: translateY(110%) scale(0.6); opacity: 0; }
+  to { transform: translateY(0) scale(1); opacity: 1; }
+}
+@keyframes niala-streak-day {
+  from { transform: scale(0.2); }
+  to { transform: scale(1); }
+}
+@keyframes niala-streak-flicker {
+  0%, 100% { transform: scale(1, 1) skewX(0deg); }
+  30% { transform: scale(0.98, 1.04) skewX(-2deg); }
+  65% { transform: scale(1.02, 0.98) skewX(1.5deg); }
+}
+@keyframes niala-streak-core {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(0.9, 1.08); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .niala-streak *, .niala-streak-flame, .niala-streak-core, .niala-streak-outer, .niala-streak-glow, .niala-streak-sparks rect { animation: none !important; }
+  .niala-streak-sparks, .niala-streak-old { display: none; }
+}
+
+/* ── Clay, l'assistant IA : bulle au-dessus du robot ── */
+.niala-clay-bubble { animation: niala-clay-bubble 0.22s ease-out both; }
+@keyframes niala-clay-bubble {
+  from { opacity: 0; transform: translate(-50%, calc(-100% + 6px)) scale(0.92); }
+  to { opacity: 1; transform: translate(-50%, -100%) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .niala-clay-bubble { animation: none; }
 }
