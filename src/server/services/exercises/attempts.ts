@@ -11,6 +11,7 @@ import { gradeAnswer } from "./evaluation";
 import type { AttemptReview } from "./review";
 import { refreshProgress } from "@/server/services/progress/progress";
 import { track } from "@/server/analytics/track";
+import { markActivity } from "@/server/services/progress/streak";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tentatives : copie FIGÉE de l'exercice (snapshot), réponses enregistrées au fil de l'eau (reprise),
@@ -261,6 +262,7 @@ async function finalize(userId: string, attemptId: string) {
     }),
     db.learningActivity.updateMany({ where: { userId, refType: "attempt", refId: attemptId }, data: { status: "DONE" } }),
   ]);
+  markActivity(userId);
   track(userId, "exercise.complete", { module: "exercises", sourceRef: attemptId, durationMs: (a.durationSec ?? 0) * 1000 || undefined, props: { score, max: a.maxScore ?? null } });
   await refreshProgress(userId); // maîtrise par notion + recommandations (n'échoue jamais la correction)
 }

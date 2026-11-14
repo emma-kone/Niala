@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { STREAK_KEY } from "@/features/streak/use-streak";
+import { StreakHero } from "@/features/streak/streak-flame";
 import { ArrowRight, ArrowUpRight, BookOpen, CalendarDays, CalendarPlus, Check, ChevronDown, ClipboardList, Coffee, FileText, FileUp, Lightbulb, X } from "lucide-react";
 import { api } from "@/lib/client-api";
 import { routes } from "@/config/routes";
@@ -86,7 +88,11 @@ function Hero({ data, name }: { data: DashboardData; name: string }) {
         <circle cx="210" cy="190" r="118" fill="url(#niala-glow)" />
         {[150, 182].map((r) => <circle key={r} cx="210" cy="190" r={r} fill="none" stroke="currentColor" strokeOpacity=".12" />)}
       </svg>
-      <p className="relative text-lg font-medium">Bonjour{name ? ` ${name}` : ""}</p>
+      {/* En haut à droite du L : la série de jours (dans le flux sur petit écran, posée dans le coin sur grand écran). */}
+      <div className="relative flex items-start justify-between gap-3">
+        <p className="text-lg font-medium">Bonjour{name ? ` ${name}` : ""}</p>
+        {data.streak && <StreakHero streak={data.streak} />}
+      </div>
       <div className="relative mt-4 lg:max-w-[62%]">
         {doc ? (
           <ResumeContent doc={doc} />
@@ -369,6 +375,12 @@ export default function DashboardView() {
     refetchOnWindowFocus: true, // retour sur l'onglet : classement et journée sont remis à jour
   });
   const data = query.data ?? null;
+  // L'indicateur de la barre latérale reprend la série déjà reçue : pas d'appel supplémentaire sur cette page.
+  const queryClient = useQueryClient();
+  const streakFromDashboard = data?.streak ?? null;
+  useEffect(() => {
+    if (streakFromDashboard) queryClient.setQueryData(STREAK_KEY, streakFromDashboard);
+  }, [streakFromDashboard, queryClient]);
   const error = actionError ?? (query.error ? errText(query.error, "Chargement impossible.") : null);
   const { refetch } = query;
   const load = useCallback(() => {

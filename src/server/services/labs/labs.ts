@@ -12,6 +12,7 @@ import { generateHint, type HintLevel } from "./hints";
 import { extractLabExercises } from "./import";
 import { refreshProgress } from "@/server/services/progress/progress";
 import { track } from "@/server/analytics/track";
+import { markActivity } from "@/server/services/progress/streak";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Laboratoires code & SQL : espaces de travail libres ou d'exercice, exécution isolée, tests objectifs,
@@ -339,6 +340,7 @@ export async function runWorkspace(userId: string, id: string, raw: unknown) {
 
   if (unavailable) throw new ApiHttpError(`L'exécution isolée est indisponible : ${unavailable}`, 503);
 
+  markActivity(userId);
   const run = await db.labRun.create({
     data: {
       userId,

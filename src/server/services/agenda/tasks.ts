@@ -6,6 +6,7 @@ import { softDelete } from "@/lib/soft-delete";
 import { DEFAULT_PREFS, PRIORITIES, TASK_STATUSES, TASK_TYPES, effectiveStatus, isOpen, planStudySessions, type BusySlot, type PlannerPrefs, type StoredStatus } from "@/server/domain/academic";
 import { addDays, breakOverlap, findConflicts, isDate, overlaps, validateTimes, weekday } from "@/server/domain/schedule";
 import { loadBreaks, occurrencesBetween, ownedSchedule } from "./agenda";
+import { markActivity } from "@/server/services/progress/streak";
 
 // Tâches, séances de travail et préférences de l'agenda académique. Tout est filtré par propriétaire.
 
@@ -84,6 +85,7 @@ export async function updateTask(userId: string, id: string, patch: z.infer<type
     where: { id },
     data: { ...patch, ...(patch.status === "TERMINE" && !task.completedAt ? { completedAt: now } : {}), ...(patch.status === "SOUMIS" ? { submittedAt: now, completedAt: task.completedAt ?? now } : {}) },
   });
+  if (completing) markActivity(userId);
   // Tâche hebdomadaire : la suivante est créée quand celle-ci est terminée pour de bon.
   const finished = completing && (patch.status === "SOUMIS" || !updated.requiresSubmission);
   if (finished && updated.recurrence === "WEEKLY") {
@@ -167,6 +169,7 @@ export async function deleteSession(userId: string, id: string) {
 export async function setSessionDone(userId: string, id: string, done: boolean) {
   const { count } = await db.studySession.updateMany({ where: { id, userId }, data: { done } });
   if (!count) throw new ApiHttpError("Séance introuvable.", 404);
+  if (done) markActivity(userId);
   return { ok: true };
 }
 

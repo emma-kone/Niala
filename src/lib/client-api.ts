@@ -12,6 +12,13 @@ export class ApiError extends Error {
   }
 }
 
+/** Date de l'appareil (AAAA-MM-JJ) : le serveur s'en sert pour dater l'activité de la série de jours. */
+function localDate() {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 /** Une lecture qui ne répond pas ne doit pas laisser un écran en chargement indéfiniment. */
 const READ_TIMEOUT_MS = 45_000;
 
@@ -21,7 +28,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     res = await fetch(url, {
       ...init,
       signal: init?.signal ?? (!init?.method || init.method === "GET" ? AbortSignal.timeout(READ_TIMEOUT_MS) : undefined),
-      headers: init?.body instanceof FormData ? init?.headers : { "Content-Type": "application/json", ...init?.headers },
+      headers: { "x-niala-date": localDate(), ...(init?.body instanceof FormData ? init?.headers : { "Content-Type": "application/json", ...init?.headers }) },
       credentials: "same-origin",
     });
   } catch (e) {
@@ -44,7 +51,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 
 /** Envoi avec réponse en flux de lignes JSON : `status` et `delta` pendant la rédaction, puis le résultat final. */
 export async function postStream<T>(url: string, body: unknown, on: { status: (text: string) => void; delta: (text: string) => void; /** Autres événements du flux (ex. proposition d'action). */ other?: (event: Record<string, unknown>) => void }, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" }, body: JSON.stringify(body), credentials: "same-origin", signal });
+  const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/x-ndjson", "x-niala-date": localDate() }, body: JSON.stringify(body), credentials: "same-origin", signal });
   if (!res.ok || !res.body) {
     const data = (await res.json().catch(() => null)) as { error?: string } | null;
     throw new ApiError(data?.error ?? `Erreur ${res.status}`, res.status);

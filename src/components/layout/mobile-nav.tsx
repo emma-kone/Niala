@@ -9,6 +9,7 @@ import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/s
 import { AccountMenu } from "@/components/layout/account-menu";
 import { NAV_GROUPS, isNavActive } from "@/config/navigation";
 import { cn } from "@/lib/utils";
+import { StreakBadge } from "@/features/streak/streak-badge";
 import type { AppUser } from "@/store/app-store";
 
 /** En dessous de 1024 px : une barre compacte et un menu burger qui reprend la navigation complète. */
@@ -65,6 +66,7 @@ export function MobileNav({ user, onLogout }: { user: AppUser | null; onLogout: 
         </SheetContent>
       </Sheet>
       <NialaLogo size="sm" tone="accent" className="gap-2" />
+      <StreakBadge className="ml-auto py-1.5" />
     </header>
   );
 }
