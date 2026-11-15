@@ -88,10 +88,10 @@ function Hero({ data, name }: { data: DashboardData; name: string }) {
         <circle cx="210" cy="190" r="118" fill="url(#niala-glow)" />
         {[150, 182].map((r) => <circle key={r} cx="210" cy="190" r={r} fill="none" stroke="currentColor" strokeOpacity=".12" />)}
       </svg>
-      {/* En haut à droite du L : la série de jours (dans le flux sur petit écran, posée dans le coin sur grand écran). */}
-      <div className="relative flex items-start justify-between gap-3">
+      {/* En haut à droite du L : la pastille de la série. Si la place manque à côté du bonjour, elle passe dessous, à droite. */}
+      <div className="relative flex flex-wrap items-start justify-between gap-x-3 gap-y-1.5">
         <p className="text-lg font-medium">Bonjour{name ? ` ${name}` : ""}</p>
-        {data.streak && <StreakHero streak={data.streak} />}
+        {data.streak && <StreakHero streak={data.streak} className="ml-auto" />}
       </div>
       <div className="relative mt-4 lg:max-w-[62%]">
         {doc ? (

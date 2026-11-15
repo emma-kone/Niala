@@ -49,8 +49,9 @@ export function FlameMark({ lit, play, calm, className }: { lit: boolean; play?:
 }
 
 /**
- * Carte de la série : flamme animée, nombre de jours, libellé et semaine en cours. Prévue pour le coin haut droit de la grande
- * forme en L : ligne compacte dans le flux jusqu'à 1280 px, carte complète posée dans le coin au-delà.
+ * Pastille de la série, en haut à droite de la grande forme en L : flamme animée, nombre de jours, libellé et semaine en cours.
+ * C'est la seule forme, à toutes les tailles d'écran (choix de l'utilisatrice). Le record et le message d'encouragement sont
+ * dans l'infobulle et le libellé accessible.
  */
 export function StreakHero({ streak, className }: { streak: StreakData; className?: string }) {
   // Journée faite : c'est elle qui déclenche l'animation d'allumage. La carte garde ses couleurs dans tous les cas (même à 0 jour) ;
@@ -86,12 +87,12 @@ export function StreakHero({ streak, className }: { streak: StreakData; classNam
       aria-label={`Série de jours : ${days(streak.current)}, ${streak.doneToday ? "fait aujourd'hui" : "à faire aujourd'hui"}. Record : ${days(streak.longest)}. ${streak.message}`}
       data-testid="streak"
       data-play={play || undefined}
-      className={cn("niala-streak flex shrink-0 items-center gap-3 rounded-[26px] bg-[color-mix(in_srgb,var(--dash-panel-foreground)_7%,var(--dash-panel))] px-3.5 py-2.5 text-dash-panel-foreground shadow-[0_12px_30px_-18px_rgb(0_0_0/0.35)] xl:absolute xl:-right-4 xl:-top-1 xl:flex-col xl:gap-1 xl:rounded-[32px] xl:px-5 xl:py-4", className)}
-      title={streak.message}
+      className={cn("niala-streak flex shrink-0 items-center gap-3 rounded-[26px] bg-[color-mix(in_srgb,var(--dash-panel-foreground)_7%,var(--dash-panel))] px-3.5 py-2 text-dash-panel-foreground shadow-[0_12px_30px_-18px_rgb(0_0_0/0.35)]", className)}
+      title={`${streak.message} Record : ${days(streak.longest)}.`}
     >
-      <FlameMark lit play={play} calm={!lit} className="h-11 w-9 xl:h-[clamp(3rem,8vh,4.5rem)] xl:w-auto" />
-      <div className="min-w-0 xl:text-center">
-        <p className={cn("tnum relative h-[1.1em] overflow-hidden text-3xl font-extrabold leading-none xl:text-[clamp(1.9rem,5vh,2.6rem)] text-[var(--streak-orange)]")}>
+      <FlameMark lit play={play} calm={!lit} className="h-10 w-8 shrink-0" />
+      <div className="min-w-0 shrink-0">
+        <p className={cn("tnum relative h-[1.1em] overflow-hidden text-3xl font-extrabold leading-none text-[var(--streak-orange)]")}>
           {play ? (
             <>
               <span className="niala-streak-old absolute inset-x-0 text-dash-panel-foreground/35">{previous}</span>
@@ -101,9 +102,9 @@ export function StreakHero({ streak, className }: { streak: StreakData; classNam
             streak.current
           )}
         </p>
-        <p className="mt-0.5 text-xs font-semibold text-[var(--streak-orange)]">{streak.current > 1 ? "jours de série" : "jour de série"}</p>
+        <p className="mt-0.5 whitespace-nowrap text-xs font-semibold text-[var(--streak-orange)]">{streak.current > 1 ? "jours de série" : "jour de série"}</p>
       </div>
-      <ol aria-label="Sept derniers jours" className="hidden items-center gap-1 sm:flex lg:hidden xl:mt-1.5 xl:flex">
+      <ol aria-label="Sept derniers jours" className="flex items-center gap-0.5 sm:gap-1">
         {streak.week.map((d) => {
           const isToday = d.date === today;
           return (
@@ -112,7 +113,7 @@ export function StreakHero({ streak, className }: { streak: StreakData; classNam
               <span
                 aria-hidden
                 className={cn(
-                  "flex h-4 w-4 items-center justify-center rounded-full",
+                  "flex h-3.5 w-3.5 items-center justify-center rounded-full sm:h-4 sm:w-4",
                   d.active ? "bg-[var(--streak-orange)] text-white" : "bg-dash-panel-foreground/15",
                   isToday && !d.active && "ring-2 ring-[var(--streak-orange)]/50",
                   isToday && d.active && play && "niala-streak-day",
@@ -124,10 +125,7 @@ export function StreakHero({ streak, className }: { streak: StreakData; classNam
           );
         })}
       </ol>
-      <div className="hidden min-w-0 text-center xl:block">
-        <p className="tnum text-[11px] font-medium text-dash-panel-foreground/60">Record : {days(streak.longest)}</p>
-        <p className="mt-0.5 line-clamp-2 max-w-[13rem] text-[11px] leading-snug text-dash-panel-foreground/60">{streak.message}</p>
-      </div>
+      <p className="sr-only">Record : {days(streak.longest)}. {streak.message}</p>
     </div>
   );
 }
