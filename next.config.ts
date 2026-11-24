@@ -73,6 +73,7 @@ const nextConfig: NextConfig = {
     ],
   },
   experimental: {
+    agentUpgrade: "security",
     // Un module déjà visité se rouvre instantanément depuis le cache du navigateur (sans écran de chargement) ;
     // ses données sont ensuite rafraîchies en arrière-plan par le module lui-même.
     staleTimes: { dynamic: 180, static: 600 },
