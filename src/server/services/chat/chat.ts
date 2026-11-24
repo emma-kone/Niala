@@ -16,6 +16,7 @@ import { saveVerification, type SavedSource } from "@/server/reliability/store";
 import { WebSearchUnavailableError, searchWeb, webStatus, type WebResult } from "@/server/ai/web-search";
 import { documentCoverage, outline, readPart, resolveDocs, searchPassages, type DocInfo, type Hit, type Scope } from "./retrieval";
 import { track } from "@/server/analytics/track";
+import { addAssistantNote, type AssistantNoteResult } from "@/server/services/notes";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Chat pédagogique. Deux portées STRICTEMENT séparées :
@@ -40,6 +41,15 @@ export const createSchema = z.object({
   documentId: z.string().min(1).optional(),
   subjectId: z.string().min(1).optional(),
 });
+const MAX_IMAGES = 4;
+/** Taille maximale d'une image (en caractères base64, soit environ 4 Mo de fichier). */
+const MAX_IMAGE_BASE64 = 5_600_000;
+const imageSchema = z.object({
+  name: z.string().max(200).default("image"),
+  mimeType: z.enum(["image/png", "image/jpeg", "image/webp", "image/gif", "image/heic", "image/heif"]),
+  data: z.string().min(1).max(MAX_IMAGE_BASE64, "Image trop volumineuse (4 Mo maximum).").regex(/^[A-Za-z0-9+/]+={0,2}$/, "Image illisible."),
+});
+export type ChatImage = z.infer<typeof imageSchema>;
 export const messageSchema = z
   .object({
     content: z.string().trim().max(MAX_MESSAGE_CHARS, "Message trop long.").default(""),
@@ -48,8 +58,8 @@ export const messageSchema = z
     documentIds: z.array(z.string().min(1)).max(12).optional(),
     /** Relance la dernière question au lieu d'en poser une nouvelle. */
     regenerate: z.boolean().optional(),
-    /** Langue de discussion choisie par l'étudiant (français ou anglais). */
-    lang: z.enum(["fr", "en"]).optional(),
+    /** Images jointes à ce message (lues par le modèle, non conservées comme documents). */
+    images: z.array(imageSchema).max(MAX_IMAGES, `${MAX_IMAGES} images au maximum par message.`).optional(),
   })
   .refine((m) => m.regenerate || m.content.length > 0, { message: "Message vide.", path: ["content"] });
 
@@ -152,6 +162,26 @@ const TOOLS: Record<"GLOBAL" | "DOCUMENT", ToolDeclaration[]> = {
   ],
 };
 
+/** Écriture dans les notes de cours : proposée seulement quand l'étudiant le demande explicitement. */
+const NOTE_TOOL_FIELDS = {
+  content: { type: "STRING" as const, description: "Contenu de la note en Markdown simple (titres #, listes, **gras**, citations >, code). Reprends les mots de l'étudiant ou du cours, sans rien inventer." },
+  title: { type: "STRING" as const, description: "Titre court de ce qui est ajouté (facultatif)" },
+  mode: { type: "STRING" as const, description: "« suite » (défaut) : à la suite des notes que l'étudiant a déjà prises sur ce cours ; « nouvelle » : une note séparée liée au cours" },
+  page: { type: "INTEGER" as const, description: "Page du cours concernée (facultatif)" },
+};
+const NOTE_TOOL: Record<"GLOBAL" | "DOCUMENT", ToolDeclaration> = {
+  DOCUMENT: {
+    name: "add_to_notes",
+    description: "Ajoute du contenu aux notes de ce cours : à la suite des notes que l'étudiant a déjà prises, ou dans une nouvelle note liée au cours. À n'utiliser QUE lorsque l'étudiant demande explicitement d'ajouter, d'enregistrer ou de noter quelque chose dans ses notes.",
+    parameters: { type: "OBJECT", properties: NOTE_TOOL_FIELDS, required: ["content"] },
+  },
+  GLOBAL: {
+    name: "add_to_notes",
+    description: "Ajoute du contenu aux notes d'un des cours de l'étudiant (à la suite de ses notes, ou dans une nouvelle note liée au cours). À n'utiliser QUE lorsque l'étudiant demande explicitement d'ajouter, d'enregistrer ou de noter quelque chose dans ses notes.",
+    parameters: { type: "OBJECT", properties: { document_id: { type: "STRING", description: "Identifiant du cours concerné" }, ...NOTE_TOOL_FIELDS }, required: ["document_id", "content"] },
+  },
+};
+
 const WEB_TOOL: ToolDeclaration = {
   name: "search_web",
   description: "Cherche sur le web (documentation officielle, universités, références) pour compléter ou vérifier un cours, ou répondre à une question hors cours. Chaque source est classée « reconnue » ou « à vérifier ».",
@@ -165,6 +195,8 @@ class Evidence {
   readonly docs = new Map<string, string>();
   readonly pagesRead = new Set<string>();
   readonly toolCalls: string[] = [];
+  /** Notes écrites pendant ce tour à la demande de l'étudiant. */
+  readonly notes: AssistantNoteResult[] = [];
   /** Recherches web lancées pendant ce tour, avec le nombre de résultats (0 = rien trouvé, -1 = moteur en échec). */
   readonly webSearches: { query: string; found: number }[] = [];
   /** Texte intégral de chaque passage : c'est là que les preuves sont recherchées (la citation affichée est tronquée). */
@@ -275,6 +307,25 @@ async function runTool(ctx: ToolContext, name: string, args: Record<string, unkn
           return { erreur: e instanceof WebSearchUnavailableError ? "La recherche web est momentanément indisponible. Dis-le à l'étudiant et réponds sans prétendre avoir vérifié sur le web (marque ta réponse « non vérifiée en ligne »)." : "Recherche web en échec." };
         }
       }
+      case "add_to_notes": {
+        const doc = known(docId);
+        if (!doc) return { erreur: "Document inconnu ou non consultable." };
+        const content = String(args.content ?? "").trim();
+        if (!content) return { erreur: "Contenu vide." };
+        try {
+          const saved = await addAssistantNote(ctx.userId, {
+            documentId: doc.id,
+            markdown: content,
+            title: typeof args.title === "string" ? args.title : undefined,
+            separate: String(args.mode ?? "").toLowerCase().startsWith("nouv"),
+            page: Number.isInteger(args.page) ? Number(args.page) : null,
+          });
+          ctx.ev.notes.push(saved);
+          return { resultat: saved.action === "appended" ? `Ajouté à la suite de tes notes sur « ${doc.name} ».` : `Nouvelle note « ${saved.title} » créée et liée à « ${doc.name} ».`, consigne: "Confirme brièvement à l'étudiant ce qui a été ajouté à ses notes." };
+        } catch (e) {
+          return { erreur: e instanceof ApiHttpError ? e.message : "Les notes sont momentanément indisponibles." };
+        }
+      }
       case "get_outline": {
         if (!known(docId)) return { erreur: "Document inconnu ou non consultable." };
         const o = await outline(ctx.userId, docId!);
@@ -302,16 +353,15 @@ function coverageText(docs: { doc: DocInfo; cov: Coverage }[]): string {
     .join("\n");
 }
 
-export type ChatLang = "fr" | "en";
+export type ChatLang = "fr";
 
-/** Consigne de langue : en anglais, toute la réponse est rédigée en anglais, y compris les mentions imposées plus bas. */
-function languageRule(lang: ChatLang): string {
-  if (lang === "fr") return "Réponds en français (sauf demande contraire)";
-  return "LANGUE DE LA CONVERSATION : ANGLAIS. L'étudiant a choisi de discuter en anglais : rédige TOUTES tes réponses en anglais, même si ses documents, ses messages ou ces consignes sont en français (traduis les passages de cours que tu cites et garde entre parenthèses le terme d'origine quand c'est utile). Les mentions imposées ci-dessous s'écrivent en anglais : « According to your document, … », « outside the course: … », « ⚠️ Unofficial / unverified information: », « ❌ I could not find reliable information on … », « (from my own knowledge, not verified online) ». Réponds";
+/** L'assistant répond dans la langue de l'étudiant : le français par défaut, ou celle de sa question. */
+function languageRule(): string {
+  return "Réponds en français, ou dans la langue utilisée par l'étudiant dans son message (sauf demande contraire)";
 }
 
-function systemPrompt(scope: "GLOBAL" | "DOCUMENT", docs: { doc: DocInfo; cov: Coverage }[], totalDocs: number, web: boolean, lang: ChatLang = "fr"): string {
-  return `Tu es l'assistant pédagogique de Niala, une plateforme d'apprentissage personnelle. Tu aides un étudiant : comprendre ses cours, répondre à ses questions de connaissances générales, donner des explications, des exemples, des comparaisons, des approfondissements et des exercices d'application. ${languageRule(lang)}, de façon structurée et concise, en Markdown simple. Écris les formules mathématiques en LaTeX entre doubles dollars, par exemple $$n! = n \\times (n-1)!$$ ; n'utilise jamais un dollar seul pour une formule.
+function systemPrompt(scope: "GLOBAL" | "DOCUMENT", docs: { doc: DocInfo; cov: Coverage }[], totalDocs: number, web: boolean): string {
+  return `Tu es l'assistant pédagogique de Niala, une plateforme d'apprentissage personnelle. Tu aides un étudiant : comprendre ses cours, répondre à ses questions de connaissances générales, donner des explications, des exemples, des comparaisons, des approfondissements et des exercices d'application. ${languageRule()}, de façon structurée et concise, en Markdown simple. Écris les formules mathématiques en LaTeX entre doubles dollars, par exemple $$n! = n \\times (n-1)!$$ ; n'utilise jamais un dollar seul pour une formule.
 
 ${scope === "DOCUMENT" ? "Tu discutes d'UN SEUL cours. Tu n'as accès à aucun autre document." : `Tu as accès à la bibliothèque de l'étudiant (${totalDocs} document(s) consultables). L'étudiant peut aussi te poser des questions sans rapport avec ses cours : réponds alors directement, sans chercher dans ses documents.`}
 
@@ -319,6 +369,7 @@ Méthode :
 - Pour toute question qui porte sur le contenu d'un cours, commence par search_passages (et read_pages / get_outline si la question est large ou si les extraits sont insuffisants). N'affirme jamais ce que dit un cours sans l'avoir consulté dans ce tour de conversation. Si la question est générale ou indépendante des cours, réponds directement, sans mentionner les documents de l'étudiant ni l'état de leur extraction (sauf s'il pose la question).
 - Cite tes sources avec le numéro entre crochets, par exemple [2] ou [1, 3], placé juste après l'affirmation correspondante. N'utilise QUE des numéros fournis par les outils.
 - Distingue ce qui vient du cours (« Selon ton document, … »), ce qui vient du web et ce qui vient de tes connaissances générales (annonce celles-ci : « hors du cours : … ») ; ces dernières n'ont pas de numéro.
+- Notes de cours : l'outil add_to_notes écrit dans les notes de l'étudiant, à la suite de ce qu'il a déjà noté ou dans une nouvelle note liée au cours. Ne l'utilise QUE si l'étudiant le demande explicitement (« ajoute ça à mes notes », « note-le »…), jamais de ta propre initiative ; n'écris que ce qui a été demandé, fidèlement, et confirme ensuite en une phrase ce qui a été ajouté.
 - Si le cours ne traite pas le sujet, dis-le. Si le cours semble contenir une erreur ou une information dépassée, signale-le avec tact et cherche une référence externe si la recherche est disponible.
 
 ${RELIABILITY_RULES}
@@ -359,20 +410,13 @@ async function logUsage(userId: string, model: string, promptChars: number, resp
 
 export type ChatEvent = { type: "status"; text: string } | { type: "delta"; text: string };
 
-const TOOL_STATUS_EN: Record<string, string> = {
-  search_web: "Searching the web…",
-  search_passages: "Searching your courses…",
-  read_pages: "Reading pages…",
-  get_outline: "Reading the outline…",
-  list_documents: "Checking your documents…",
-};
-
 const TOOL_STATUS: Record<string, string> = {
   search_web: "Recherche sur le web…",
   search_passages: "Recherche dans vos cours…",
   read_pages: "Lecture des pages…",
   get_outline: "Lecture du plan…",
   list_documents: "Consultation de vos documents…",
+  add_to_notes: "Ajout à vos notes…",
 };
 
 export interface SendOptions {
@@ -386,8 +430,8 @@ export interface SendOptions {
   documentIds?: string[];
   /** Interruption demandée par l'étudiant : le texte déjà rédigé est conservé. */
   signal?: AbortSignal;
-  /** Langue de discussion choisie dans le chat ; à défaut, celle enregistrée dans les préférences. */
-  lang?: ChatLang;
+  /** Images jointes au message : transmises telles quelles au modèle. */
+  images?: ChatImage[];
 }
 
 /** Code renvoyé quand l'étudiant interrompt une génération avant le moindre texte. */
@@ -399,15 +443,14 @@ export async function sendMessage(userId: string, conversationId: string, conten
   if (!provider?.converse) throw new ApiHttpError("Le chat nécessite le service d'IA Gemini, qui n'est pas configuré (variable GEMINI_API_KEY).", 503);
 
   const scope = conv.scope;
-  const scopeFilter: Scope = scope === "DOCUMENT" ? { documentIds: [conv.documentId!] } : { subjectId: conv.subjectId, ...(options.documentIds?.length ? { documentIds: options.documentIds } : {}) };
+  // Documents choisis un à un (y compris un fichier importé sans matière) : ils priment sur la matière de la conversation.
+  const scopeFilter: Scope = scope === "DOCUMENT" ? { documentIds: [conv.documentId!] } : options.documentIds?.length ? { documentIds: options.documentIds } : { subjectId: conv.subjectId };
   // Lectures groupées : chaque aller-retour vers la base coûte environ 0,5 s.
-  const [, docs, history, settings] = await Promise.all([
+  const [, docs, history] = await Promise.all([
     checkQuota(userId),
     resolveDocs(userId, scopeFilter),
     db.conversationMessage.findMany({ where: { conversationId, userId }, orderBy: { createdAt: "desc" }, take: HISTORY_MESSAGES, select: { role: true, content: true } }),
-    options.lang ? null : db.userSettings.findUnique({ where: { userId }, select: { chatLang: true } }),
   ]);
-  const lang: ChatLang = options.lang ?? (settings?.chatLang === "en" ? "en" : "fr");
   if (scope === "DOCUMENT" && docs.length === 0) {
     const exists = await db.document.findFirst({ where: { id: conv.documentId!, userId }, select: { id: true } });
     if (!exists) throw new ApiHttpError("Document introuvable.", 404);
@@ -427,11 +470,13 @@ export async function sendMessage(userId: string, conversationId: string, conten
   const webOn = options.web !== false && (await webStatus()) !== null;
   const ev = new Evidence();
   const ctx: ToolContext = { userId, scope, scopeFilter, docs, ev, signal: options.signal ? AbortSignal.any([AbortSignal.timeout(110_000), options.signal]) : AbortSignal.timeout(110_000), web: webOn };
-  const system = systemPrompt(scope, withCoverage, docs.length, webOn, lang);
-  const tools = webOn ? [...TOOLS[scope], WEB_TOOL] : TOOLS[scope];
+  const system = systemPrompt(scope, withCoverage, docs.length, webOn);
+  const tools = [...TOOLS[scope], NOTE_TOOL[scope], ...(webOn ? [WEB_TOOL] : [])];
   const turns: ChatTurn[] = [
     ...history.reverse().map((m): ChatTurn => ({ role: m.role === "USER" ? "user" : "model", parts: [{ text: m.content }] })),
-    { role: "user", parts: [{ text: content }] },
+    { role: "user", parts: [...(options.images ?? []).map((i) => ({ inlineData: { mimeType: i.mimeType, data: i.data } })), { text: options.images?.length ? `${content}
+
+(Image(s) jointe(s) : ${options.images.map((i) => i.name).join(", ")}. Lis-les et appuie-toi dessus pour répondre.)` : content }] },
   ];
 
   const started = Date.now();
@@ -452,7 +497,7 @@ export async function sendMessage(userId: string, conversationId: string, conten
       turns.push({ role: "model", parts: res.modelParts });
       partial = "";
       // Un nouveau statut annonce une étape : le client efface le texte provisoire éventuel.
-      options.emit?.({ type: "status", text: (lang === "en" ? TOOL_STATUS_EN : TOOL_STATUS)[res.calls[0].name] ?? (lang === "en" ? "Searching…" : "Recherche…") });
+      options.emit?.({ type: "status", text: TOOL_STATUS[res.calls[0].name] ?? "Recherche…" });
       const responses: ChatPart[] = await Promise.all(res.calls.slice(0, 4).map(async (call) => ({ functionResponse: { name: call.name, response: await runTool(ctx, call.name, call.args) } })));
       turns.push({ role: "user", parts: responses });
     }
@@ -485,7 +530,7 @@ export async function sendMessage(userId: string, conversationId: string, conten
   const citedDocument = resolved.citations.some((c) => c.kind !== "web");
   const check = async () => {
     const verification = await verifyAnswer({ userId, question: content, answer: resolved.text, sources: sourcesOf(ev), citedDocument, webStatus: webState, search: crossCheck, deadlineAt: started + VERIFICATION_DEADLINE_MS });
-    const final = resolveCitations(applyVerification(resolved.text, verification, lang), ev.known);
+    const final = resolveCitations(applyVerification(resolved.text, verification), ev.known);
     // Une source qui sert de preuve reste consultable, même si la réponse ne la cite pas.
     const proofs = verification.claims.flatMap((c) => c.evidence.map((e) => e.n)).filter((n) => !final.citations.some((c) => c.n === n));
     const citations = [...final.citations, ...[...new Set(proofs)].map((n) => ev.known.get(n)!)].sort((a, b) => a.n - b.n);
@@ -500,6 +545,7 @@ export async function sendMessage(userId: string, conversationId: string, conten
     web: webOn,
     pagesRead: ev.pagesRead.size,
     tools: ev.toolCalls,
+    notes: ev.notes,
     coverage: withCoverage.map(({ doc, cov }) => ({ documentId: doc.id, documentName: doc.name, ...cov })),
   });
   const asJson = (v: unknown) => v as Prisma.InputJsonValue;

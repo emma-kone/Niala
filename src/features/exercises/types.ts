@@ -86,6 +86,8 @@ export interface AttemptDetail {
   gradedMax: number | null;
   startedAt: string;
   finishedAt: string | null;
+  /** Temps passé, en secondes (renseigné à la correction). */
+  durationSec: number | null;
   questions: AttemptQuestion[];
 }
 

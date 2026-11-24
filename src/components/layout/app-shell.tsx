@@ -7,6 +7,7 @@ import { api } from "@/lib/client-api";
 import { STREAK_KEY } from "@/features/streak/use-streak";
 import { cn } from "@/lib/utils";
 import { routes } from "@/config/routes";
+import { forgetModuleView, rememberModuleView } from "@/lib/module-memory";
 import { useAppStore } from "@/store/app-store";
 import { AuthGuard } from "@/components/layout/auth-guard";
 import { SidebarNav } from "@/components/layout/sidebar-nav";
@@ -44,6 +45,11 @@ function Shell({ children, initial }: { children: React.ReactNode; initial: Sess
   const pathname = usePathname();
   const dashboard = pathname === routes.home;
   const toolbar = useToolbarVisible();
+  // Un cours ouvert est mémorisé : en changeant de module puis en revenant, l'étudiant le retrouve tel quel.
+  useEffect(() => {
+    if (/^\/matieres\/[^/]+\/documents\/[^/]+\/?$/.test(pathname)) rememberModuleView(routes.subjects, pathname);
+    else if ((pathname === routes.subjects || pathname.startsWith(`${routes.subjects}/`)) && !/^\/matieres\/[^/]+\/exercices/.test(pathname)) forgetModuleView(routes.subjects);
+  }, [pathname]);
   // La page ne défile plus : c'est la zone de contenu qui revient en haut à chaque changement d'onglet.
   const content = useRef<HTMLElement>(null);
   const queryClient = useQueryClient();

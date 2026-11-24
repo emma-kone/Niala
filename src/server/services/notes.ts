@@ -6,13 +6,16 @@ import { ApiHttpError } from "@/lib/api-helpers";
 import { requireSubject } from "@/server/services/folders";
 import {
   annotationDoc,
+  appendBlocks,
   deriveKind,
+  markdownToNoteBlocks,
   emptyNoteDoc,
   noteToText,
   parseNoteContent,
   snippet,
   NoteContentError,
   type NoteDoc,
+  type NoteNode,
 } from "@/server/domain/note-content";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -227,4 +230,48 @@ export async function deleteNote(userId: string, id: string) {
   const removed = await softDelete(db, "Note", { id, userId });
   if (!removed.length) throw new ApiHttpError("Note introuvable.", 404);
   return { ok: true };
+}
+
+// ── Notes rédigées à la demande de l'étudiant par l'assistant ────────────────
+
+export interface AssistantNoteResult {
+  noteId: string;
+  title: string;
+  action: "appended" | "created";
+}
+
+/**
+ * Ajoute du contenu aux notes d'un cours : à la suite de la note de document la plus récente de l'étudiant
+ * (rien n'est modifié ni supprimé dans ce qu'il a écrit), ou dans une nouvelle note liée au cours s'il n'en a pas
+ * ou si une note séparée est demandée.
+ */
+export async function addAssistantNote(userId: string, input: { documentId: string; markdown: string; title?: string; separate?: boolean; page?: number | null }): Promise<AssistantNoteResult> {
+  const doc = await db.document.findFirst({ where: { id: input.documentId, userId }, select: { id: true, name: true, subjectId: true } });
+  if (!doc) throw new ApiHttpError("Document introuvable.", 404);
+  if (!doc.subjectId) throw new ApiHttpError("Ce document n'est rattaché à aucune matière : les notes sont rangées par matière.", 409);
+  const blocks = markdownToNoteBlocks(input.markdown);
+  if (!blocks.length) throw new ApiHttpError("Contenu de note vide.", 422);
+  const heading = input.title?.replace(/\s+/g, " ").trim().slice(0, 120);
+  const added: NoteNode[] = heading && !input.separate ? [{ type: "heading", attrs: { level: 3 }, content: [{ type: "text", text: heading }] }, ...blocks] : blocks;
+
+  if (!input.separate) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const target = await db.note.findFirst({
+        where: { userId, subjectId: doc.subjectId, kind: "DOCUMENT", links: { some: { documentId: doc.id, userId, deletedAt: null } } },
+        orderBy: { updatedAt: "desc" },
+        select: { id: true, title: true, content: true, revision: true },
+      });
+      if (!target) break;
+      const content = contentOrThrow(appendBlocks(target.content as unknown as NoteDoc, added));
+      const res = await db.note.updateMany({ where: { id: target.id, userId, revision: target.revision }, data: { content: content as unknown as Prisma.InputJsonValue, revision: { increment: 1 } } });
+      if (res.count === 1) return { noteId: target.id, title: target.title || doc.name, action: "appended" };
+    }
+  }
+  const created = await createNote(userId, {
+    subjectId: doc.subjectId,
+    title: heading || `Notes — ${doc.name}`.slice(0, 200),
+    content: { type: "doc", content: blocks },
+    links: [{ documentId: doc.id, page: input.page ?? null }],
+  });
+  return { noteId: created.id, title: created.title, action: "created" };
 }

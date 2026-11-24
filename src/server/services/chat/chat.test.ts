@@ -168,22 +168,15 @@ describe("génération : interruption, relance et contexte", () => {
     expect(system).not.toContain("secret");
   });
 
-  it("discute dans la langue choisie : anglais demandé, préférence du compte sinon", async () => {
+  it("répond en français par défaut et transmet les images jointes au modèle", async () => {
     const id = await newConversation();
     script = () => ({ text: "Ok" });
     seen.length = 0;
-    await chat.sendMessage(A, id, "What is recursion?", { lang: "en" });
-    expect(seen[0].system).toContain("LANGUE DE LA CONVERSATION : ANGLAIS");
-    expect(seen[0].system).not.toContain("Réponds en français");
-    seen.length = 0;
-    await chat.sendMessage(A, id, "Et en français ?");
+    await chat.sendMessage(A, id, "Que montre ce schéma ?", { images: [{ name: "schema.png", mimeType: "image/png", data: "iVBORw0KGgo=" }] });
     expect(seen[0].system).toContain("Réponds en français");
-    const { db } = await import("@/lib/db");
-    await db.userSettings.upsert({ where: { userId: A }, create: { userId: A, chatLang: "en" }, update: { chatLang: "en" } });
-    seen.length = 0;
-    await chat.sendMessage(A, id, "Again");
-    expect(seen[0].system).toContain("ANGLAIS");
-    await db.userSettings.update({ where: { userId: A }, data: { chatLang: "fr" } });
+    const parts = seen[0].turns[seen[0].turns.length - 1].parts as Record<string, unknown>[];
+    expect(parts[0]).toEqual({ inlineData: { mimeType: "image/png", data: "iVBORw0KGgo=" } });
+    expect(String(parts[1].text)).toContain("Que montre ce schéma ?");
   });
 
   it("le registre des générations n'interrompt que celles de leur propriétaire", async () => {

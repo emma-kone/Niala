@@ -9,10 +9,9 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { confirmAction } from "@/components/notifications";
-import { ChatComposer, type ComposerHandle, type ContextDocument, type RecentDoc, type SubjectChoice } from "./chat-composer";
+import { ChatComposer, type ChatImageAttachment, type ComposerHandle, type ContextDocument, type RecentDoc, type SubjectChoice } from "./chat-composer";
 import { AssistantMessage, LiveMessage, TypingBubble, UserBubble } from "./chat-message";
 import { ChatSidebar } from "./chat-sidebar";
-import { ChatLanguageSwitch, useChatLang } from "./chat-language";
 import { ChatWelcome, type Suggestion } from "./chat-welcome";
 import type { ChatCitation, ChatMessageDto, ConversationDto } from "./types";
 
@@ -22,6 +21,8 @@ interface Props {
   documentId?: string;
   /** Appelé au clic sur une référence de cours (ex. aller à la page du PDF ouvert). Sinon : lien vers le document. */
   onCitation?: (c: ChatCitation) => void;
+  /** Appelé quand l'assistant a écrit dans les notes du cours (pour rafraîchir leur affichage). */
+  onNotesChanged?: () => void;
   /** « page » : grand espace avec barre latérale (historique, réglages) ; « panel » : version compacte du lecteur. */
   variant?: "page" | "panel";
   className?: string;
@@ -50,7 +51,7 @@ type Notice = { kind: "error" | "interrupted"; text: string; retry: string | nul
 
 const localMessage = (role: ChatMessageDto["role"], content: string, id: string): ChatMessageDto => ({ id, role, content, citations: null, consulted: null, model: null, createdAt: new Date().toISOString() });
 
-export default function ChatPanel({ scope, documentId, onCitation, variant = "panel", className }: Props) {
+export default function ChatPanel({ scope, documentId, onCitation, onNotesChanged, variant = "panel", className }: Props) {
   const page = variant === "page";
   const [conversations, setConversations] = useState<ConversationDto[] | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -63,7 +64,6 @@ export default function ChatPanel({ scope, documentId, onCitation, variant = "pa
   const [notice, setNotice] = useState<Notice | null>(null);
   const [status, setStatus] = useState<AiStatus | null>(null);
   const [web, setWeb] = useState(true);
-  const [lang, setLang] = useChatLang();
   const [subjects, setSubjects] = useState<SubjectChoice[]>([]);
   const [subjectId, setSubjectId] = useState<string>(ALL);
   const [recent, setRecent] = useState<RecentDoc[]>([]);
@@ -192,7 +192,7 @@ export default function ChatPanel({ scope, documentId, onCitation, variant = "pa
   }
 
   /** Envoie une question (ou relance la dernière). Le texte reçu s'affiche au fil de l'eau, la réponse finale le remplace. */
-  async function run(request: { content: string; regenerate?: boolean; documentIds?: string[] }) {
+  async function run(request: { content: string; regenerate?: boolean; documentIds?: string[]; images?: ChatImageAttachment[] }) {
     if (sending) return;
     const ac = new AbortController();
     controller.current = ac;
@@ -222,7 +222,7 @@ export default function ChatPanel({ scope, documentId, onCitation, variant = "pa
       const conversation = id;
       const r = await postStream<{ message: ChatMessageDto; title: string }>(
         `/api/conversations/${conversation}/messages`,
-        { content: request.content, web: web && webAvailable, lang, ...(request.regenerate ? { regenerate: true } : {}), ...(request.documentIds?.length ? { documentIds: request.documentIds } : {}) },
+        { content: request.content, web: web && webAvailable, ...(request.images?.length ? { images: request.images } : {}), ...(request.regenerate ? { regenerate: true } : {}), ...(request.documentIds?.length ? { documentIds: request.documentIds } : {}) },
         {
           status: (t) => {
             streamed.current = "";
@@ -236,6 +236,7 @@ export default function ChatPanel({ scope, documentId, onCitation, variant = "pa
         ac.signal
       );
       setMessages((m) => [...m, r.message]);
+      if ((r.message.consulted as { notes?: unknown[] } | null)?.notes?.length) onNotesChanged?.();
       setConversations((list) => (list ?? []).map((c) => (c.id === conversation ? { ...c, title: r.title, updatedAt: new Date().toISOString() } : c)));
     } catch (e) {
       const partial = streamed.current.trim();
@@ -267,11 +268,12 @@ export default function ChatPanel({ scope, documentId, onCitation, variant = "pa
     }
   }
 
-  async function send(text: string, documents: ContextDocument[] = contextDocs) {
+  async function send(text: string, documents: ContextDocument[] = contextDocs, images: ChatImageAttachment[] = []) {
     const content = text.trim();
     if (!content || sending) return;
-    setMessages((m) => [...m, localMessage("USER", content, `tmp-${Date.now()}`)]);
-    await run({ content, documentIds: documents.map((d) => d.id) });
+    const shown = images.length ? `${content}\n\n📎 ${images.map((i) => i.name).join(", ")}` : content;
+    setMessages((m) => [...m, localMessage("USER", shown, `tmp-${Date.now()}`)]);
+    await run({ content, documentIds: documents.map((d) => d.id), images });
   }
 
   function regenerate() {
@@ -346,20 +348,15 @@ export default function ChatPanel({ scope, documentId, onCitation, variant = "pa
   const webHint = webAvailable ? (status?.web?.backend === "wikipedia" ? "Wikipédia uniquement : aucun moteur web complet n'est configuré." : "Sources officielles et universitaires en priorité.") : "Aucun moteur de recherche web n'est configuré.";
   const settings = (
     <div className="space-y-3">
-    <div className="text-sm">
-      <p className="mb-1.5 font-medium">Langue de discussion</p>
-      <ChatLanguageSwitch value={lang} onChange={setLang} />
-      <p className="mt-1 text-xs leading-snug text-muted-foreground">{lang === "en" ? "L'IA vous répond en anglais." : "L'IA vous répond en français."}</p>
-    </div>
-    <label className="flex items-start gap-2.5 text-sm">
-      <Switch checked={web && webAvailable} onCheckedChange={toggleWeb} disabled={!webAvailable} aria-label="Recherche web" className="mt-0.5" />
-      <span className="min-w-0">
-        <span className="flex items-center gap-1.5 font-medium">
-          <Globe className="h-3.5 w-3.5" aria-hidden /> Recherche web
+      <label className="flex items-start gap-2.5 text-sm">
+        <Switch checked={web && webAvailable} onCheckedChange={toggleWeb} disabled={!webAvailable} aria-label="Recherche web" className="mt-0.5" />
+        <span className="min-w-0">
+          <span className="flex items-center gap-1.5 font-medium">
+            <Globe className="h-3.5 w-3.5" aria-hidden /> Recherche web
+          </span>
+          <span className="block text-xs leading-snug text-muted-foreground">{webHint}</span>
         </span>
-        <span className="block text-xs leading-snug text-muted-foreground">{webHint}</span>
-      </span>
-    </label>
+      </label>
     </div>
   );
 
@@ -377,7 +374,7 @@ export default function ChatPanel({ scope, documentId, onCitation, variant = "pa
       disabled={aiReady === false}
       sending={sending}
       stopping={stopping}
-      onSend={(t) => void send(t)}
+      onSend={(t, imgs) => void send(t, contextDocs, imgs)}
       onStop={() => void stop()}
       subjects={subjects}
       subjectId={subjectId}
@@ -406,7 +403,7 @@ export default function ChatPanel({ scope, documentId, onCitation, variant = "pa
           <div className="flex-1 bg-black/50" />
         </div>
       )}
-      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col ">
         {page ? (
           <div className="flex h-12 shrink-0 items-center gap-1.5 px-3">
             <Button size="icon" variant="ghost" className="hidden h-8 w-8 md:inline-flex" onClick={() => setSidebar((v) => !v)} aria-label={sidebar ? "Masquer l'historique" : "Afficher l'historique"}>
@@ -416,7 +413,6 @@ export default function ChatPanel({ scope, documentId, onCitation, variant = "pa
               <History className="h-4 w-4" aria-hidden />
             </Button>
             <p className="min-w-0 flex-1 truncate text-sm font-medium">{active?.title ?? ""}</p>
-            <ChatLanguageSwitch value={lang} onChange={setLang} />
             {(!sidebar || activeId) && (
               <Button size="icon" variant="ghost" className="h-8 w-8 md:hidden" onClick={newConversation} aria-label="Nouvelle conversation">
                 <MessageSquarePlus className="h-4 w-4" aria-hidden />
@@ -438,7 +434,6 @@ export default function ChatPanel({ scope, documentId, onCitation, variant = "pa
                 ))}
               </SelectContent>
             </Select>
-            <ChatLanguageSwitch value={lang} onChange={setLang} />
             <Button size="icon" variant={web && webAvailable ? "secondary" : "ghost"} className="h-8 w-8 shrink-0" onClick={() => toggleWeb(!web)} disabled={!webAvailable} aria-pressed={web && webAvailable} aria-label="Recherche web" title={webAvailable ? (web ? "Recherche web activée" : "Recherche web désactivée") : "Recherche web indisponible"}>
               <Globe className="h-4 w-4" aria-hidden />
             </Button>

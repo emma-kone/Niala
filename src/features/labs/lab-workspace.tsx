@@ -8,6 +8,8 @@ import CodeMirror, { type Extension } from "@uiw/react-codemirror";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { javascript } from "@codemirror/lang-javascript";
 import { python } from "@codemirror/lang-python";
+import { cpp } from "@codemirror/lang-cpp";
+import { java } from "@codemirror/lang-java";
 import { sql as sqlLang } from "@codemirror/lang-sql";
 import { ChevronRight, FileText, FlaskConical, History, Lightbulb, Loader2, Play, Eye, Sparkles, TerminalSquare, Trash2 } from "lucide-react";
 import { api } from "@/lib/client-api";
@@ -15,7 +17,7 @@ import { routes } from "@/config/routes";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
+import { LabWorkspaceSkeleton } from "./lab-skeletons";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { LabAssistantPanel } from "@/features/lab-assistant/lab-assistant-panel";
@@ -111,7 +113,12 @@ export default function LabWorkspace({ id }: { id: string }) {
 
   const kind = ws?.kind;
   const lang = ws?.files[0]?.language ?? "python";
-  const extensions = useMemo<Extension[]>(() => (lang === "sql" ? [sqlLang()] : lang === "python" ? [python()] : [javascript({ typescript: lang === "typescript" })]), [lang]);
+  // C#, Java EE et C sont écrits sans exécution : la coloration vient des grammaires C++ et Java, proches de leur syntaxe.
+  const editOnly = lang === "c" || lang === "csharp" || lang === "javaee";
+  const extensions = useMemo<Extension[]>(
+    () => (lang === "sql" ? [sqlLang()] : lang === "python" ? [python()] : lang === "c" ? [cpp()] : lang === "csharp" || lang === "javaee" ? [java()] : [javascript({ typescript: lang === "typescript" })]),
+    [lang]
+  );
 
   async function exec(mode: "run" | "tests") {
     setRunning(mode);
@@ -194,7 +201,7 @@ export default function LabWorkspace({ id }: { id: string }) {
       </div>
     );
   }
-  if (!ws) return <div className="mx-auto max-w-6xl space-y-3 px-4 py-8" aria-busy><Skeleton className="h-8 w-72" /><Skeleton className="h-96 rounded-xl" /></div>;
+  if (!ws) return <LabWorkspaceSkeleton />;
 
   const brief = ws.brief;
   const hasTests = !!brief?.verified;
@@ -211,7 +218,7 @@ export default function LabWorkspace({ id }: { id: string }) {
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <h1 className="typo-h1 mr-auto">{ws.title}</h1>
         <Badge variant="outline">{ws.mode === "EXERCISE" ? "Mode exercice" : "Mode libre"}</Badge>
-        <Badge variant="outline">{lang === "sql" ? "SQL (SQLite)" : lang}</Badge>
+        <Badge variant="outline">{lang === "sql" ? "SQL (SQLite)" : lang === "csharp" ? "C#" : lang === "javaee" ? "Java EE" : lang === "c" ? "C" : lang}</Badge>
         <span className="text-xs text-muted-foreground" aria-live="polite">{saved === "saving" ? "Enregistrement…" : saved === "saved" ? "Enregistré" : saved === "error" ? "Échec de l'enregistrement" : ""}</span>
         <Button variant="ghost" size="sm" className="gap-1 text-destructive" onClick={() => void remove()}><Trash2 className="h-4 w-4" aria-hidden /> Supprimer</Button>
       </div>
@@ -260,7 +267,12 @@ export default function LabWorkspace({ id }: { id: string }) {
             />
           </div>
 
-          {kind === "CODE" && (
+          {editOnly && (
+            <p role="note" className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+              Ce langage s&apos;écrit et s&apos;enregistre ici, et l&apos;assistant peut relire et expliquer votre code, mais il n&apos;est pas exécutable : l&apos;environnement isolé n&apos;a pas de compilateur pour lui, et aucune exécution n&apos;est simulée.
+            </p>
+          )}
+          {kind === "CODE" && !editOnly && (
             <details className="rounded-md border p-2 text-sm">
               <summary className="cursor-pointer font-medium">Entrée standard (input / readLine)</summary>
               <Textarea aria-label="Entrée standard" value={stdin} onChange={(e) => setStdin(e.target.value)} rows={3} maxLength={4000} className="mt-2 font-mono text-xs" placeholder="Une ligne par appel à input() (Python) ou readLine() (JS/TS)" />
@@ -268,7 +280,7 @@ export default function LabWorkspace({ id }: { id: string }) {
           )}
 
           <div className="flex flex-wrap gap-2">
-            <Button className="gap-2" onClick={() => void exec("run")} disabled={running !== null || !code.trim()}>
+            <Button className="gap-2" onClick={() => void exec("run")} disabled={running !== null || !code.trim() || editOnly} title={editOnly ? "Ce langage n'est pas exécutable ici" : undefined}>
               {running === "run" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Play className="h-4 w-4" aria-hidden />} Exécuter <kbd className="ml-1 hidden rounded border px-1 text-[10px] sm:inline">Ctrl+↵</kbd>
             </Button>
             {hasTests && (
@@ -276,13 +288,13 @@ export default function LabWorkspace({ id }: { id: string }) {
                 {running === "tests" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <FlaskConical className="h-4 w-4" aria-hidden />} Lancer les tests
               </Button>
             )}
-            <Button variant="outline" className="gap-2" onClick={() => void askHint()} disabled={hintBusy || running !== null || hints.length >= 3 || !run}>
+            <Button variant="outline" className="gap-2" onClick={() => void askHint()} disabled={hintBusy || running !== null || hints.length >= 3 || !run || editOnly}>
               {hintBusy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Lightbulb className="h-4 w-4" aria-hidden />} Indice {hints.length < 3 ? `(${hints.length + 1}/3)` : "(épuisés)"}
             </Button>
             {ws.canReveal && !ws.brief?.revealedAt && <Button variant="ghost" className="gap-2" onClick={() => void reveal()}><Eye className="h-4 w-4" aria-hidden /> Voir la solution</Button>}
             {ws.brief?.revealedAt && <Button variant="ghost" className="gap-2" onClick={() => void reveal()}><Eye className="h-4 w-4" aria-hidden /> Revoir la solution</Button>}
           </div>
-          {!run && <p className="text-xs text-muted-foreground">Exécutez d&apos;abord votre code : les indices s&apos;appuient sur le résultat réel.</p>}
+          {!run && !editOnly && <p className="text-xs text-muted-foreground">Exécutez d&apos;abord votre code : les indices s&apos;appuient sur le résultat réel.</p>}
           {runError && <Alert variant="destructive"><AlertTitle>Exécution impossible</AlertTitle><AlertDescription>{runError}</AlertDescription></Alert>}
         </div>
 

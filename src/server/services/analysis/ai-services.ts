@@ -170,32 +170,64 @@ export interface InferredSection {
   page: number | null;
 }
 
-const STRUCTURE_SYSTEM = `Tu repères le plan d'un cours dont la numérotation n'est pas détectable automatiquement.
+const STRUCTURE_SYSTEM = `Tu établis le plan d'un cours qui n'a pas de sommaire ni de numérotation exploitable : déduis-le de son contenu (changements de sujet, titres, notions introduites).
 ${UNTRUSTED_RULES}
 Les pages sont repérées par des marqueurs [[PAGE n]]. Renvoie les titres et sous-titres dans l'ordre du document :
 {"sections":[{"numbering":<numérotation écrite ou null>,"label":"<titre>","level":<0 pour un grand titre, 1 pour un sous-titre, …>,"page":<numéro de page>}]}
 Ne crée pas de titre qui n'existe pas dans le document.`;
 
-/** DocumentStructureService (repli) : plan proposé par l'IA — toujours marqué « déduit ». */
+const STRUCTURE_WINDOW_CHARS = 28_000;
+const MAX_STRUCTURE_WINDOWS = 8;
+
+/** Découpe le document en fenêtres de pages consécutives : tout le cours est lu, pas seulement son début. */
+function windows(pages: PageText[]): PageText[][] {
+  const out: PageText[][] = [];
+  let cur: PageText[] = [];
+  let size = 0;
+  for (const p of pages) {
+    if (cur.length && size + p.text.length > STRUCTURE_WINDOW_CHARS) {
+      out.push(cur);
+      cur = [];
+      size = 0;
+    }
+    cur.push(p);
+    size += p.text.length;
+  }
+  if (cur.length) out.push(cur);
+  return out;
+}
+
+/**
+ * DocumentStructureService (repli) : plan proposé par l'IA à partir du contenu, même sans sommaire ni table des matières.
+ * Le cours est lu par fenêtres successives ; le plan est toujours marqué « déduit ».
+ */
 export async function inferStructure(userId: string, pages: PageText[]): Promise<{ sections: InferredSection[]; model: string }> {
-  const text = pages.map((p) => `[[PAGE ${p.page ?? 1}]]\n${p.text}`).join("\n\n").slice(0, 30_000);
-  const { data, model } = await generateStructured({
-    userId,
-    op: "analysis.structure",
-    promptVersion: PROMPT_VERSION,
-    system: STRUCTURE_SYSTEM,
-    user: `Document :\n${wrapUntrusted("cours", text)}`,
-    schema: structureResponse,
-    maxTokens: 4000,
-  });
-  // Cohérence : un niveau ne peut pas dépasser celui du précédent + 1 ; chaque titre doit exister dans le texte
+  const parts = windows(pages).slice(0, MAX_STRUCTURE_WINDOWS);
   const out: InferredSection[] = [];
+  let model = "";
   let prev = -1;
-  for (const s of data.sections) {
-    if (!quoteInText(s.label, text, 4)) continue;
-    const level = Math.min(s.level, prev + 1);
-    out.push({ numbering: s.numbering ?? null, label: s.label, level, page: s.page ?? null });
-    prev = level;
+  for (const [n, part] of parts.entries()) {
+    const text = part.map((p) => `[[PAGE ${p.page ?? 1}]]\n${p.text}`).join("\n\n");
+    const known = out.slice(-12).map((s) => `${"  ".repeat(s.level)}${s.label}`).join("\n");
+    const context = out.length ? `\nPlan déjà relevé dans les pages précédentes (continue-le, sans le répéter) :\n${known}\n` : "";
+    const { data, model: m } = await generateStructured({
+      userId,
+      op: "analysis.structure",
+      promptVersion: PROMPT_VERSION,
+      system: STRUCTURE_SYSTEM,
+      user: `Document (partie ${n + 1}/${parts.length}) :${context}\n${wrapUntrusted("cours", text)}`,
+      schema: structureResponse,
+      maxTokens: 4000,
+    });
+    model = m;
+    // Cohérence : un niveau ne peut pas dépasser celui du précédent + 1 ; chaque titre doit exister dans le texte
+    for (const s of data.sections) {
+      if (!quoteInText(s.label, text, 4)) continue;
+      if (out.some((o) => foldText(o.label) === foldText(s.label) && o.page === (s.page ?? null))) continue;
+      const level = Math.min(s.level, prev + 1);
+      out.push({ numbering: s.numbering ?? null, label: s.label, level, page: s.page ?? null });
+      prev = level;
+    }
   }
   return { sections: out, model };
 }

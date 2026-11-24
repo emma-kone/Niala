@@ -574,7 +574,11 @@ function PageView({
         // Couche de texte (sélection, copie, surlignage de la recherche)
         const lib = await loadPdfJs();
         t.replaceChildren();
+        // pdf.js 6 dimensionne chaque fragment de texte avec --total-scale-factor : sans lui, la couche de texte
+        // n'est plus à l'échelle de la page et la sélection (copier-coller) se décale de la ligne affichée.
         t.style.setProperty("--scale-factor", String(scale));
+        t.style.setProperty("--user-unit", "1");
+        t.style.setProperty("--total-scale-factor", String(scale));
         const layer = new lib.TextLayer({ textContentSource: page.streamTextContent(), container: t, viewport });
         await layer.render();
         if (cancelled) return;

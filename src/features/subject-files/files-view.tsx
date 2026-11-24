@@ -7,6 +7,8 @@ import {
   ArrowDownAZ,
   ArrowUpAZ,
   ChevronRight,
+  LayoutGrid,
+  List,
   ClipboardList,
   Download,
   ExternalLink,
@@ -80,6 +82,23 @@ export default function SubjectFilesView({ subjectId }: { subjectId: string }) {
   const [dir, setDir] = useState<"asc" | "desc">("desc");
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Présentation des fichiers : grille de 4 par ligne (par défaut) ou liste détaillée ; le choix est mémorisé.
+  const [layout, setLayoutState] = useState<"grid" | "list">("grid");
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("niala-files-layout") === "list") setLayoutState("list");
+    } catch {
+      /* préférence non lisible : grille par défaut */
+    }
+  }, []);
+  const setLayout = (next: "grid" | "list") => {
+    setLayoutState(next);
+    try {
+      localStorage.setItem("niala-files-layout", next);
+    } catch {
+      /* préférence non mémorisable */
+    }
+  };
   const [newFolder, setNewFolder] = useState(false);
   const [renaming, setRenaming] = useState<Entry | null>(null);
   const [moving, setMoving] = useState<Entry[] | null>(null);
@@ -384,6 +403,14 @@ export default function SubjectFilesView({ subjectId }: { subjectId: string }) {
         <Button variant="outline" size="icon" onClick={() => setDir((d) => (d === "asc" ? "desc" : "asc"))} aria-label={dir === "asc" ? "Ordre croissant" : "Ordre décroissant"}>
           {dir === "asc" ? <ArrowUpAZ className="h-4 w-4" aria-hidden /> : <ArrowDownAZ className="h-4 w-4" aria-hidden />}
         </Button>
+        <div role="group" aria-label="Présentation des fichiers" className="inline-flex rounded-md border p-0.5">
+          <Button type="button" variant={layout === "grid" ? "secondary" : "ghost"} size="icon" className="h-8 w-8" aria-pressed={layout === "grid"} aria-label="Grille, 4 par ligne" title="Grille, 4 par ligne" onClick={() => setLayout("grid")}>
+            <LayoutGrid className="h-4 w-4" aria-hidden />
+          </Button>
+          <Button type="button" variant={layout === "list" ? "secondary" : "ghost"} size="icon" className="h-8 w-8" aria-pressed={layout === "list"} aria-label="Liste détaillée" title="Liste détaillée" onClick={() => setLayout("list")}>
+            <List className="h-4 w-4" aria-hidden />
+          </Button>
+        </div>
       </div>
 
       {data?.searching && (
@@ -442,7 +469,111 @@ export default function SubjectFilesView({ subjectId }: { subjectId: string }) {
           )}
         </div>
       ) : (
-        <div className={cn("overflow-hidden rounded-xl border bg-card transition-opacity", loading && "opacity-60")}>
+        <div className={cn("transition-opacity", loading && "opacity-60")}>
+          {layout === "grid" ? (
+            <ul aria-label="Fichiers et dossiers" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {entries.map((e) => {
+                const key = keyOf(e);
+                const isFolder = e.kind === "folder";
+                const d = e.kind === "doc" ? e.item : null;
+                const f = e.kind === "folder" ? e.item : null;
+                const status = d ? STATUS_LABEL[d.status] : null;
+                const body = (
+                  <>
+                    {isFolder ? <Folder className="h-9 w-9 text-amber-500" aria-hidden /> : <FileText className="h-9 w-9 text-muted-foreground" aria-hidden />}
+                    <span className="mt-3 block line-clamp-2 break-words text-sm font-medium">{e.item.name}</span>
+                    <span className="typo-meta mt-1 block truncate">
+                      {isFolder ? (f!.folderCount + f!.documentCount === 0 ? "vide" : `${f!.documentCount} fichier(s)${f!.folderCount ? `, ${f!.folderCount} dossier(s)` : ""}`) : `${d!.kind.toUpperCase()} · ${formatSize(d!.size)}`}
+                    </span>
+                    {data.searching && (isFolder ? f!.path : d!.folderPath) && <span className="typo-meta block truncate">{isFolder ? f!.path : d!.folderPath}</span>}
+                  </>
+                );
+                return (
+                  <li key={key} className={cn("group relative rounded-xl border bg-card p-4 transition-shadow hover:shadow-md", selected.has(key) && "bg-primary/5 ring-1 ring-primary/40")}>
+                    <div className="absolute left-2.5 top-2.5 z-10">
+                      <Checkbox
+                    aria-label={`Sélectionner ${e.item.name}`}
+                    checked={selected.has(key)}
+                    onCheckedChange={(v) =>
+                      setSelected((prev) => {
+                        const n = new Set(prev);
+                        if (v === true) n.add(key);
+                        else n.delete(key);
+                        return n;
+                      })
+                    }
+                  />
+                    </div>
+                    <div className="absolute right-1.5 top-1.5 z-10">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" aria-label={`Actions pour ${e.item.name}`}>
+                        <MoreVertical className="h-4 w-4" aria-hidden />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      {d && (
+                        <>
+                          <DropdownMenuItem asChild>
+                            <Link href={`${routes.subject(subjectId)}/documents/${d.id}`}>
+                              <FileText className="mr-2 h-4 w-4" aria-hidden /> Lire
+                            </Link>
+                          </DropdownMenuItem>
+                          <DropdownMenuItem disabled={d.originalMissing} asChild={!d.originalMissing}>
+                            {d.originalMissing ? (
+                              <span><ExternalLink className="mr-2 h-4 w-4" aria-hidden /> Original indisponible</span>
+                            ) : (
+                              <a href={`/api/files/${d.id}/content`} target="_blank" rel="noopener noreferrer">
+                                <ExternalLink className="mr-2 h-4 w-4" aria-hidden /> Ouvrir l&apos;original
+                              </a>
+                            )}
+                          </DropdownMenuItem>
+                          {!d.originalMissing && (
+                            <DropdownMenuItem asChild>
+                              <a href={`/api/files/${d.id}/content?download=1`}>
+                                <Download className="mr-2 h-4 w-4" aria-hidden /> Télécharger
+                              </a>
+                            </DropdownMenuItem>
+                          )}
+                          <DropdownMenuItem asChild disabled={d.status === "FAILED" || d.status === "UNSUPPORTED" || d.status === "PENDING"}>
+                            <Link href={`${routes.subject(subjectId)}/exercices/nouveau?document=${d.id}`}>
+                              <ClipboardList className="mr-2 h-4 w-4" aria-hidden /> Créer un exercice
+                            </Link>
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onSelect={() => void openDetails(d.id)}>
+                            <Info className="mr-2 h-4 w-4" aria-hidden /> Propriétés
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                        </>
+                      )}
+                      <DropdownMenuItem onSelect={() => setRenaming(e)}>
+                        <Pencil className="mr-2 h-4 w-4" aria-hidden /> Renommer
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => setMoving([e])}>
+                        <FolderInput className="mr-2 h-4 w-4" aria-hidden /> Déplacer…
+                      </DropdownMenuItem>
+                      <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => setDeleting([e])}>
+                        <Trash2 className="mr-2 h-4 w-4" aria-hidden /> Supprimer
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                    </div>
+                    {isFolder ? (
+                      <button onClick={() => goTo(f!.id)} className="block w-full pt-5 text-left">{body}</button>
+                    ) : (
+                      <Link href={`${routes.subject(subjectId)}/documents/${d!.id}`} className="block w-full pt-5 text-left">{body}</Link>
+                    )}
+                    {status && (
+                      <Badge variant="outline" className={cn("mt-2 font-normal", status.tone === "ok" && "border-emerald-300 text-emerald-700 dark:text-emerald-400", status.tone === "warn" && "border-amber-300 text-amber-700 dark:text-amber-400", status.tone === "bad" && "border-destructive/40 text-destructive")}>
+                        {status.label}
+                      </Badge>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+          <div className="overflow-hidden rounded-xl border bg-card">
           <div role="table" aria-label="Fichiers et dossiers" className="w-full text-sm">
             <div role="row" className="hidden items-center gap-3 border-b bg-muted/50 px-3 py-2 text-xs font-medium text-muted-foreground sm:flex">
               <Checkbox
@@ -571,6 +702,8 @@ export default function SubjectFilesView({ subjectId }: { subjectId: string }) {
               );
             })}
           </div>
+          </div>
+          )}
         </div>
       )}
 

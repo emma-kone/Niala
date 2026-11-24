@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { NavLink } from "@/components/layout/nav-link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { LogOut, Menu } from "lucide-react";
@@ -41,7 +41,7 @@ export function MobileNav({ user, onLogout }: { user: AppUser | null; onLogout: 
                     const active = isNavActive(pathname, item);
                     return (
                       <li key={item.href}>
-                        <Link
+                        <NavLink
                           href={item.href}
                           prefetch
                           aria-current={active ? "page" : undefined}
@@ -49,7 +49,7 @@ export function MobileNav({ user, onLogout }: { user: AppUser | null; onLogout: 
                           className={cn("flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm", active ? "bg-[var(--nav-active)] font-medium text-[var(--nav-active-foreground)]" : "text-sidebar-foreground/85 hover:bg-sidebar-accent")}
                         >
                           <Icon className="h-4 w-4 shrink-0" aria-hidden /> {item.label}
-                        </Link>
+                        </NavLink>
                       </li>
                     );
                   })}

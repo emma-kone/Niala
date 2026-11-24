@@ -267,6 +267,23 @@ export function classify(outcomes: TestOutcome[]): Diagnosis[] {
   return out;
 }
 
+/**
+ * Langages que le laboratoire permet d'écrire, d'enregistrer et de faire relire à l'assistant, mais PAS d'exécuter :
+ * leur exécution demande un compilateur ou une machine virtuelle absents de l'environnement isolé, et rien n'est jamais simulé.
+ */
+export const EDIT_ONLY_LANGUAGES = {
+  c: { label: "C", file: "main.c", alias: ["c", "c99", "c11", "gcc"] },
+  csharp: { label: "C#", file: "Program.cs", alias: ["csharp", "c#", "cs", "dotnet"] },
+  javaee: { label: "Java EE (Jakarta EE)", file: "HelloServlet.java", alias: ["javaee", "java ee", "java-ee", "jee", "jakarta", "jakartaee"] },
+} as const;
+export type EditOnlyLanguage = keyof typeof EDIT_ONLY_LANGUAGES;
+
+export function editOnlyLanguageOf(l: string): EditOnlyLanguage | null {
+  const v = l.trim().toLowerCase();
+  for (const [id, meta] of Object.entries(EDIT_ONLY_LANGUAGES)) if ((meta.alias as readonly string[]).includes(v)) return id as EditOnlyLanguage;
+  return null;
+}
+
 export function languageOf(l: string): "javascript" | "typescript" | "python" | "sql" | null {
   const v = l.toLowerCase();
   if (v === "js" || v === "javascript") return "javascript";
