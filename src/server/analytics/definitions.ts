@@ -68,6 +68,7 @@ export const MODULES = {
   exercises: "Exercices",
   code: "Labo de code",
   sql: "Labo SQL",
+  diagram: "Labo diagrammes",
   assistant: "Assistant IA",
   notes: "Notes",
   progress: "Progression",
@@ -112,12 +113,12 @@ export const FEATURES: FeatureDef[] = [
   { key: "exercise-import", label: "Importation d'exercices", uses: ["exercise.import"] },
   { key: "mind-maps", label: "Cartes mentales", uses: ["map.create"] },
   { key: "assistant", label: "Assistant IA", uses: ["assistant.message"], module: "assistant" },
-  { key: "labs", label: "Labos code et SQL", uses: ["lab.run", "lab.create"] },
+  { key: "labs", label: "Labos code, SQL et diagrammes", uses: ["lab.run", "lab.create"] },
   { key: "progress", label: "Suivi de progression", uses: ["progress.view"], module: "progress" },
   { key: "suggestions", label: "Suggestions et retours", uses: ["suggestion.submit"] },
 ];
 
-export const LAB_LABELS: Record<string, string> = { CODE: "Labo de code", SQL: "Labo SQL" };
+export const LAB_LABELS: Record<string, string> = { CODE: "Labo de code", SQL: "Labo SQL", DIAGRAM: "Labo diagrammes" };
 
 export const REQUEST_TYPES = {
   IMPROVEMENT: "Suggestion d'amélioration",

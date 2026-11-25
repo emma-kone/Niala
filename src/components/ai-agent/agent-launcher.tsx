@@ -28,6 +28,7 @@ const LINES: [string, string][] = [
   ["/agenda", "Besoin d'aide pour organiser votre semaine ?"],
   ["/code", "Une erreur dans votre code ? On regarde ensemble."],
   ["/sql", "Une requête qui coince ? Demandez-moi."],
+  ["/diagrammes", "Un MCD ou un UML à construire ? Je regarde avec vous."],
   ["/notes", "Je peux transformer vos notes en fiche de révision."],
   ["/progression", "Je peux vous aider sur vos notions fragiles."],
   ["/", "Bonjour, moi c'est Clay ! Cliquez sur moi pour poser une question."],

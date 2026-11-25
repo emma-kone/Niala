@@ -13,6 +13,7 @@ import { extractLabExercises } from "./import";
 import { refreshProgress } from "@/server/services/progress/progress";
 import { track } from "@/server/analytics/track";
 import { markActivity } from "@/server/services/progress/streak";
+import { createDiagramWorkspace, saveDiagramWorkspace } from "./diagrams";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Laboratoires code & SQL : espaces de travail libres ou d'exercice, exécution isolée, tests objectifs,
@@ -34,7 +35,7 @@ export interface Brief {
   verified: boolean;
   reference?: string;
   criteria?: string[];
-  source?: { documentId?: string; documentName?: string; versionId?: string; quote?: string; page?: number | null; exerciseId?: string; position?: number };
+  source?: { documentId?: string; documentName?: string; documents?: string[]; pages?: number; versionId?: string; quote?: string; page?: number | null; exerciseId?: string; position?: number };
   revealedAt?: string;
 }
 
@@ -109,7 +110,7 @@ async function touchActivity(userId: string, w: { id: string; kind: LabKind; tit
   const existing = await db.learningActivity.findFirst({ where });
   const data = { status: done ? ("DONE" as const) : ("IN_PROGRESS" as const), title: w.title.slice(0, 160) };
   if (existing) await db.learningActivity.update({ where: { id: existing.id }, data });
-  else await db.learningActivity.create({ data: { userId, subjectId: w.subjectId, type: w.kind === "CODE" ? "LAB_CODE" : "LAB_SQL", refType: "lab", refId: w.id, ...data } });
+  else await db.learningActivity.create({ data: { userId, subjectId: w.subjectId, type: w.kind === "CODE" ? "LAB_CODE" : w.kind === "SQL" ? "LAB_SQL" : "LAB_DIAGRAM", refType: "lab", refId: w.id, ...data } });
 }
 
 // ── CRUD ─────────────────────────────────────────────────────────────────────
@@ -164,6 +165,10 @@ export async function createFree(userId: string, raw: unknown) {
   await touchActivity(userId, w, false);
   track(userId, "lab.create", { module: kind === "SQL" ? "sql" : "code", sourceRef: w.id, props: { kind, mode: "FREE" } });
   return toDto(w);
+}
+
+export async function createDiagram(userId: string, raw: unknown) {
+  return toDto(await createDiagramWorkspace(userId, raw));
 }
 
 export async function createFromQuestion(userId: string, raw: unknown) {
@@ -245,9 +250,11 @@ export async function getWorkspace(userId: string, id: string) {
 const updateSchema = z.object({ title: text(120).optional(), content: z.string().max(MAX_CODE).optional(), schemaSql: z.string().max(20_000).optional(), fixtureId: z.string().optional() });
 
 export async function updateWorkspace(userId: string, id: string, raw: unknown) {
+  const w = await owned(userId, id);
+  // Laboratoire de diagrammes : diagramme validé, titre et sujet de l'exercice.
+  if (w.kind === "DIAGRAM") return toDto(await saveDiagramWorkspace(userId, id, raw));
   const p = updateSchema.safeParse(raw);
   if (!p.success) throw new ApiHttpError(p.error.issues[0]?.message ?? "Demande invalide.", 422);
-  const w = await owned(userId, id);
   const files = w.files as unknown as FileJson[];
   const data: Prisma.LabWorkspaceUpdateInput = {};
   if (p.data.title) data.title = p.data.title;
@@ -294,6 +301,7 @@ export async function runWorkspace(userId: string, id: string, raw: unknown) {
   const p = runSchema.safeParse(raw ?? {});
   if (!p.success) throw new ApiHttpError(p.error.issues[0]?.message ?? "Demande invalide.", 422);
   const w = await owned(userId, id);
+  if (w.kind === "DIAGRAM") throw new ApiHttpError("Un diagramme ne s'exécute pas : utilisez les vérifications et l'assistant.", 422);
   const files = w.files as unknown as FileJson[];
   const content = p.data.content ?? files[0].content;
   if (p.data.content !== undefined && p.data.content !== files[0].content) {
@@ -395,6 +403,7 @@ export async function hintFor(userId: string, id: string, raw: unknown) {
   const out = run.output as { error?: { type: string; message: string; line?: number }; status?: string };
   const input = run.input as { content?: string };
   const free = tests ? [] : classifyFree(out);
+  if (w.kind === "DIAGRAM") throw new ApiHttpError("Les indices du laboratoire de diagrammes passent par l'assistant.", 422);
   const hint = await generateHint(userId, {
     kind: w.kind,
     language: (w.files as unknown as FileJson[])[0].language,

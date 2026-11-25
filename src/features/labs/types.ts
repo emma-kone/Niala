@@ -1,4 +1,4 @@
-export type LabKind = "CODE" | "SQL";
+export type LabKind = "CODE" | "SQL" | "DIAGRAM";
 
 export interface LabListItem {
   id: string;
@@ -19,7 +19,7 @@ export interface LabBrief {
   starter?: string;
   verified: boolean;
   criteria?: string[];
-  source?: { documentId?: string; documentName?: string; quote?: string; page?: number | null; exerciseId?: string; position?: number };
+  source?: { documentId?: string; documentName?: string; documents?: string[]; pages?: number; quote?: string; page?: number | null; exerciseId?: string; position?: number };
   revealedAt?: string;
   reference?: string;
   tests: { name: string; edge: boolean; hidden: boolean; stdin?: string; call?: { fn: string; args: unknown[] }; expected?: unknown }[];

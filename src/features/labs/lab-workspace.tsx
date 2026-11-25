@@ -67,13 +67,17 @@ export default function LabWorkspace({ id }: { id: string }) {
   const load = useCallback(async () => {
     try {
       const r = await api.get<{ workspace: LabWorkspaceDto }>(`/api/labs/${id}`);
+      if (r.workspace.kind === "DIAGRAM") {
+        router.replace(`${routes.diagrams}/${id}`);
+        return;
+      }
       setWs(r.workspace);
       setCode((c) => (dirty.current ? c : r.workspace.files[0]?.content ?? ""));
       setError(null);
     } catch (e) {
       setError({ message: errText(e, "Chargement impossible."), status: (e as { status?: number }).status });
     }
-  }, [id]);
+  }, [id, router]);
 
   useEffect(() => {
     void load();
@@ -302,7 +306,7 @@ export default function LabWorkspace({ id }: { id: string }) {
 
           {/* Toujours monté : la discussion survit au changement d'onglet. */}
           <TabsContent value="assistant" forceMount className="rounded-xl border bg-card p-4 data-[state=inactive]:hidden">
-            <LabAssistantPanel endpoint={`/api/labs/${id}/assistant`} kind={ws.kind} guided={!!brief && !brief.revealedAt && ws.mode === "EXERCISE"} getCode={() => codeRef.current} onInsert={(c) => { dirty.current = true; setSaved("idle"); setCode(c); }} />
+            <LabAssistantPanel endpoint={`/api/labs/${id}/assistant`} kind={ws.kind === "SQL" ? "SQL" : "CODE"} guided={!!brief && !brief.revealedAt && ws.mode === "EXERCISE"} getCode={() => codeRef.current} onInsert={(c) => { dirty.current = true; setSaved("idle"); setCode(c); }} />
           </TabsContent>
 
           <TabsContent value="result" className="rounded-xl border bg-card p-4">

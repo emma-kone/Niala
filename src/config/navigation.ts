@@ -9,6 +9,7 @@ import {
   NotebookPen,
   Settings,
   Terminal,
+  Workflow,
   TrendingUp,
   type LucideIcon,
 } from "lucide-react";
@@ -32,6 +33,7 @@ export const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
       { href: routes.exercises, label: "Exercices", icon: FilePlus2, match: "prefix" },
       { href: routes.code, label: "Labo de code", icon: Terminal, match: "prefix" },
       { href: routes.sql, label: "Labo SQL", icon: Database, match: "prefix" },
+      { href: routes.diagrams, label: "Labo diagrammes", icon: Workflow, match: "prefix" },
       { href: routes.assistant, label: "Assistant IA", icon: MessageSquare, match: "prefix" },
     ],
   },

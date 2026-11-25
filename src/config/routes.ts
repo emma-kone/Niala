@@ -13,6 +13,7 @@ export const routes = {
   exercises: "/exercices",
   code: "/code",
   sql: "/sql",
+  diagrams: "/diagrammes",
   progress: "/progression",
   settings: "/reglages",
   suggestions: "/suggestions",

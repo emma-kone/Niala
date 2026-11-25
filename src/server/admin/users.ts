@@ -212,7 +212,7 @@ export async function getUserDetail(admin: AdminUser, id: string) {
       subjects: subjects.map((s) => ({ name: s.name, exercises: n(s.exercises), done: n(s.done), successRate: ratio(n(s.ok), n(s.done)) })),
       exercisesDone: n(a0?.done), exercisesPassed: n(a0?.ok), exercisesFailed: n(a0?.fail), exercisesOpen: n(a0?.open),
       coursesViewed: courses, documentsImported: docs, mapsCreated: maps,
-      environments: (["CODE", "SQL"] as const).map((k) => ({ kind: k, workspaces: n(labs.find((l) => l.kind === k)?.c), runs: n(runs.find((l) => l.kind === k)?.c) })),
+      environments: (["CODE", "SQL", "DIAGRAM"] as const).map((k) => ({ kind: k, workspaces: n(labs.find((l) => l.kind === k)?.c), runs: n(runs.find((l) => l.kind === k)?.c) })),
     },
     progress: {
       results: results.reverse().map((r) => ({ at: r.finishedAt, percent: round1(((r.score ?? 0) / (r.maxScore ?? 1)) * 100) ?? 0 })),
