@@ -49,3 +49,26 @@ export function quoteInText(quote: string, text: string, minLength = 12): boolea
   if (q.length < minLength) return false;
   return foldText(text).includes(q);
 }
+
+/**
+ * Citation approximative → passage réel : retrouve dans le texte source la phrase (ou le groupe de phrases) qui recoupe
+ * le mieux la citation proposée. Sert à rattacher une question à son passage plutôt que de la perdre pour une
+ * simple différence de ponctuation, de coupure ou de reformulation. Renvoie null sans recoupement suffisant.
+ */
+export function repairQuote(quote: string, text: string, minOverlap = 0.6): string | null {
+  const words = (t: string) => foldText(t).split(" ").filter((w) => w.length >= 4).map((w) => w.slice(0, 5));
+  const wanted = [...new Set(words(quote))];
+  if (wanted.length < 3) return null;
+  const sentences = text.split(/(?<=[.!?;:])\s+|\n+/).map((s) => s.trim()).filter((s) => s.length >= 12);
+  let best: { text: string; score: number } | null = null;
+  for (let i = 0; i < sentences.length; i++) {
+    for (const span of [1, 2]) {
+      const candidate = sentences.slice(i, i + span).join(" ");
+      if (candidate.length > 400) continue;
+      const known = new Set(words(candidate));
+      const score = wanted.filter((w) => known.has(w)).length / wanted.length;
+      if (!best || score > best.score || (score === best.score && candidate.length < best.text.length)) best = { text: candidate, score };
+    }
+  }
+  return best && best.score >= minOverlap ? best.text.slice(0, 300) : null;
+}

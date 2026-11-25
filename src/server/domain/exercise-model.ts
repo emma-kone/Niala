@@ -186,7 +186,19 @@ export const rawQuestionSchema = z.discriminatedUnion("type", [
 export type RawQuestion = z.infer<typeof rawQuestionSchema>;
 
 /** Cohérences que le schéma seul ne vérifie pas (indices, nombre de trous). */
+/**
+ * Questions sur la mise en forme du document (titre d'une section, numéro de page, plan, sommaire…) : elles ne testent
+ * aucune connaissance du cours. Elles sont écartées et remplacées par de vraies questions.
+ */
+const STRUCTURAL_QUESTION =
+  /\b(titre|intitul[ée]|num[ée]ro|rang)\b[^.?]{0,40}\b(section|sous-section|partie|chapitre|paragraphe|page|diapositive|slide)\b|\b(section|partie|chapitre|paragraphe)\s+[IVXLC]+[.\d]*\b|\b(plan|sommaire|table des mati[èe]res)\b[^.?]{0,40}\b(du cours|du document|d[ée]taill[ée])|\bdans quelle (section|partie|page|diapositive)\b|(?:^|\s)[àa] quelle page\b|\bcombien de (pages|sections|chapitres|parties|diapositives)\b|\b(auteur|enseignant|professeur) du (cours|document)\b/i;
+
+export function isStructuralQuestion(statement: string): boolean {
+  return STRUCTURAL_QUESTION.test(statement);
+}
+
 export function semanticProblem(q: RawQuestion): string | null {
+  if (isStructuralQuestion(q.statement)) return "question sur la structure du document";
   switch (q.type) {
     case "qcm_single":
       if (q.correctIndex >= q.options.length) return "indice de bonne réponse hors limites";

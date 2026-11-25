@@ -34,6 +34,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { NameDialog } from "@/features/subject-files/dialogs";
 import { routes } from "@/config/routes";
 import { confirmAction } from "@/components/notifications";
+import { StudyGuidePanel } from "./study-guide-panel";
 
 type Origin = "DOCUMENT" | "AI_INFERRED" | "USER";
 interface Section {
@@ -94,6 +95,7 @@ export function AnalysisPanel({ docId, subjectId, onGoToPage }: { docId: string;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [expandedConcepts, setExpandedConcepts] = useState<Set<string>>(new Set());
+  const [view, setView] = useState<"plan" | "guide">("plan");
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const seq = useRef(0);
@@ -286,8 +288,30 @@ export function AnalysisPanel({ docId, subjectId, onGoToPage }: { docId: string;
     );
   };
 
+  const viewTabs = a?.status === "READY" && (
+    <div role="tablist" aria-label="Affichage de l'analyse" className="flex gap-1 border-b px-3 pt-2">
+      {([["plan", "Plan et notions"], ["guide", "Fiches : à retenir"]] as const).map(([id, label]) => (
+        <button key={id} type="button" role="tab" aria-selected={view === id} onClick={() => setView(id)} className={cn("rounded-t-md border-b-2 px-3 py-1.5 text-xs font-medium transition-colors", view === id ? "border-foreground" : "border-transparent text-muted-foreground hover:text-foreground")}>
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+
+  if (view === "guide" && a?.status === "READY") {
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        {viewTabs}
+        <div className="min-h-0 flex-1">
+          <StudyGuidePanel docId={docId} analysisId={a.id} sections={data.sections} aiConfigured={data.aiConfigured} onGoToPage={onGoToPage} />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {viewTabs}
       <div className="space-y-2 border-b p-3">
         {!data.aiConfigured && (
           <p role="note" className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">

@@ -2,7 +2,7 @@
 
 import { memo, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { CalendarPlus, Check, Copy, CornerDownRight, RefreshCw } from "lucide-react";
+import { CalendarPlus, Check, Copy, CornerDownRight, NotebookPen, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { planHref } from "@/features/agenda/types";
 import { ChatMarkdown } from "./chat-markdown";
@@ -88,6 +88,12 @@ export const AssistantMessage = memo(function AssistantMessage({ m, large, isLas
         <SourceList citations={citations} focus={focus} onCitation={onCitation} onVerify={onVerify} />
         <ReliabilityPanel info={m.consulted} citations={citations} />
         <ConsultedNotice info={m.consulted} />
+        {(m.consulted?.notes ?? []).map((n) => (
+          <p key={`${n.noteId}-${n.action}`} className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-xs text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300">
+            <NotebookPen className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            {n.action === "appended" ? "Ajouté à vos notes" : "Nouvelle note créée"} · {n.title}
+          </p>
+        ))}
         <div className="mt-1.5 -ml-1.5 flex flex-wrap items-center gap-0.5">
           <ActionButton label={copied ? "Copié" : "Copier la réponse"} onClick={copy}>
             {copied ? <Check className="h-3.5 w-3.5" aria-hidden /> : <Copy className="h-3.5 w-3.5" aria-hidden />}

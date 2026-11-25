@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { softDelete } from "@/lib/soft-delete";
 import { ApiHttpError } from "@/lib/api-helpers";
 import { assertFound } from "@/lib/ownership";
-import { classify, languageOf, parseCodeTests, sqlErrorReason, sqlSpecSchema, type CodeTest, type Diagnosis, type SqlSpec, type TestOutcome, type TestSummary } from "@/server/domain/lab-tests";
+import { classify, languageOf, parseCodeTests, sqlErrorReason, sqlSpecSchema, type CodeTest, type Diagnosis, type SqlSpec, type TestOutcome, type TestSummary, EDIT_ONLY_LANGUAGES, editOnlyLanguageOf } from "@/server/domain/lab-tests";
 import type { CodeCaseResult } from "@/server/labs/runner/host";
 import { SQL_FIXTURES } from "@/server/labs/fixtures";
 import { capabilities, runCodeFree, runCodeTests, runSqlFree, runSqlTests } from "./execute";
@@ -13,6 +13,7 @@ import { extractLabExercises } from "./import";
 import { refreshProgress } from "@/server/services/progress/progress";
 import { track } from "@/server/analytics/track";
 import { markActivity } from "@/server/services/progress/streak";
+import { createDiagramWorkspace, saveDiagramWorkspace } from "./diagrams";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Laboratoires code & SQL : espaces de travail libres ou d'exercice, exécution isolée, tests objectifs,
@@ -34,7 +35,7 @@ export interface Brief {
   verified: boolean;
   reference?: string;
   criteria?: string[];
-  source?: { documentId?: string; documentName?: string; versionId?: string; quote?: string; page?: number | null; exerciseId?: string; position?: number };
+  source?: { documentId?: string; documentName?: string; documents?: string[]; pages?: number; versionId?: string; quote?: string; page?: number | null; exerciseId?: string; position?: number };
   revealedAt?: string;
 }
 
@@ -51,6 +52,9 @@ const DEFAULT_FILE: Record<string, { name: string; content: string }> = {
   javascript: { name: "main.js", content: "// Écrivez votre code JavaScript ici\nconsole.log('Bonjour');\n" },
   typescript: { name: "main.ts", content: "// Écrivez votre code TypeScript ici\nconst message: string = 'Bonjour';\nconsole.log(message);\n" },
   sql: { name: "requete.sql", content: "-- Écrivez votre requête ici\nSELECT 1;\n" },
+  c: { name: "main.c", content: "#include <stdio.h>\n\n// Écrivez votre code C ici\nint main(void) {\n    printf(\"Bonjour\\n\");\n    return 0;\n}\n" },
+  csharp: { name: "Program.cs", content: "using System;\n\n// Écrivez votre code C# ici\nclass Program\n{\n    static void Main()\n    {\n        Console.WriteLine(\"Bonjour\");\n    }\n}\n" },
+  javaee: { name: "HelloServlet.java", content: "import jakarta.servlet.ServletException;\nimport jakarta.servlet.annotation.WebServlet;\nimport jakarta.servlet.http.HttpServlet;\nimport jakarta.servlet.http.HttpServletRequest;\nimport jakarta.servlet.http.HttpServletResponse;\nimport java.io.IOException;\n\n// Écrivez votre code Java EE (Jakarta EE) ici\n@WebServlet(\"/bonjour\")\npublic class HelloServlet extends HttpServlet {\n    @Override\n    protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {\n        resp.setContentType(\"text/plain;charset=UTF-8\");\n        resp.getWriter().println(\"Bonjour\");\n    }\n}\n" },
 };
 
 // ── DTO : jamais de référence, jamais de test caché ni de contrôle serveur ───────
@@ -106,7 +110,7 @@ async function touchActivity(userId: string, w: { id: string; kind: LabKind; tit
   const existing = await db.learningActivity.findFirst({ where });
   const data = { status: done ? ("DONE" as const) : ("IN_PROGRESS" as const), title: w.title.slice(0, 160) };
   if (existing) await db.learningActivity.update({ where: { id: existing.id }, data });
-  else await db.learningActivity.create({ data: { userId, subjectId: w.subjectId, type: w.kind === "CODE" ? "LAB_CODE" : "LAB_SQL", refType: "lab", refId: w.id, ...data } });
+  else await db.learningActivity.create({ data: { userId, subjectId: w.subjectId, type: w.kind === "CODE" ? "LAB_CODE" : w.kind === "SQL" ? "LAB_SQL" : "LAB_DIAGRAM", refType: "lab", refId: w.id, ...data } });
 }
 
 // ── CRUD ─────────────────────────────────────────────────────────────────────
@@ -141,8 +145,8 @@ export async function createFree(userId: string, raw: unknown) {
   const p = createFreeSchema.safeParse(raw);
   if (!p.success) throw new ApiHttpError(p.error.issues[0]?.message ?? "Demande invalide.", 422);
   const { kind } = p.data;
-  const lang = kind === "SQL" ? "sql" : languageOf(p.data.language ?? "python");
-  if (!lang || (kind === "CODE" && lang === "sql")) throw new ApiHttpError("Langage non exécutable. Choisissez Python, JavaScript ou TypeScript.", 422);
+  const lang = kind === "SQL" ? "sql" : (languageOf(p.data.language ?? "python") ?? editOnlyLanguageOf(p.data.language ?? ""));
+  if (!lang || (kind === "CODE" && lang === "sql")) throw new ApiHttpError("Langage inconnu. Choisissez Python, JavaScript, TypeScript, C, C# ou Java EE.", 422);
   const subjectId = await checkSubject(userId, p.data.subjectId);
   const fixture = p.data.fixtureId ? SQL_FIXTURES[p.data.fixtureId] : undefined;
   if (kind === "SQL" && p.data.fixtureId && !fixture) throw new ApiHttpError("Jeu de données inconnu.", 422);
@@ -161,6 +165,10 @@ export async function createFree(userId: string, raw: unknown) {
   await touchActivity(userId, w, false);
   track(userId, "lab.create", { module: kind === "SQL" ? "sql" : "code", sourceRef: w.id, props: { kind, mode: "FREE" } });
   return toDto(w);
+}
+
+export async function createDiagram(userId: string, raw: unknown) {
+  return toDto(await createDiagramWorkspace(userId, raw));
 }
 
 export async function createFromQuestion(userId: string, raw: unknown) {
@@ -242,9 +250,11 @@ export async function getWorkspace(userId: string, id: string) {
 const updateSchema = z.object({ title: text(120).optional(), content: z.string().max(MAX_CODE).optional(), schemaSql: z.string().max(20_000).optional(), fixtureId: z.string().optional() });
 
 export async function updateWorkspace(userId: string, id: string, raw: unknown) {
+  const w = await owned(userId, id);
+  // Laboratoire de diagrammes : diagramme validé, titre et sujet de l'exercice.
+  if (w.kind === "DIAGRAM") return toDto(await saveDiagramWorkspace(userId, id, raw));
   const p = updateSchema.safeParse(raw);
   if (!p.success) throw new ApiHttpError(p.error.issues[0]?.message ?? "Demande invalide.", 422);
-  const w = await owned(userId, id);
   const files = w.files as unknown as FileJson[];
   const data: Prisma.LabWorkspaceUpdateInput = {};
   if (p.data.title) data.title = p.data.title;
@@ -291,6 +301,7 @@ export async function runWorkspace(userId: string, id: string, raw: unknown) {
   const p = runSchema.safeParse(raw ?? {});
   if (!p.success) throw new ApiHttpError(p.error.issues[0]?.message ?? "Demande invalide.", 422);
   const w = await owned(userId, id);
+  if (w.kind === "DIAGRAM") throw new ApiHttpError("Un diagramme ne s'exécute pas : utilisez les vérifications et l'assistant.", 422);
   const files = w.files as unknown as FileJson[];
   const content = p.data.content ?? files[0].content;
   if (p.data.content !== undefined && p.data.content !== files[0].content) {
@@ -299,7 +310,15 @@ export async function runWorkspace(userId: string, id: string, raw: unknown) {
   if (!content.trim()) throw new ApiHttpError("Le code est vide.", 422);
   const brief = (w.brief as unknown as Brief | null) ?? null;
   const lang = languageOf(files[0].language);
-  if (!lang) throw new ApiHttpError("Ce langage n'est pas exécutable ici.", 422);
+  if (!lang) {
+    const edit = editOnlyLanguageOf(files[0].language);
+    throw new ApiHttpError(
+      edit
+        ? `Le code ${EDIT_ONLY_LANGUAGES[edit].label} peut être écrit, enregistré et relu avec l'assistant, mais pas exécuté : il faut un compilateur ou une machine virtuelle que l'environnement isolé ne contient pas. Aucune exécution n'est simulée.`
+        : "Ce langage n'est pas exécutable ici.",
+      422
+    );
+  }
 
   let output: Record<string, unknown> = {};
   let tests: { outcomes: TestOutcome[]; summary: TestSummary; diagnoses: Diagnosis[] } | null = null;
@@ -384,6 +403,7 @@ export async function hintFor(userId: string, id: string, raw: unknown) {
   const out = run.output as { error?: { type: string; message: string; line?: number }; status?: string };
   const input = run.input as { content?: string };
   const free = tests ? [] : classifyFree(out);
+  if (w.kind === "DIAGRAM") throw new ApiHttpError("Les indices du laboratoire de diagrammes passent par l'assistant.", 422);
   const hint = await generateHint(userId, {
     kind: w.kind,
     language: (w.files as unknown as FileJson[])[0].language,

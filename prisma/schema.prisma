@@ -529,6 +529,7 @@ enum ActivityStatus {
 enum LabKind {
   CODE
   SQL
+  DIAGRAM // MCD (Merise), diagramme de classes UML
 }
 
 enum LabMode {
@@ -1028,7 +1029,7 @@ model LearningActivity {
   id           String         @id @default(cuid())
   userId       String
   subjectId    String?
-  type         String // READING | EXERCISE | LAB_CODE | LAB_SQL | REVISION
+  type         String // READING | EXERCISE | LAB_CODE | LAB_SQL | LAB_DIAGRAM | REVISION
   refType      String?
   refId        String?
   title        String

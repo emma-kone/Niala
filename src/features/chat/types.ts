@@ -52,6 +52,8 @@ export interface ConsultedInfo {
   verification?: VerificationDto;
   pagesRead: number;
   tools: string[];
+  /** Notes écrites par l'assistant pendant la réponse, à la demande de l'étudiant. */
+  notes?: { noteId: string; title: string; action: "appended" | "created" }[];
   /** La rédaction a été interrompue par l'étudiant : le texte est incomplet. */
   interrupted?: boolean;
   coverage: { documentId: string; documentName: string; complete: boolean; warnings: string[] }[];

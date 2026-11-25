@@ -136,7 +136,7 @@ async function errorTallies(userId: string): Promise<ErrorTally[]> {
     const ev = r.evidence as { source?: string; kind?: string; label?: string } | null;
     if (!ev || ev.source === "ai" || !ev.kind) continue; // les hypothèses de l'IA ne fondent pas une recommandation
     const ws = r.labRun?.workspace;
-    if (!ws) continue;
+    if (!ws || ws.kind === "DIAGRAM") continue;
     const key = `${ws.kind}:${ev.kind}:${ws.subjectId}`;
     const t = map.get(key) ?? { kind: ev.kind, category: r.category, count: 0, label: ev.label ?? ev.kind, subjectId: ws.subjectId, labKind: ws.kind };
     t.count++;
@@ -222,7 +222,7 @@ async function activityHref(userId: string, a: { type: string; refType: string |
     // Un exercice supprimé garde ses tentatives (statistiques) mais n'est plus proposé à l'étudiant.
     return att?.exerciseId && att.exercise && !att.exercise.deletedAt ? `${exerciseHref(att.exercise.subjectId, att.exerciseId)}/tentatives/${a.refId}` : null;
   }
-  if (a.refType === "lab") return `${a.type === "LAB_SQL" ? "/sql" : "/code"}/${a.refId}`;
+  if (a.refType === "lab") return `${a.type === "LAB_SQL" ? "/sql" : a.type === "LAB_DIAGRAM" ? "/diagrammes" : "/code"}/${a.refId}`;
   return null;
 }
 

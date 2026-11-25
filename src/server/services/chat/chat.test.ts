@@ -74,7 +74,7 @@ async function importText(user: string, name: string, content: string) {
 
 beforeAll(async () => {
   pg = await PGlite.create();
-  for (const name of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261110000000_niala_agenda", "20261111000000_niala_academic", "20261112000000_niala_subject_icon", "20261113000000_niala_google_link", "20261109000000_niala_reliability", "20261116000000_niala_profile_exercises", "20261117000000_niala_class_level_other", "20261118000000_niala_admin", "20261119000000_niala_langues_edt_reset", "20261120000000_niala_agenda_sections", "20261121000000_niala_soft_delete", "20261122000000_niala_assistance_push", "20261123000000_niala_rate_limit", "20261124000000_niala_streak"]) {
+  for (const name of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261110000000_niala_agenda", "20261111000000_niala_academic", "20261112000000_niala_subject_icon", "20261113000000_niala_google_link", "20261109000000_niala_reliability", "20261116000000_niala_profile_exercises", "20261117000000_niala_class_level_other", "20261118000000_niala_admin", "20261119000000_niala_langues_edt_reset", "20261120000000_niala_agenda_sections", "20261121000000_niala_soft_delete", "20261122000000_niala_assistance_push", "20261123000000_niala_rate_limit", "20261124000000_niala_streak", "20261125000000_niala_lab_diagram"]) {
     await pg.exec(readFileSync(path.join(migrations, name, "migration.sql"), "utf8"));
   }
   const port = 30000 + Math.floor(Math.random() * 10000);
@@ -168,22 +168,15 @@ describe("génération : interruption, relance et contexte", () => {
     expect(system).not.toContain("secret");
   });
 
-  it("discute dans la langue choisie : anglais demandé, préférence du compte sinon", async () => {
+  it("répond en français par défaut et transmet les images jointes au modèle", async () => {
     const id = await newConversation();
     script = () => ({ text: "Ok" });
     seen.length = 0;
-    await chat.sendMessage(A, id, "What is recursion?", { lang: "en" });
-    expect(seen[0].system).toContain("LANGUE DE LA CONVERSATION : ANGLAIS");
-    expect(seen[0].system).not.toContain("Réponds en français");
-    seen.length = 0;
-    await chat.sendMessage(A, id, "Et en français ?");
+    await chat.sendMessage(A, id, "Que montre ce schéma ?", { images: [{ name: "schema.png", mimeType: "image/png", data: "iVBORw0KGgo=" }] });
     expect(seen[0].system).toContain("Réponds en français");
-    const { db } = await import("@/lib/db");
-    await db.userSettings.upsert({ where: { userId: A }, create: { userId: A, chatLang: "en" }, update: { chatLang: "en" } });
-    seen.length = 0;
-    await chat.sendMessage(A, id, "Again");
-    expect(seen[0].system).toContain("ANGLAIS");
-    await db.userSettings.update({ where: { userId: A }, data: { chatLang: "fr" } });
+    const parts = seen[0].turns[seen[0].turns.length - 1].parts as Record<string, unknown>[];
+    expect(parts[0]).toEqual({ inlineData: { mimeType: "image/png", data: "iVBORw0KGgo=" } });
+    expect(String(parts[1].text)).toContain("Que montre ce schéma ?");
   });
 
   it("le registre des générations n'interrompt que celles de leur propriétaire", async () => {

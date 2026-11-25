@@ -1,6 +1,7 @@
 import type { Origin, Prisma } from "@prisma/client";
 import { db, type DbTx } from "@/lib/db";
 import { ApiHttpError } from "@/lib/api-helpers";
+import { runPool } from "@/lib/concurrency";
 import { stitchChunks, type PageText } from "@/server/domain/chunking";
 import { parseStructure, sectionTexts } from "@/server/domain/structure-parser";
 import { AiCallError, AiQuotaError, AiUnavailableError, getProvider, isAiConfigured } from "@/server/ai/provider";
@@ -14,7 +15,8 @@ import { PROMPT_VERSION, batchSections, extractConcepts, inferStructure, type Se
 // ─────────────────────────────────────────────────────────────────────────────
 
 const MAX_HEADINGS = 400;
-const MAX_AI_SECTIONS = 60;
+const MAX_AI_SECTIONS = 240;
+const CONCEPT_CONCURRENCY = 3;
 const STALE_RUNNING_MS = 15 * 60_000;
 
 export async function loadVersionPages(userId: string, versionId: string): Promise<PageText[]> {
@@ -206,7 +208,10 @@ export async function runAnalysis(userId: string, documentId: string, opts: RunO
         pages: pagesBetween(pages, n.pageStart, n.pageEnd),
       }));
       let failed = 0;
-      for (const batch of batchSections(inputs)) {
+      let quotaHit = false;
+      // Plusieurs lots à la fois : un long cours est analysé en entier dans le temps imparti.
+      await runPool(batchSections(inputs), CONCEPT_CONCURRENCY, async (batch) => {
+        if (quotaHit) return void (failed += batch.length);
         try {
           const { results, model: m } = await extractConcepts(userId, batch);
           model = m;
@@ -216,12 +221,11 @@ export async function runAnalysis(userId: string, documentId: string, opts: RunO
         } catch (e) {
           failed += batch.length;
           if (e instanceof AiQuotaError) {
+            quotaHit = true;
             notices.push(e.message);
-            break;
-          }
-          if (!(e instanceof AiCallError || e instanceof AiUnavailableError)) console.error("[analysis] lot", e);
+          } else if (!(e instanceof AiCallError || e instanceof AiUnavailableError)) console.error("[analysis] lot", e);
         }
-      }
+      });
       if (failed) notices.push(`${failed} section(s) n'ont pas pu être analysées : relancez-les individuellement.`);
     } else if (nodes.length > 0) {
       notices.push("Notions non extraites : le service d'IA n'est pas configuré. Le plan ci-dessous provient uniquement de la numérotation du document.");

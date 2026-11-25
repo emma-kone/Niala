@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, BookmarkPlus, CheckCircle2, ExternalLink, FlaskConical, Loader2, MessageCircleQuestion, RefreshCw, RotateCcw, Sparkles } from "lucide-react";
+import { ArrowLeft, ArrowRight, BookmarkPlus, CheckCircle2, ExternalLink, FlaskConical, Loader2, MessageCircleQuestion, RefreshCw, RotateCcw, Sparkles, Timer } from "lucide-react";
 import { api } from "@/lib/client-api";
 import { routes } from "@/config/routes";
 import { cn } from "@/lib/utils";
@@ -20,6 +20,7 @@ import { VERDICT_LABEL, exercisesBase, fmtPoints, type AttemptDetail, type Attem
 import { confirmAction, notify } from "@/components/notifications";
 import { useSettings } from "@/features/settings/use-settings";
 import { TutorPanel } from "./tutor-panel";
+import { AttemptTimerBar, formatDuration, useAttemptTimer } from "./attempt-timer";
 
 // Formules et tableaux : le rendu n'est chargé que pour les énoncés qui en ont besoin.
 const RichText = dynamic(() => import("./rich-text"));
@@ -60,6 +61,8 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
   const timers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
   const pending = useRef<Map<number, unknown>>(new Map());
   const inFlight = useRef(0);
+  // Chronomètre au choix de l'étudiant : chrono (temps passé) ou minuteur (temps imparti). À zéro, il décide de terminer ou non.
+  const timer = useAttemptTimer(attemptId, attempt?.status === "IN_PROGRESS", () => void timeUp());
 
   const load = useCallback(async () => {
     try {
@@ -136,20 +139,28 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
     document.querySelector("main")?.scrollTo({ top: 0 });
   }
 
-  async function submit() {
+  /** Temps imparti écoulé : rien n'est coupé sans l'accord de l'étudiant. */
+  async function timeUp() {
+    const finish = await confirmAction("Le temps imparti est écoulé. Voulez-vous terminer l'exercice et voir la correction, ou continuer encore un peu ?", { title: "Temps écoulé", confirmLabel: "Terminer", cancelLabel: "Continuer", danger: true });
+    if (finish) await submit(true);
+  }
+
+  async function submit(skipConfirm = false) {
     if (!attempt) return;
     const missing = attempt.questions.filter((q) => !isFilled(answers[q.position])).length;
-    if (missing > 0 && !(await confirmAction(`${missing} question(s) sans réponse. Terminer et corriger quand même ?`, { confirmLabel: "Terminer", danger: false }))) return;
+    if (!skipConfirm && missing > 0 && !(await confirmAction(`${missing} question(s) sans réponse. Terminer et corriger quand même ?`, { confirmLabel: "Terminer", danger: false }))) return;
     setSubmitting(true);
     setActionError(null);
+    const spent = timer.freeze();
     try {
       await flushAll();
       if (pending.current.size > 0) throw new Error("Certaines réponses n'ont pas pu être enregistrées. Réessayez.");
-      const r = await api.post<{ attempt: AttemptDetail }>(`/api/attempts/${attemptId}/submit`);
+      const r = await api.post<{ attempt: AttemptDetail }>(`/api/attempts/${attemptId}/submit`, spent ? { durationSec: spent } : undefined);
       setAttempt(r.attempt);
       if (settings?.notifyProgress) notify({ title: "Exercice corrigé", description: `Résultat : ${fmtPoints(r.attempt.score)} / ${fmtPoints(r.attempt.maxScore)}. Votre progression est à jour.`, variant: "success" });
       void requestReview();
     } catch (e) {
+      if (spent) timer.resume();
       setActionError(errText(e, "La correction a échoué. Vos réponses sont conservées."));
     } finally {
       setSubmitting(false);
@@ -254,6 +265,12 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
             {fmtPoints(attempt.score)} <span className="text-lg font-medium text-muted-foreground">/ {fmtPoints(attempt.ungraded ? attempt.gradedMax : attempt.maxScore)}</span>
           </p>
           <Progress value={pct} className="mt-3 h-2" aria-label={`${pct} %`} />
+          {attempt.durationSec ? (
+            <p className="mt-3 flex items-center gap-1.5 text-sm text-muted-foreground">
+              <Timer className="h-4 w-4" aria-hidden /> Temps passé : <strong className="text-foreground">{formatDuration(attempt.durationSec)}</strong>
+              {timer.mode === "countdown" && timer.limitSec > 0 && <span>sur {formatDuration(timer.limitSec)} imparties{attempt.durationSec > timer.limitSec ? " (dépassé)" : ""}</span>}
+            </p>
+          ) : null}
           {attempt.ungraded > 0 && (
             <div role="note" className="mt-3 rounded-md border border-violet-300 bg-violet-50 p-3 text-sm text-violet-900 dark:bg-violet-950/30 dark:text-violet-200">
               <p><strong>{attempt.ungraded} question(s) non corrigée(s)</strong> : le score ci-dessus ne porte que sur les {fmtPoints(attempt.gradedMax)} points corrigés sur {fmtPoints(attempt.maxScore)}. Les réponses rédigées nécessitent le service d&apos;IA.</p>
@@ -288,10 +305,14 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
   const answered = attempt.questions.filter((x) => isFilled(answers[x.position])).length;
   const immediate = attempt.correctionMode === "immediate";
   const corrected = immediate && !!q.result && q.result.verdict !== "ungraded";
+  // Couleurs de la navigation des questions :
+  //  - correction après chaque réponse : vert = juste, rouge = fausse, orange = partielle, gris = sans réponse, bleu = répondue mais pas encore validée ;
+  //  - correction à la fin : rien ne dit si c'est juste, donc jamais de vert ni de rouge : bleu = répondue, neutre = sans réponse.
+  const ANSWERED = "border-sky-400 bg-sky-50 text-sky-800 dark:bg-sky-950/30 dark:text-sky-300";
   const navClass = (x: AttemptQuestion) => {
     if (current === x.position) return "border-primary bg-primary text-primary-foreground";
     if (immediate && x.result) return VERDICT_LABEL[x.result.verdict].className;
-    return isFilled(answers[x.position]) ? "border-emerald-400 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300" : "hover:bg-muted";
+    return isFilled(answers[x.position]) ? ANSWERED : immediate ? "border-dashed border-slate-400 bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-900 dark:text-slate-300" : "hover:bg-muted";
   };
   const group = q.payload.group as { index?: number; title?: string; instructions?: string | null; context?: string | null } | undefined;
   const rich = q.payload.rich === true;
@@ -315,13 +336,15 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
         <span className="typo-meta whitespace-nowrap">{answered} / {total} répondues</span>
       </div>
 
+      <div className="mt-3"><AttemptTimerBar timer={timer} /></div>
+
       <nav aria-label="Questions" className="my-4 flex flex-wrap gap-1.5">
         {attempt.questions.map((x) => (
           <button
             key={x.position}
             type="button"
             onClick={() => void go(x.position)}
-            aria-label={`Question ${x.position}${isFilled(answers[x.position]) ? " (répondue)" : ""}`}
+            aria-label={`Question ${x.position}${immediate && x.result ? ` (${VERDICT_LABEL[x.result.verdict].label.toLowerCase()})` : isFilled(answers[x.position]) ? " (répondue)" : " (sans réponse)"}`}
             aria-current={current === x.position ? "step" : undefined}
             className={cn("h-8 min-w-8 rounded-md border px-2 text-xs font-medium", navClass(x))}
           >
@@ -329,6 +352,14 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
           </button>
         ))}
       </nav>
+      <ul aria-label="Légende des couleurs" className="-mt-2 mb-4 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+        {(immediate
+          ? [["bg-emerald-400", "Juste"], ["bg-red-400", "Fausse"], ["bg-amber-400", "Partielle"], ["bg-sky-400", "Répondue, à valider"], ["bg-slate-400", "Sans réponse"]]
+          : [["bg-sky-400", "Répondue"], ["bg-slate-300", "Sans réponse"]]
+        ).map(([dot, text]) => (
+          <li key={text} className="inline-flex items-center gap-1"><span className={cn("h-2 w-2 rounded-full", dot)} aria-hidden /> {text}</li>
+        ))}
+      </ul>
 
       {group && <ExerciseContext group={group} />}
       <section aria-labelledby="question-title" className="rounded-xl border bg-card p-5">
@@ -361,14 +392,14 @@ export default function AttemptView({ subjectId, exerciseId, attemptId }: { subj
         {current < total ? (
           <Button className="gap-1.5" onClick={() => void go(current + 1)}>Suivante <ArrowRight className="h-4 w-4" aria-hidden /></Button>
         ) : (
-          <Button className="gap-1.5" onClick={() => void submit()} disabled={submitting}>
+          <Button variant="destructive" className="gap-1.5" onClick={() => void submit()} disabled={submitting}>
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <CheckCircle2 className="h-4 w-4" aria-hidden />} {immediate ? "Terminer et voir le bilan" : "Valider et voir la correction"}
           </Button>
         )}
       </div>
       {current < total && (
         <div className="mt-6 text-center">
-          <Button variant="ghost" size="sm" onClick={() => void submit()} disabled={submitting}>Terminer maintenant</Button>
+          <Button variant="destructive" size="sm" onClick={() => void submit()} disabled={submitting}>Terminer maintenant</Button>
         </div>
       )}
     </div>

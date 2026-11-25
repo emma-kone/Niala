@@ -100,7 +100,7 @@ beforeAll(async () => {
   process.env.DATABASE_URL = `postgresql://postgres:postgres@127.0.0.1:${port}/postgres?connection_limit=1&pgbouncer=true`;
   process.env.DIRECT_URL = process.env.DATABASE_URL;
   process.env.STORAGE_DIR = dir;
-  delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+  process.env.SUPABASE_SERVICE_ROLE_KEY = ""; // vide (et non supprimé) : Prisma recharge .env sinon, et les tests écriraient dans le vrai stockage
   process.env.GEMINI_API_KEY = "";
   db = (await import("@/lib/db")).db;
   docs = await import("@/server/services/documents");

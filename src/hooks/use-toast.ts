@@ -3,7 +3,7 @@
 import { notify } from "@/components/notifications";
 
 // Adaptateur conservé pour les écrans existants : tout passe par les notifications de l'application
-// (en bas à droite, fermables par une croix). « destructive » = erreur, sinon succès.
+// (au centre pour ce qui demande une action, en bas à droite pour le reste, fermables par une croix). « destructive » = erreur, sinon succès.
 export interface ToastInput {
   title?: string;
   description?: string;

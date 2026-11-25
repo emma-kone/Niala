@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, CalendarPlus, ClipboardList, Info, ListTree, Loader2, MessageSquare, StickyNote, type LucideIcon } from "lucide-react";
 import { api } from "@/lib/client-api";
+import { forgetModuleView } from "@/lib/module-memory";
 import { routes } from "@/config/routes";
 import { planHref } from "@/features/agenda/types";
 import { useModuleToolbar } from "@/components/layout/floating-toolbar";
@@ -88,6 +89,82 @@ function useReadingSaver(docId: string) {
 
 type PanelTab = "notes" | "chat" | "analysis" | "doc";
 
+const PANEL_WIDTH_KEY = "niala-reader-panel-width";
+const PANEL_MIN = 320;
+const PANEL_DEFAULT = 384;
+/** Part maximale de la largeur du lecteur que le panneau peut prendre : le cours garde toujours de quoi s'afficher. */
+const PANEL_MAX_SHARE = 0.75;
+
+/** Largeur du panneau latéral, réglable en l'étirant ; mémorisée d'un cours à l'autre. */
+function usePanelWidth() {
+  const [width, setWidth] = useState(PANEL_DEFAULT);
+  useEffect(() => {
+    try {
+      const saved = Number(localStorage.getItem(PANEL_WIDTH_KEY));
+      if (Number.isFinite(saved) && saved >= PANEL_MIN) setWidth(saved);
+    } catch {
+      /* largeur par défaut */
+    }
+  }, []);
+  const commit = useCallback((value: number) => {
+    setWidth(value);
+    try {
+      localStorage.setItem(PANEL_WIDTH_KEY, String(Math.round(value)));
+    } catch {
+      /* non mémorisable */
+    }
+  }, []);
+  return [width, setWidth, commit] as const;
+}
+
+/** Poignée verticale entre le cours et le panneau : glisser vers la gauche agrandit le panneau au détriment du cours. */
+function PanelResizer({ width, onChange, onCommit, container }: { width: number; onChange: (w: number) => void; onCommit: (w: number) => void; container: React.RefObject<HTMLDivElement | null> }) {
+  const drag = useRef<{ startX: number; startWidth: number; last: number } | null>(null);
+  const limit = (w: number) => {
+    const total = container.current?.clientWidth ?? 1200;
+    return Math.round(Math.min(Math.max(w, PANEL_MIN), Math.max(PANEL_MIN, total * PANEL_MAX_SHARE)));
+  };
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Redimensionner le cours et le panneau"
+      aria-valuenow={width}
+      aria-valuemin={PANEL_MIN}
+      tabIndex={0}
+      title="Étirer pour redimensionner (double-clic : largeur initiale)"
+      className="group relative z-10 -mx-1 flex w-2 shrink-0 cursor-col-resize touch-none items-stretch justify-center focus-visible:outline-none"
+      onPointerDown={(e) => {
+        e.currentTarget.setPointerCapture(e.pointerId);
+        drag.current = { startX: e.clientX, startWidth: width, last: width };
+      }}
+      onPointerMove={(e) => {
+        const d = drag.current;
+        if (!d) return;
+        d.last = limit(d.startWidth + (d.startX - e.clientX));
+        onChange(d.last);
+      }}
+      onPointerUp={(e) => {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+        if (drag.current) onCommit(drag.current.last);
+        drag.current = null;
+      }}
+      onPointerCancel={() => {
+        drag.current = null;
+      }}
+      onDoubleClick={() => onCommit(limit(PANEL_DEFAULT))}
+      onKeyDown={(e) => {
+        const step = e.shiftKey ? 80 : 24;
+        if (e.key === "ArrowLeft") (e.preventDefault(), onCommit(limit(width + step)));
+        else if (e.key === "ArrowRight") (e.preventDefault(), onCommit(limit(width - step)));
+      }}
+    >
+      <span className="h-full w-px bg-border transition-colors group-hover:bg-primary group-focus-visible:bg-primary group-active:bg-primary" aria-hidden />
+      <span className="absolute top-1/2 h-10 w-1.5 -translate-y-1/2 rounded-full bg-border transition-colors group-hover:bg-primary group-active:bg-primary" aria-hidden />
+    </div>
+  );
+}
+
 const PANELS: { id: PanelTab; title: string; icon: LucideIcon; color: string }[] = [
   { id: "notes", title: "Notes", icon: StickyNote, color: "var(--accent-sun)" },
   { id: "chat", title: "Chat", icon: MessageSquare, color: "var(--accent-sky)" },
@@ -107,9 +184,27 @@ export default function ReaderView({ subjectId, docId }: { subjectId: string; do
   const preview = previewResult?.id === docId ? (previewResult.ok ? "ok" : "failed") : "loading";
 
   // Notes du document + annotations affichées dans le PDF
-  const [tab, setTab] = useState<PanelTab>("notes");
+  const [tab, setTabState] = useState<PanelTab>("notes");
+  const setTab = useCallback((next: PanelTab) => {
+    setTabState(next);
+    try {
+      sessionStorage.setItem("niala-reader-tab", next);
+    } catch {
+      /* non mémorisable */
+    }
+  }, []);
+  useEffect(() => {
+    try {
+      const saved = sessionStorage.getItem("niala-reader-tab");
+      if (saved === "notes" || saved === "chat" || saved === "analysis" || saved === "doc") setTabState(saved);
+    } catch {
+      /* onglet par défaut */
+    }
+  }, []);
   const [sheet, setSheet] = useState(false);
   const desktop = useDesktop();
+  const [panelWidth, setPanelWidth, commitPanelWidth] = usePanelWidth();
+  const splitRef = useRef<HTMLDivElement>(null);
   const [notes, setNotes] = useState<NoteListItem[] | null>(null);
   const [notesError, setNotesError] = useState<string | null>(null);
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
@@ -308,7 +403,7 @@ export default function ReaderView({ subjectId, docId }: { subjectId: string; do
             onGoToPage={goToPage}
           />
         ) : tab === "chat" ? (
-          <ChatPanel scope="DOCUMENT" documentId={docId} onCitation={(c) => c.page && goToPage(c.page)} />
+          <ChatPanel scope="DOCUMENT" documentId={docId} onCitation={(c) => c.page && goToPage(c.page)} onNotesChanged={() => void reloadNotes()} />
         ) : tab === "analysis" ? (
           <AnalysisPanel docId={docId} subjectId={subjectId} onGoToPage={goToPage} />
         ) : (
@@ -322,7 +417,7 @@ export default function ReaderView({ subjectId, docId }: { subjectId: string; do
     <div className="flex h-full min-h-[28rem] flex-col overflow-hidden lg:mx-6 lg:rounded-3xl lg:border">
       <header className="flex items-center gap-3 border-b bg-background px-3 py-2">
         <Button asChild variant="ghost" size="icon" className="h-8 w-8 shrink-0">
-          <Link href={back} aria-label="Retour aux fichiers">
+          <Link href={back} aria-label="Retour aux fichiers" onClick={() => forgetModuleView(routes.subjects)}>
             <ArrowLeft className="h-4 w-4" aria-hidden />
           </Link>
         </Button>
@@ -354,14 +449,17 @@ export default function ReaderView({ subjectId, docId }: { subjectId: string; do
         </Button>
       </header>
 
-      <div className="flex min-h-0 flex-1">
+      <div ref={splitRef} className="flex min-h-0 flex-1">
         <main className="min-w-0 flex-1" aria-label="Document">
           {viewer}
         </main>
         {panel && desktop && (
-          <aside aria-label="Panneau du document" className="w-96 shrink-0 border-l bg-background">
-            {panelBody}
-          </aside>
+          <>
+            <PanelResizer width={panelWidth} onChange={setPanelWidth} onCommit={commitPanelWidth} container={splitRef} />
+            <aside aria-label="Panneau du document" style={{ width: panelWidth }} className="shrink-0 bg-background">
+              {panelBody}
+            </aside>
+          </>
         )}
       </div>
 

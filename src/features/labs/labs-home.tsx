@@ -8,7 +8,7 @@ import { api } from "@/lib/client-api";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
+import { LabListSkeleton } from "./lab-skeletons";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { routes } from "@/config/routes";
 import type { LabKind, LabListItem } from "./types";
@@ -17,16 +17,25 @@ import { useCachedState } from "@/hooks/use-cached-state";
 import { useBackgroundRefresh } from "@/hooks/use-background-refresh";
 
 const errText = (e: unknown, fb: string) => (e instanceof Error ? e.message : fb);
-const CODE_LANGS = [
+/** Langages exécutables : ils servent aussi à l'extraction d'énoncés depuis un document (tests validés par exécution). */
+const RUN_LANGS = [
   { id: "python", label: "Python 3" },
   { id: "javascript", label: "JavaScript" },
   { id: "typescript", label: "TypeScript" },
 ];
+/** Langages à écrire sans exécution (jamais simulée) : espace libre uniquement. */
+const EDIT_LANGS = [
+  { id: "c", label: "C (écriture seule)" },
+  { id: "csharp", label: "C# (écriture seule)" },
+  { id: "javaee", label: "Java EE (écriture seule)" },
+];
+const CODE_LANGS = [...RUN_LANGS, ...EDIT_LANGS];
 
 interface Capabilities {
   available: boolean;
   reason?: string;
   note: string;
+  editOnly?: { id: string; label: string }[];
   fixtures: { id: string; label: string; description: string }[];
 }
 
@@ -42,6 +51,7 @@ export default function LabsHome({ kind }: { kind: LabKind }) {
   const [caps, setCaps] = useCachedState<Capabilities | null>(["labs-caps"], null);
   const [error, setError] = useState<string | null>(null);
   const [lang, setLang] = useState("python");
+  const [importLang, setImportLang] = useState("python");
   const [fixture, setFixture] = useState("bibliotheque");
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -94,7 +104,7 @@ export default function LabsHome({ kind }: { kind: LabKind }) {
     setActionError(null);
     setImportMsg(null);
     try {
-      const r = await api.post<ImportResponse>("/api/labs", { from: "document", kind, documentId: docId, ...(kind === "CODE" ? { language: lang } : {}) });
+      const r = await api.post<ImportResponse>("/api/labs", { from: "document", kind, documentId: docId, ...(kind === "CODE" ? { language: importLang } : {}) });
       void load();
       if (r.workspaces.length === 0) setImportMsg({ tone: "warn", text: r.notice ?? "Aucun exercice trouvé.", created: [] });
       else setImportMsg({ tone: r.notice ? "warn" : "ok", text: `${r.workspaces.length} exercice(s) créé(s).${r.notice ? " " + r.notice : ""}`, created: r.workspaces });
@@ -122,7 +132,7 @@ export default function LabsHome({ kind }: { kind: LabKind }) {
       <p className="typo-subtitle mt-1">
         {kind === "SQL"
           ? "Écrivez des requêtes sur une base jetable, comparez-les à une solution de référence sur plusieurs jeux de données."
-          : "Exécutez du code Python, JavaScript ou TypeScript dans un environnement isolé, librement ou face à des tests objectifs."}{" "}
+          : "Exécutez du code Python, JavaScript ou TypeScript dans un environnement isolé, librement ou face à des tests objectifs. Écrivez aussi du C, du C# ou du Java EE."}{" "}
         {caps?.note}
       </p>
 
@@ -135,7 +145,7 @@ export default function LabsHome({ kind }: { kind: LabKind }) {
           <div className="flex flex-wrap items-end gap-2">
             {kind === "CODE" ? (
               <Select value={lang} onValueChange={setLang}>
-                <SelectTrigger className="w-44" aria-label="Langage"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="w-56" aria-label="Langage"><SelectValue /></SelectTrigger>
                 <SelectContent>{CODE_LANGS.map((l) => <SelectItem key={l.id} value={l.id}>{l.label}</SelectItem>)}</SelectContent>
               </Select>
             ) : (
@@ -161,9 +171,9 @@ export default function LabsHome({ kind }: { kind: LabKind }) {
               <SelectContent>{docs.map((d) => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}</SelectContent>
             </Select>
             {kind === "CODE" && (
-              <Select value={lang} onValueChange={setLang}>
+              <Select value={importLang} onValueChange={setImportLang}>
                 <SelectTrigger className="w-36" aria-label="Langage"><SelectValue /></SelectTrigger>
-                <SelectContent>{CODE_LANGS.map((l) => <SelectItem key={l.id} value={l.id}>{l.label}</SelectItem>)}</SelectContent>
+                <SelectContent>{RUN_LANGS.map((l) => <SelectItem key={l.id} value={l.id}>{l.label}</SelectItem>)}</SelectContent>
               </Select>
             )}
             <Button className="gap-2" onClick={() => void importDoc()} disabled={!docId || importing || caps?.available === false}>{importing ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <FileUp className="h-4 w-4" aria-hidden />} Extraire</Button>
@@ -181,7 +191,7 @@ export default function LabsHome({ kind }: { kind: LabKind }) {
 
       <h2 className="typo-h3 mb-2 mt-8">Mes espaces de travail</h2>
       {error ? <Alert variant="destructive"><AlertTitle>Chargement impossible</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : !items ? (
-        <div className="space-y-2" aria-busy><Skeleton className="h-16 rounded-xl" /><Skeleton className="h-16 rounded-xl" /></div>
+        <LabListSkeleton />
       ) : items.length === 0 ? (
         <p className="typo-subtitle rounded-xl border border-dashed p-6 text-center">Aucun espace de travail pour l&apos;instant. Créez un espace libre ou importez les énoncés d&apos;un document.</p>
       ) : (

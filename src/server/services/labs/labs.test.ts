@@ -69,7 +69,7 @@ async function makeQuestion(position: number, type: "code" | "sql", payload: obj
 
 beforeAll(async () => {
   pg = await PGlite.create();
-  for (const n of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261110000000_niala_agenda", "20261111000000_niala_academic", "20261112000000_niala_subject_icon", "20261113000000_niala_google_link", "20261116000000_niala_profile_exercises", "20261117000000_niala_class_level_other", "20261118000000_niala_admin", "20261119000000_niala_langues_edt_reset", "20261120000000_niala_agenda_sections", "20261121000000_niala_soft_delete", "20261122000000_niala_assistance_push", "20261123000000_niala_rate_limit", "20261124000000_niala_streak"]) {
+  for (const n of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261110000000_niala_agenda", "20261111000000_niala_academic", "20261112000000_niala_subject_icon", "20261113000000_niala_google_link", "20261116000000_niala_profile_exercises", "20261117000000_niala_class_level_other", "20261118000000_niala_admin", "20261119000000_niala_langues_edt_reset", "20261120000000_niala_agenda_sections", "20261121000000_niala_soft_delete", "20261122000000_niala_assistance_push", "20261123000000_niala_rate_limit", "20261124000000_niala_streak", "20261125000000_niala_lab_diagram"]) {
     await pg.exec(readFileSync(path.join(process.cwd(), "prisma", "migrations", n, "migration.sql"), "utf8"));
   }
   const port = 55000 + Math.floor(Math.random() * 4000);
@@ -79,7 +79,7 @@ beforeAll(async () => {
   process.env.DATABASE_URL = `postgresql://postgres:postgres@127.0.0.1:${port}/postgres?connection_limit=1&pgbouncer=true`;
   process.env.DIRECT_URL = process.env.DATABASE_URL;
   process.env.STORAGE_DIR = dir;
-  delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+  process.env.SUPABASE_SERVICE_ROLE_KEY = ""; // vide (et non supprimé) : Prisma recharge .env sinon, et les tests écriraient dans le vrai stockage
   process.env.GEMINI_API_KEY = ""; // vide (et non supprimé) : Prisma recharge .env sinon
   db = (await import("@/lib/db")).db;
   labs = await import("./labs");
@@ -445,5 +445,106 @@ describe("assistant IA des laboratoires", () => {
     reply("x", []);
     const w = await exercise();
     await expect(ask(B, w.id)).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+describe("laboratoire de diagrammes", () => {
+  const MCD = {
+    kind: "mcd",
+    nodes: [
+      { id: "e1", type: "entity", name: "CLIENT", x: 0, y: 0, attributes: [{ name: "numClient", key: true }, { name: "nom" }] },
+      { id: "e2", type: "entity", name: "COMMANDE", x: 400, y: 0, attributes: [{ name: "numCommande", key: true }, { name: "date" }] },
+      { id: "a1", type: "association", name: "PASSER", x: 200, y: 0, attributes: [] },
+    ],
+    links: [
+      { id: "l1", from: "e1", to: "a1", type: "mcd", cardFrom: "0,n" },
+      { id: "l2", from: "a1", to: "e2", type: "mcd", cardTo: "1,1" },
+    ],
+  };
+
+  it("crée un MCD, l'enregistre validé et normalisé, et garde le sujet collé", async () => {
+    const w = await labs.createDiagram(A, { diagramKind: "mcd", title: "Commandes", subjectId: subj });
+    expect(w).toMatchObject({ kind: "DIAGRAM", mode: "FREE", title: "Commandes" });
+    expect(await db.learningActivity.count({ where: { userId: A, refId: w.id, type: "LAB_DIAGRAM" } })).toBe(1);
+    const saved = await labs.updateWorkspace(A, w.id, { diagram: MCD, statement: "Un client passe des commandes." });
+    expect(saved.mode).toBe("EXERCISE");
+    expect(saved.brief?.statement).toBe("Un client passe des commandes.");
+    const d = JSON.parse(saved.files[0].content);
+    // la patte écrite à l'envers est remise côté entité, avec sa cardinalité
+    expect(d.links.find((l: { id: string }) => l.id === "l2")).toMatchObject({ from: "e2", to: "a1", cardFrom: "1,1" });
+    await expect(labs.updateWorkspace(A, w.id, { diagram: { kind: "mcd", nodes: "x", links: [] } })).rejects.toMatchObject({ status: 422 });
+    await expect(labs.runWorkspace(A, w.id, {})).rejects.toMatchObject({ status: 422 });
+    expect((await labs.listWorkspaces(A, { kind: "DIAGRAM" })).map((x) => x.id)).toContain(w.id);
+    await expect(labs.getWorkspace(B, w.id)).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("importe le sujet depuis un PDF et refuse ce qui n'en est pas un", async () => {
+    const { importDiagramSubjectPdf } = await import("./diagrams");
+    const w = await labs.createDiagram(A, { diagramKind: "uml" });
+    await importDiagramSubjectPdf(A, w.id, { name: "sujet.pdf", bytes: makePdf(["Une agence loue des voitures a des clients.", "Chaque location concerne une voiture."]) });
+    const got = await labs.getWorkspace(A, w.id);
+    expect(got.mode).toBe("EXERCISE");
+    expect(got.brief?.statement).toContain("loue des voitures");
+    await expect(importDiagramSubjectPdf(A, w.id, { name: "x.pdf", bytes: Buffer.from("pas un pdf") })).rejects.toMatchObject({ status: 422 });
+    await expect(importDiagramSubjectPdf(B, w.id, { name: "sujet.pdf", bytes: makePdf(["x"]) })).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("importe plusieurs fichiers à la suite (PDF et image lue par l'IA)", async () => {
+    const { importDiagramSubjectFiles } = await import("./diagrams");
+    const w = await labs.createDiagram(A, { diagramKind: "mcd" });
+    await labs.updateWorkspace(A, w.id, { statement: "Consigne : faire le MCD." });
+    const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(32)]);
+    const seen: { mime?: string }[] = [];
+    // Sans Gemini, une image ne peut pas être lue : refus explicite.
+    prov.__setProviderForTests(fake);
+    await expect(importDiagramSubjectFiles(A, w.id, [{ name: "page2.png", bytes: png }])).rejects.toMatchObject({ status: 503 });
+    prov.__setProviderForTests({
+      name: "gemini",
+      model: "fake-gemini",
+      async complete(req) {
+        seen.push({ mime: req.attachment?.mime });
+        return { model: "fake-gemini", text: "Un adhérent emprunte des livres." };
+      },
+    });
+    await importDiagramSubjectFiles(A, w.id, [
+      { name: "page1.pdf", bytes: makePdf(["Une bibliotheque gere des livres et des adherents."]) },
+      { name: "page2.png", bytes: png },
+    ]);
+    const got = await labs.getWorkspace(A, w.id);
+    const st = got.brief?.statement ?? "";
+    expect(st.startsWith("Consigne : faire le MCD.")).toBe(true);
+    expect(st).toContain("— page1.pdf —");
+    expect(st).toContain("bibliotheque");
+    expect(st).toContain("— page2.png —\nUn adhérent emprunte des livres.");
+    expect(got.brief?.source?.documents).toEqual(["page1.pdf", "page2.png"]);
+    expect(seen).toEqual([{ mime: "image/png" }]);
+    await expect(importDiagramSubjectFiles(A, w.id, [{ name: "x.txt", bytes: Buffer.from("texte brut") }])).rejects.toMatchObject({ status: 422 });
+    await expect(importDiagramSubjectFiles(A, w.id, [])).rejects.toMatchObject({ status: 422 });
+    prov.__setProviderForTests(undefined);
+  });
+
+  it("l'assistant voit le diagramme et le sujet, et sa proposition est validée", async () => {
+    const { askDiagramAssistant, diagramAssistantSchema } = await import("./diagrams");
+    const w = await labs.createDiagram(A, { diagramKind: "mcd", statement: "Gestion des commandes clients." });
+    const proposal = { kind: "mcd", nodes: [...MCD.nodes, { id: "e3", type: "entity", name: "PRODUIT", attributes: [{ name: "ref", key: true }] }], links: MCD.links };
+    const seen: { system: string; turns: unknown[] }[] = [];
+    prov.__setProviderForTests(fake);
+    const text = "Il manque l'entité PRODUIT.\n```niala-diagram\n" + JSON.stringify(proposal) + "\n```";
+    fake.converse = async (req) => {
+      seen.push(req);
+      req.onText?.(text);
+      return { text, calls: [], modelParts: [{ text }], model: "fake-model" };
+    };
+    const deltas: string[] = [];
+    const r = await askDiagramAssistant(A, w.id, diagramAssistantSchema.parse({ message: "Complète", diagram: MCD, selection: ["e1"] }), (e) => deltas.push(e.text));
+    expect(r.text).toBe("Il manque l'entité PRODUIT.");
+    expect(deltas.join("")).not.toContain("niala-diagram");
+    expect(r.proposal?.nodes.find((n) => n.id === "e3")).toMatchObject({ name: "PRODUIT" });
+    expect(typeof r.proposal?.nodes.find((n) => n.id === "e3")?.x).toBe("number");
+    const prompt = JSON.stringify(seen[0].turns);
+    expect(prompt).toContain("CLIENT");
+    expect(prompt).toContain("Gestion des commandes clients.");
+    expect(prompt).toContain("sélectionnés par l'étudiant : CLIENT");
+    await expect(askDiagramAssistant(B, w.id, diagramAssistantSchema.parse({ message: "x", diagram: MCD }))).rejects.toMatchObject({ status: 404 });
   });
 });

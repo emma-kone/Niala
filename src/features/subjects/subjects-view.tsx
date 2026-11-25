@@ -99,7 +99,7 @@ export default function SubjectsView() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-5xl px-4 py-8 sm:px-6">
+    <div className="mx-auto w-full max-w-[75rem] px-4 py-8 sm:px-6">
       <header className="mb-8 flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="typo-h1">Mes matières</h1>
@@ -120,7 +120,7 @@ export default function SubjectsView() {
       )}
 
       {subjects === null && !error && (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-busy>
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-4" aria-busy>
           {[0, 1, 2].map((i) => (
             <Skeleton key={i} className="h-32 rounded-xl" />
           ))}
@@ -141,7 +141,7 @@ export default function SubjectsView() {
       )}
 
       {subjects && subjects.length > 0 && (
-        <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <ul className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-4">
           {subjects.map((s) => (
             <li key={s.id} className="group relative rounded-xl border bg-card transition-shadow hover:shadow-md">
               <Link href={routes.subject(s.id)} className="block rounded-xl p-5 focus-visible:outline-2 focus-visible:outline-ring">

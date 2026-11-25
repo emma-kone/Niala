@@ -142,3 +142,92 @@ export function deriveKind(current: NoteKind, links: { anchor: unknown | null }[
   if (links.some((l) => l.anchor != null)) return "ANNOTATION";
   return links.length > 0 ? "DOCUMENT" : "PERSONAL";
 }
+
+// ── Markdown → document de note ──────────────────────────────────────────────
+// Sert à l'assistant IA : il rédige en Markdown simple, le serveur construit un document valide pour l'éditeur.
+
+const MAX_MD_CHARS = 20_000;
+
+/** Texte en ligne : **gras**, *italique*, `code`. Le reste est du texte brut. */
+function inlineNodes(text: string): NoteNode[] {
+  const out: NoteNode[] = [];
+  const pattern = /(\*\*[^*\n]+\*\*|__[^_\n]+__|`[^`\n]+`|\*[^*\n]+\*|_[^_\n]+_)/g;
+  let last = 0;
+  for (const m of text.matchAll(pattern)) {
+    const at = m.index ?? 0;
+    if (at > last) out.push({ type: "text", text: text.slice(last, at) });
+    const token = m[0];
+    if (token.startsWith("**") || token.startsWith("__")) out.push({ type: "text", text: token.slice(2, -2), marks: [{ type: "bold" }] });
+    else if (token.startsWith("`")) out.push({ type: "text", text: token.slice(1, -1), marks: [{ type: "code" }] });
+    else out.push({ type: "text", text: token.slice(1, -1), marks: [{ type: "italic" }] });
+    last = at + token.length;
+  }
+  if (last < text.length) out.push({ type: "text", text: text.slice(last) });
+  return out.filter((n) => n.text);
+}
+
+const paragraph = (text: string): NoteNode => {
+  const content = inlineNodes(text);
+  return content.length ? { type: "paragraph", content } : { type: "paragraph" };
+};
+
+/** Convertit un Markdown simple (titres, listes, citations, code, gras/italique) en blocs de note valides. */
+export function markdownToNoteBlocks(markdown: string): NoteNode[] {
+  const lines = markdown.replace(/\r\n?/g, "\n").slice(0, MAX_MD_CHARS).split("\n");
+  const blocks: NoteNode[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (!line.trim()) {
+      i++;
+      continue;
+    }
+    const fence = /^```\s*([\w#+.-]{0,20})\s*$/.exec(line.trim());
+    if (fence) {
+      const body: string[] = [];
+      i++;
+      while (i < lines.length && !/^```\s*$/.test(lines[i].trim())) body.push(lines[i++]);
+      i++;
+      blocks.push({ type: "codeBlock", attrs: { language: fence[1] || null }, content: body.length ? [{ type: "text", text: body.join("\n") }] : undefined });
+      continue;
+    }
+    const heading = /^(#{1,4})\s+(.+)$/.exec(line);
+    if (heading) {
+      blocks.push({ type: "heading", attrs: { level: heading[1].length }, content: inlineNodes(heading[2].trim()) });
+      i++;
+      continue;
+    }
+    if (/^\s*[-*+]\s+/.test(line) || /^\s*\d+[.)]\s+/.test(line)) {
+      const ordered = /^\s*\d+[.)]\s+/.test(line);
+      const marker = ordered ? /^\s*\d+[.)]\s+/ : /^\s*[-*+]\s+/;
+      const items: NoteNode[] = [];
+      while (i < lines.length && marker.test(lines[i])) {
+        items.push({ type: "listItem", content: [paragraph(lines[i].replace(marker, "").trim())] });
+        i++;
+      }
+      blocks.push({ type: ordered ? "orderedList" : "bulletList", ...(ordered ? { attrs: { start: 1 } } : {}), content: items });
+      continue;
+    }
+    if (/^>\s?/.test(line)) {
+      const quote: string[] = [];
+      while (i < lines.length && /^>\s?/.test(lines[i])) quote.push(lines[i++].replace(/^>\s?/, ""));
+      blocks.push({ type: "blockquote", content: [paragraph(quote.join(" ").trim())] });
+      continue;
+    }
+    if (/^(-{3,}|\*{3,})$/.test(line.trim())) {
+      blocks.push({ type: "horizontalRule" });
+      i++;
+      continue;
+    }
+    const para: string[] = [];
+    while (i < lines.length && lines[i].trim() && !/^(#{1,4}\s|```|>\s?|\s*[-*+]\s+|\s*\d+[.)]\s+)/.test(lines[i])) para.push(lines[i++].trim());
+    blocks.push(paragraph(para.join(" ")));
+  }
+  return blocks;
+}
+
+/** Ajoute des blocs à la suite d'un document de note, en laissant le contenu existant intact. */
+export function appendBlocks(doc: NoteDoc, blocks: NoteNode[]): NoteDoc {
+  const existing = doc.content.filter((n, idx, all) => !(n.type === "paragraph" && !n.content?.length && idx === all.length - 1 && all.length === 1));
+  return { type: "doc", content: [...existing, ...blocks] };
+}

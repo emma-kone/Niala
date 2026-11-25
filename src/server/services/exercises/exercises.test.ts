@@ -109,7 +109,7 @@ async function importPdf(user: string, subject: string, name: string, pages: str
 
 beforeAll(async () => {
   pg = await PGlite.create();
-  for (const n of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261110000000_niala_agenda", "20261111000000_niala_academic", "20261112000000_niala_subject_icon", "20261113000000_niala_google_link", "20261116000000_niala_profile_exercises", "20261117000000_niala_class_level_other", "20261118000000_niala_admin", "20261119000000_niala_langues_edt_reset", "20261120000000_niala_agenda_sections", "20261121000000_niala_soft_delete", "20261122000000_niala_assistance_push", "20261123000000_niala_rate_limit", "20261124000000_niala_streak"]) {
+  for (const n of ["20261101000000_v1_baseline", "20261101000100_v2_foundation", "20261101000200_v2_backfill", "20261104000000_niala_theme_default", "20261104000100_niala_chat", "20261110000000_niala_agenda", "20261111000000_niala_academic", "20261112000000_niala_subject_icon", "20261113000000_niala_google_link", "20261116000000_niala_profile_exercises", "20261117000000_niala_class_level_other", "20261118000000_niala_admin", "20261119000000_niala_langues_edt_reset", "20261120000000_niala_agenda_sections", "20261121000000_niala_soft_delete", "20261122000000_niala_assistance_push", "20261123000000_niala_rate_limit", "20261124000000_niala_streak", "20261125000000_niala_lab_diagram"]) {
     await pg.exec(readFileSync(path.join(process.cwd(), "prisma", "migrations", n, "migration.sql"), "utf8"));
   }
   const port = 60000 + Math.floor(Math.random() * 5000);
@@ -119,7 +119,7 @@ beforeAll(async () => {
   process.env.DATABASE_URL = `postgresql://postgres:postgres@127.0.0.1:${port}/postgres?connection_limit=1&pgbouncer=true`;
   process.env.DIRECT_URL = process.env.DATABASE_URL;
   process.env.STORAGE_DIR = dir;
-  delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+  process.env.SUPABASE_SERVICE_ROLE_KEY = ""; // vide (et non supprimé) : Prisma recharge .env sinon, et les tests écriraient dans le vrai stockage
   process.env.GEMINI_API_KEY = ""; // vide (et non supprimé) : Prisma recharge .env sinon
   db = (await import("@/lib/db")).db;
   docs = await import("@/server/services/documents");

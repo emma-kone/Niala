@@ -88,7 +88,7 @@ export default async function UserPage({ params }: { params: Promise<{ id: strin
               <Stat label="Cours consultés" value={fmtNumber(d.pedagogy.coursesViewed)} hint="Collecte en direct." />
               <Stat label="Documents importés" value={fmtNumber(d.pedagogy.documentsImported)} />
               <Stat label="Cartes mentales" value={fmtNumber(d.pedagogy.mapsCreated)} />
-              {d.pedagogy.environments.map((e) => <Stat key={e.kind} label={e.kind === "SQL" ? "Labo SQL" : "Labo de code"} value={`${e.workspaces} esp. · ${e.runs} exéc.`} />)}
+              {d.pedagogy.environments.map((e) => <Stat key={e.kind} label={e.kind === "SQL" ? "Labo SQL" : e.kind === "DIAGRAM" ? "Labo diagrammes" : "Labo de code"} value={`${e.workspaces} esp. · ${e.runs} exéc.`} />)}
             </div>
             <Panel title="Matières travaillées" className="mt-3">
               {d.pedagogy.subjects.length ? (

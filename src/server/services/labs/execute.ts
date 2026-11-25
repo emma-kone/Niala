@@ -1,6 +1,7 @@
 import {
   classify,
   codeCasesFor,
+  EDIT_ONLY_LANGUAGES,
   languageOf,
   outcomeOfCode,
   outcomeOfSql,
@@ -32,7 +33,13 @@ export const execLanguage = (l: string) => languageOf(l);
 
 export function capabilities() {
   const a = runnerAvailable();
-  return { available: a.ok, reason: a.reason, languages: LANGUAGES, note: "Les autres langages (Java, C, C++…) ne sont pas exécutables ici : ils ne sont jamais simulés." };
+  return {
+    available: a.ok,
+    reason: a.reason,
+    languages: LANGUAGES,
+    editOnly: Object.entries(EDIT_ONLY_LANGUAGES).map(([id, l]) => ({ id, label: l.label })),
+    note: "C, C# et Java EE s'écrivent et se relisent avec l'assistant, mais ne sont pas exécutables ici (aucun compilateur dans l'environnement isolé) : ils ne sont jamais simulés.",
+  };
 }
 
 export interface FreeCodeRun {

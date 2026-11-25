@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { NavLink } from "@/components/layout/nav-link";
 import { usePathname } from "next/navigation";
 import { useSyncExternalStore } from "react";
 import { ChevronLeft, ChevronRight, LogOut } from "lucide-react";
@@ -75,7 +75,7 @@ export function SidebarNav({ user, onLogout }: SidebarNavProps) {
                 const active = isNavActive(pathname, item);
                 return (
                   <li key={item.href}>
-                    <Link
+                    <NavLink
                       href={item.href}
                       prefetch
                       aria-current={active ? "page" : undefined}
@@ -89,7 +89,7 @@ export function SidebarNav({ user, onLogout }: SidebarNavProps) {
                     >
                       <Icon className="h-4 w-4 shrink-0" aria-hidden />
                       {!collapsed && <span className="truncate">{item.label}</span>}
-                    </Link>
+                    </NavLink>
                   </li>
                 );
               })}

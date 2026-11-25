@@ -167,7 +167,7 @@ describe("fonctionnalités et pédagogie", () => {
     // Une seule matière / un seul étudiant : sous le seuil d'anonymat, rien n'est nommé
     expect(ped.subjects.ranking).toEqual([]);
     expect(ped.subjects.hiddenSubjects).toBeGreaterThan(0);
-    expect(ped.environments.map((e) => e.key)).toEqual(["CODE", "SQL"]);
+    expect(ped.environments.map((e) => e.key)).toEqual(["CODE", "SQL", "DIAGRAM"]);
   });
 });
 

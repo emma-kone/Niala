@@ -174,7 +174,7 @@ async function labStats(p: Period) {
       FROM "LabRun" r JOIN "LabWorkspace" w ON w.id = r."workspaceId"
       WHERE r."createdAt" >= ${p.from} AND r."createdAt" <= ${p.to} GROUP BY 1`,
   ]);
-  return (["CODE", "SQL"] as const).map((kind) => {
+  return (["CODE", "SQL", "DIAGRAM"] as const).map((kind) => {
     const w = ws.find((x) => x.kind === kind);
     const r = runs.find((x) => x.kind === kind);
     return { key: kind, label: LAB_LABELS[kind], workspaces: n(w?.w), users: Math.max(n(w?.u), n(r?.u)), runs: n(r?.r), testedRuns: n(r?.tested), passedRuns: n(r?.passed), errors: n(r?.err), errorRate: ratio(n(r?.err), n(r?.r)) };

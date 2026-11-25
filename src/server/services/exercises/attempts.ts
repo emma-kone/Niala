@@ -161,6 +161,7 @@ export async function getAttempt(userId: string, id: string) {
     review: snap.review ?? null,
     startedAt: a.startedAt,
     finishedAt: a.finishedAt,
+    durationSec: a.durationSec,
     lastPosition: a.lastPosition,
     score: a.score,
     maxScore: a.maxScore,
@@ -268,7 +269,7 @@ async function finalize(userId: string, attemptId: string) {
 }
 
 /** Soumission : fige la tentative puis corrige. Idempotente (une seconde soumission renvoie la correction existante). */
-export async function submitAttempt(userId: string, attemptId: string) {
+export async function submitAttempt(userId: string, attemptId: string, spentSec?: number) {
   const claim = await db.exerciseAttempt.updateMany({ where: { id: attemptId, userId, status: "IN_PROGRESS" }, data: { status: "SUBMITTED" } });
   if (claim.count === 0) {
     const existing = await ownedAttempt(userId, attemptId);
@@ -277,6 +278,11 @@ export async function submitAttempt(userId: string, attemptId: string) {
   }
   try {
     const claimed = await ownedAttempt(userId, attemptId);
+    // Temps passé annoncé par le chronomètre de l'étudiant (temps actif, pauses exclues) : jamais plus que le temps réellement écoulé.
+    if (spentSec && Number.isFinite(spentSec) && !claimed.durationSec) {
+      const elapsed = Math.max(1, Math.round((Date.now() - claimed.startedAt.getTime()) / 1000));
+      await db.exerciseAttempt.update({ where: { id: attemptId }, data: { durationSec: Math.min(Math.max(1, Math.round(spentSec)), elapsed) } });
+    }
     // Correction immédiate : seules les questions restées sans correction définitive sont traitées ici.
     const remaining = isImmediate(claimed.snapshot as unknown as Snapshot) ? new Set((claimed.snapshot as unknown as Snapshot).questions.map((q) => q.position).filter((p) => !isLocked(claimed.answers.find((x) => x.position === p)))) : undefined;
     await gradePositions(userId, claimed, remaining);

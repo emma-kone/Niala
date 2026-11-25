@@ -1,28 +1,35 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { AlertTriangle, CheckCircle2, Info, X, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Notifications de l'application : cartes empilées en bas à droite, chacune fermable par une croix.
-// Remplace les alertes du navigateur (window.alert / window.confirm) et les anciens toasts.
-//  - notify({ title, description, variant })   : information, disparaît seule (sauf erreur) ;
-//  - confirmAction(message, options)          : demande de confirmation, renvoie Promise<boolean>.
+// Notifications de l'application, classées selon ce qu'elles demandent à l'étudiant :
+//  - au CENTRE de l'écran : ce qui exige son attention ou sa décision — confirmations, erreurs, avertissements ;
+//  - en BAS à droite : ce qui informe sans interrompre — succès et informations, qui disparaissent seuls.
+// Chaque notification est fermable par une croix. Remplace les alertes du navigateur (window.alert / window.confirm).
+//  - notify({ title, description, variant, placement? }) : information (le lieu se déduit de la gravité, sauf indication) ;
+//  - confirmAction(message, options)                     : demande de confirmation, renvoie Promise<boolean>.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type NotificationVariant = "info" | "success" | "warning" | "error";
+export type NotificationPlacement = "center" | "bottom";
 
 interface NotificationItem {
   id: number;
   title?: string;
   description?: string;
   variant: NotificationVariant;
+  placement: NotificationPlacement;
   /** Présent pour une demande de confirmation. */
   confirm?: { label: string; cancelLabel: string; danger: boolean; resolve: (ok: boolean) => void };
 }
 
 const MAX_VISIBLE = 5;
+
+/** Erreurs et avertissements s'affichent au centre ; succès et informations discrètement en bas. */
+const defaultPlacement = (variant: NotificationVariant): NotificationPlacement => (variant === "error" || variant === "warning" ? "center" : "bottom");
 const AUTO_CLOSE_MS = 6000;
 
 let items: NotificationItem[] = [];
@@ -58,9 +65,9 @@ export function dismiss(id: number, notifyListeners = true) {
   if (notifyListeners) emit();
 }
 
-export function notify(input: { title?: string; description?: string; variant?: NotificationVariant; durationMs?: number }): number {
+export function notify(input: { title?: string; description?: string; variant?: NotificationVariant; durationMs?: number; placement?: NotificationPlacement }): number {
   const variant = input.variant ?? "info";
-  const id = push({ title: input.title, description: input.description, variant });
+  const id = push({ title: input.title, description: input.description, variant, placement: input.placement ?? defaultPlacement(variant) });
   // Les erreurs restent affichées jusqu'à ce que l'utilisateur les ferme.
   const duration = input.durationMs ?? (variant === "error" ? 0 : AUTO_CLOSE_MS);
   if (duration > 0) timers.set(id, setTimeout(() => dismiss(id), duration));
@@ -79,6 +86,7 @@ export function confirmAction(message: string, options: { title?: string; confir
       title: options.title ?? "Confirmation",
       description: message,
       variant: options.danger === false ? "info" : "warning",
+      placement: "center",
       confirm: { label: options.confirmLabel ?? "Confirmer", cancelLabel: options.cancelLabel ?? "Annuler", danger: options.danger !== false, resolve: once },
     });
     void id;
@@ -108,48 +116,76 @@ const STYLE: Record<NotificationVariant, { Icon: typeof Info; icon: string; bar:
   error: { Icon: XCircle, icon: "text-destructive", bar: "bg-destructive" },
 };
 
+function Card({ n }: { n: NotificationItem }) {
+  const s = STYLE[n.variant];
+  return (
+    <div
+      role={n.confirm ? "alertdialog" : n.variant === "error" ? "alert" : "status"}
+      aria-live={n.variant === "error" || n.confirm ? "assertive" : "polite"}
+      className={cn("pointer-events-auto relative flex gap-3 overflow-hidden rounded-lg border bg-popover p-4 pr-10 text-popover-foreground shadow-lg animate-in fade-in", n.placement === "center" ? "zoom-in-95" : "slide-in-from-bottom-2")}
+    >
+      <span className={cn("absolute inset-y-0 left-0 w-1", s.bar)} aria-hidden />
+      <s.Icon className={cn("mt-0.5 h-4 w-4 shrink-0", s.icon)} aria-hidden />
+      <div className="min-w-0 flex-1 space-y-1">
+        {n.title && <p className="text-sm font-semibold leading-tight">{n.title}</p>}
+        {n.description && <p className="whitespace-pre-line text-sm text-muted-foreground">{n.description}</p>}
+        {n.confirm && (
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" className="rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-muted" onClick={() => answer(n.id, false)}>
+              {n.confirm.cancelLabel}
+            </button>
+            <button
+              type="button"
+              autoFocus
+              className={cn("rounded-md px-3 py-1.5 text-xs font-medium", n.confirm.danger ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" : "bg-primary text-primary-foreground hover:bg-primary/90")}
+              onClick={() => answer(n.id, true)}
+            >
+              {n.confirm.label}
+            </button>
+          </div>
+        )}
+      </div>
+      <button type="button" aria-label="Fermer la notification" className="absolute right-2 top-2 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground" onClick={() => dismiss(n.id)}>
+        <X className="h-4 w-4" aria-hidden />
+      </button>
+    </div>
+  );
+}
+
 /** Zone d'affichage, à placer une seule fois dans la mise en page racine. */
 export function Notifications() {
   const list = useSyncExternalStore(subscribe, snapshot, serverSnapshot);
+  const center = list.filter((n) => n.placement === "center");
+  const bottom = list.filter((n) => n.placement === "bottom");
+  // Échap ferme la notification centrale la plus récente (une confirmation fermée vaut « Annuler »).
+  const newest = center.at(-1)?.id;
+  useEffect(() => {
+    if (newest === undefined) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") dismiss(newest);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [newest]);
   if (!list.length) return null;
   return (
-    <section aria-label="Notifications" className="pointer-events-none fixed bottom-4 right-4 z-[100] flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2">
-      {list.map((n) => {
-        const s = STYLE[n.variant];
-        return (
-          <div
-            key={n.id}
-            role={n.confirm ? "alertdialog" : n.variant === "error" ? "alert" : "status"}
-            aria-live={n.variant === "error" || n.confirm ? "assertive" : "polite"}
-            className="pointer-events-auto relative flex gap-3 overflow-hidden rounded-lg border bg-popover p-4 pr-10 text-popover-foreground shadow-lg animate-in fade-in slide-in-from-bottom-2"
-          >
-            <span className={cn("absolute inset-y-0 left-0 w-1", s.bar)} aria-hidden />
-            <s.Icon className={cn("mt-0.5 h-4 w-4 shrink-0", s.icon)} aria-hidden />
-            <div className="min-w-0 flex-1 space-y-1">
-              {n.title && <p className="text-sm font-semibold leading-tight">{n.title}</p>}
-              {n.description && <p className="whitespace-pre-line text-sm text-muted-foreground">{n.description}</p>}
-              {n.confirm && (
-                <div className="flex justify-end gap-2 pt-2">
-                  <button type="button" className="rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-muted" onClick={() => answer(n.id, false)}>
-                    {n.confirm.cancelLabel}
-                  </button>
-                  <button
-                    type="button"
-                    autoFocus
-                    className={cn("rounded-md px-3 py-1.5 text-xs font-medium", n.confirm.danger ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" : "bg-primary text-primary-foreground hover:bg-primary/90")}
-                    onClick={() => answer(n.id, true)}
-                  >
-                    {n.confirm.label}
-                  </button>
-                </div>
-              )}
-            </div>
-            <button type="button" aria-label="Fermer la notification" className="absolute right-2 top-2 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground" onClick={() => dismiss(n.id)}>
-              <X className="h-4 w-4" aria-hidden />
-            </button>
+    <>
+      {center.length > 0 && (
+        <section aria-label="Notifications importantes" className="pointer-events-auto fixed inset-0 z-[110] flex items-center justify-center bg-black/40 p-4 backdrop-blur-[1px]">
+          <div className="flex w-[min(28rem,100%)] flex-col gap-2">
+            {center.map((n) => (
+              <Card key={n.id} n={n} />
+            ))}
           </div>
-        );
-      })}
-    </section>
+        </section>
+      )}
+      {bottom.length > 0 && (
+        <section aria-label="Notifications" className="pointer-events-none fixed bottom-4 right-4 z-[100] flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2">
+          {bottom.map((n) => (
+            <Card key={n.id} n={n} />
+          ))}
+        </section>
+      )}
+    </>
   );
 }

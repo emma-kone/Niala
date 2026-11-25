@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { ApiHttpError } from "@/lib/api-helpers";
 import { AiCallError, AiQuotaError, AiUnavailableError, isAiConfigured } from "@/server/ai/provider";
 import { generateStructured } from "@/server/ai/structured";
-import { UNTRUSTED_RULES, foldText, groundedRatio, quoteInText, wrapUntrusted } from "@/server/ai/guard";
+import { UNTRUSTED_RULES, foldText, groundedRatio, quoteInText, repairQuote, wrapUntrusted } from "@/server/ai/guard";
 import type { PageText } from "@/server/domain/chunking";
 import {
   DIFFICULTY_WEIGHT,
@@ -125,6 +125,7 @@ Règles de génération :
 6. "concepts" : 1 à 3 noms de notions du cours que la question évalue (utilise de préférence les notions listées).
 7. "explanation" : explique POURQUOI la bonne réponse est correcte, en t'appuyant sur l'extrait.
 8. Si l'extrait te paraît faux, dépassé ou contradictoire sur un point, ne bâtis pas de question dessus : ajoute le créneau dans "insufficient".
+9. Ne pose JAMAIS de question sur la mise en forme ou l'organisation du document (titre ou numéro d'une section, plan, sommaire, numéro de page, auteur, nombre de parties) : seulement des questions sur les connaissances, les notions, les méthodes et les raisonnements du cours.
 Réponse : {"questions":[{"slot":<n>,"type":"...","statement":"...","source":{"quote":"..."},"concepts":["..."],"explanation":"...", ...champs du type}],"insufficient":[<slots>]}`;
 
 const responseSchema = z.object({ questions: z.array(z.unknown()).max(40), insufficient: z.array(z.number().int()).max(40).catch([]) });
@@ -269,16 +270,20 @@ export async function generateExercise(userId: string, rawConfig: unknown) {
           continue;
         }
         const q: RawQuestion = p.data;
-        const page = pageOfQuote(q.source.quote, w.pages);
+        let page = pageOfQuote(q.source.quote, w.pages);
         if (page === null && !quoteInText(q.source.quote, w.text)) {
-          dropped.ungrounded++; // la citation n'existe pas dans le document : question rejetée
-          continue;
+          // Citation légèrement différente de l'original (coupure, ponctuation, reformulation) : elle est rattachée au
+          // passage réel qui la recoupe. Sans passage proche, la question ne repose sur rien de vérifiable : rejetée.
+          const repaired = repairQuote(q.source.quote, w.text) ?? repairQuote(`${q.statement} ${q.explanation ?? ""}`, w.text, 0.75);
+          if (!repaired) {
+            dropped.ungrounded++;
+            continue;
+          }
+          q.source.quote = repaired;
+          page = pageOfQuote(repaired, w.pages);
         }
-        // L'explication doit s'appuyer sur l'extrait, pas seulement la citation.
-        if (q.explanation && q.explanation.length >= 40 && groundedRatio(q.explanation, w.text) < MIN_EXPLANATION_GROUNDING) {
-          dropped.ungrounded++;
-          continue;
-        }
+        // L'explication doit s'appuyer sur l'extrait, pas seulement la citation : sinon elle est retirée, la question reste.
+        if (q.explanation && q.explanation.length >= 40 && groundedRatio(q.explanation, w.text) < MIN_EXPLANATION_GROUNDING) q.explanation = undefined;
         const key = foldText(q.statement).slice(0, 80);
         if (seenStatements.has(key) || accepted.some((a) => a.slot.slot === q.slot)) {
           dropped.duplicate++;
@@ -321,8 +326,9 @@ export async function generateExercise(userId: string, rawConfig: unknown) {
   if (unverified) notes.push(`${unverified} question(s) de programmation ou SQL n'ont pas pu être validées par exécution (solution de référence non vérifiable) : elles seront corrigées par lecture, sans tests.`);
   if (fatal) notes.push(fatal.message);
   else if (failures) notes.push(`${failures} appel(s) au service d'IA ont échoué.`);
+  // Les propositions refusées à la validation sont remplacées automatiquement ; elles ne sont journalisées que pour le suivi.
   const totalDropped = dropped.invalid + dropped.ungrounded + dropped.duplicate;
-  if (totalDropped) notes.push(`${totalDropped} question(s) proposée(s) ont été écartées (format invalide, citation introuvable dans le document ou doublon).`);
+  if (totalDropped) console.info("[exercise] propositions remplacées après validation", { ...dropped, kept: accepted.length, requested: config.questionCount });
 
   const exerciseId = await saveExercise(userId, {
     subjectId,
@@ -442,7 +448,7 @@ export async function generateFreeExercise(userId: string, rawConfig: unknown) {
   const notes = ["Exercice créé par l'IA à partir de votre thème, sans document de référence : en cas de doute, comparez avec votre cours."];
   if (accepted.length < config.questionCount) notes.push(`${accepted.length} question(s) sur ${config.questionCount} demandée(s) ont pu être créées de façon fiable.`);
   if (unverified) notes.push(`${unverified} question(s) de programmation ou SQL n'ont pas pu être validées par exécution : elles seront corrigées par lecture, sans tests.`);
-  if (dropped) notes.push(`${dropped} question(s) proposée(s) ont été écartées (format invalide ou doublon).`);
+  if (dropped) console.info("[exercise.free] propositions remplacées après validation", { dropped, kept: accepted.length, requested: config.questionCount });
 
   const id = await saveExercise(userId, {
     subjectId,

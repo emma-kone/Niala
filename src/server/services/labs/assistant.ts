@@ -63,7 +63,7 @@ ${UNTRUSTED_RULES.replace("Ne produis que le JSON demandé, sans texte autour.",
 const GUIDED_FALLBACK = "Je préfère ne pas écrire la solution de cet exercice. Dites-moi quelle ligne vous bloque ou ce que vous attendiez comme résultat, et je vous mets sur la voie. Vous pouvez aussi demander un indice après avoir exécuté votre code.";
 
 export async function askLabAssistant(userId: string, workspaceId: string, input: z.infer<typeof assistantSchema>, emit?: (e: AssistantEvent) => void) {
-  const workspace = await db.labWorkspace.findFirst({ where: { id: workspaceId, userId } });
+  const workspace = await db.labWorkspace.findFirst({ where: { id: workspaceId, userId, kind: { in: ["CODE", "SQL"] } } });
   if (!workspace) throw new ApiHttpError("Espace de travail introuvable.", 404);
   const provider = getProvider();
   if (!provider?.converse) throw new ApiHttpError("L'assistant nécessite le service d'IA Gemini, qui n'est pas configuré.", 503);
@@ -100,7 +100,7 @@ export async function askLabAssistant(userId: string, workspaceId: string, input
   ];
 
   const started = Date.now();
-  const system = systemPrompt(workspace.kind, language, guided);
+  const system = systemPrompt(workspace.kind === "SQL" ? "SQL" : "CODE", language, guided);
   const log = (model: string, respChars: number, ok: boolean, error?: string) => db.aIUsageLog.create({ data: { userId, op: "lab.assistant@1", model, promptChars: system.length + input.code.length + input.message.length, respChars, ok, error: error?.slice(0, 500) ?? null, durationMs: Date.now() - started } }).catch(() => undefined);
   try {
     // En mode exercice, rien n'est diffusé avant le contrôle : une solution ne doit jamais s'afficher, même un instant.
